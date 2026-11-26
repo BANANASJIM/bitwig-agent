@@ -93,7 +93,7 @@ def test_core_write_tools_carry_hand_written_summaries_with_their_call_critical_
         "clips.set": ("first failure", "stopped"),
         "notes.read": ("2048", "completeWindow"),
         "devices.insert": ("requestedIdentifierVerified",),
-        "tracks.set": ("not dB",),
+        "tracks.set": ("pan 0.5", "display"),
         "grid.apply": ("dryRun", "customName"),
     }
     for name, words in expected.items():
@@ -181,7 +181,7 @@ async def test_surface_lists_exposed_tools_with_help_and_no_timeout(mcp_session)
     assert by_name["tracks.list"].annotations.read_only_hint is True
     assert by_name["tracks.delete"].annotations.destructive_hint is True
     assert by_name["tracks.delete"].annotations.idempotent_hint is True
-    assert by_name["tracks.create"].annotations.destructive_hint is False
+    assert by_name["tracks.insert"].annotations.destructive_hint is False
     assert by_name["tracks.set"].annotations.idempotent_hint is True
     assert by_name["actions.invoke"].annotations.open_world_hint is True
     assert by_name["tracks.list"].annotations.open_world_hint is False
@@ -260,7 +260,12 @@ async def test_handlers_run_in_process_for_help_unexposed_and_methods(host, monk
     assert bad_topic.is_error is True
     with pytest.raises(MCPError):
         await call_tool(NO_CONTEXT, CallToolRequestParams(name="grid.voicing.set"))
-    flagged = await call_tool(NO_CONTEXT, CallToolRequestParams(name="tracks.select", arguments={"trackId": TRACK}))
+    flagged = await call_tool(
+        NO_CONTEXT,
+        CallToolRequestParams(
+            name="tracks.select", arguments={"target": {"kind": "track", "id": TRACK, "name": "Lead"}}
+        ),
+    )
     assert flagged.is_error is True
     assert flagged.structured_content["outcome"] == "not_applied"
     refused = await call_tool(NO_CONTEXT, CallToolRequestParams(name="tracks.select", arguments={}))

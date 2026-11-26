@@ -38,6 +38,12 @@ public final class MeterModuleTest {
         return HostFixture.json(json);
     }
 
+    private static String targets(String... ids) {
+        StringBuilder out = new StringBuilder("[");
+        for (String id : ids) out.append(out.length() > 1 ? "," : "").append(HostFixture.track(id));
+        return out.append("]").toString();
+    }
+
     @Test
     void invalidRequestsNeverSchedule() {
         HostFixture f = fixture(false);
@@ -46,15 +52,14 @@ public final class MeterModuleTest {
         for (String text : List.of(
                 "{}",
                 "{\"windowMs\":100}",
-                "{\"trackIds\":[\"" + a + "\"]}",
-                "{\"trackIds\":[],\"windowMs\":100}",
-                "{\"trackIds\":[\"" + a + "\"],\"windowMs\":49}",
-                "{\"trackIds\":[\"" + a + "\"],\"windowMs\":5001}",
-                "{\"trackIds\":[\"not-a-uuid\"],\"windowMs\":100}",
-                "{\"trackIds\":[\"" + a + "\",\"" + a + "\"],\"windowMs\":100}",
-                "{\"trackIds\":\"" + a + "\",\"windowMs\":100}",
-                "{\"trackIds\":[\"" + a + "\"],\"windowMs\":100,\"x\":1}")) {
-            assertRpcError("invalid_params", f.submit(m, "tracks.meters", params(text)));
+                "{\"targets\":" + targets(a) + "}",
+                "{\"targets\":[],\"windowMs\":100}",
+                "{\"targets\":" + targets(a) + ",\"windowMs\":49}",
+                "{\"targets\":" + targets(a) + ",\"windowMs\":5001}",
+                "{\"targets\":[\"" + a + "\"],\"windowMs\":100}",
+                "{\"targets\":" + targets(a) + ",\"windowMs\":100,\"x\":1}",
+                "{\"trackIds\":[\"" + a + "\"],\"windowMs\":100}")) {
+            assertRpcError("invalid_params", f.submit(m, "meters.get", params(text)));
             assertTrue(f.tasks.isEmpty(), "invalid meter request not scheduled: " + text);
         }
     }
@@ -66,9 +71,7 @@ public final class MeterModuleTest {
         f.transport.child("isPlaying").emit(true);
         fire(0, 0, "peak", 40); // standing level before the window counts as the baseline
         HostOperation op = f.submit(
-                m,
-                "tracks.meters",
-                params("{\"trackIds\":[\"" + HostFixture.A + "\",\"" + HostFixture.B + "\"],\"windowMs\":60}"));
+                m, "meters.get", params("{\"targets\":" + targets(HostFixture.A, HostFixture.B) + ",\"windowMs\":60}"));
         f.next();
         fire(0, 0, "peak", 90);
         fire(0, 0, "peak", 20);
@@ -104,6 +107,7 @@ public final class MeterModuleTest {
                 r.get("playingAtStart").getAsBoolean() && r.get("windowMs").getAsInt() == 60,
                 "playing state and window reported");
         assertTrue(a.get("targetUnchanged").getAsBoolean(), "identity confirmed at the end");
+        assertEquals(HostFixture.track(HostFixture.A), a.getAsJsonObject("ref"), "rows carry the track ref");
     }
 
     @Test
@@ -112,8 +116,8 @@ public final class MeterModuleTest {
         MeterModule m = f.services.meter();
         HostOperation op = f.submit(
                 m,
-                "tracks.meters",
-                params("{\"trackIds\":[\"" + HostFixture.A + "\"],\"windowMs\":2000}"),
+                "meters.get",
+                params("{\"targets\":" + targets(HostFixture.A) + ",\"windowMs\":2000}"),
                 f.tasks.after(500));
         f.next();
         assertRpcError("invalid_params", op);
@@ -125,14 +129,15 @@ public final class MeterModuleTest {
         MeterModule m = f.services.meter();
         HostOperation op = f.submit(
                 m,
-                "tracks.meters",
-                params("{\"trackIds\":[\"00000000-0000-0000-0000-0000000000aa\"],\"windowMs\":100}"));
+                "meters.get",
+                params(
+                        "{\"targets\":[{\"kind\":\"track\",\"id\":\"00000000-0000-0000-0000-0000000000aa\",\"name\":\"x\"}],\"windowMs\":100}"));
         f.next();
-        assertRpcError("outside_window", op);
+        assertRpcError("target_not_found", op);
         HostFixture g = fixture(true);
         MeterModule broken = g.services.meter();
-        HostOperation unavailable = g.submit(
-                broken, "tracks.meters", params("{\"trackIds\":[\"" + HostFixture.A + "\"],\"windowMs\":100}"));
+        HostOperation unavailable =
+                g.submit(broken, "meters.get", params("{\"targets\":" + targets(HostFixture.A) + ",\"windowMs\":100}"));
         g.next();
         assertRpcError("unsupported_scope", unavailable);
     }

@@ -3,6 +3,7 @@ package dev.bitwigagent;
 import static org.junit.jupiter.api.Assertions.*;
 
 import com.google.gson.*;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Function;
 import org.junit.jupiter.api.Test;
@@ -34,7 +35,7 @@ public final class RoundTripTest {
         }
     }
 
-    private static final List<Vector> VECTORS = List.of(
+    private static final List<Vector> TRANSPORT = List.of(
             new Vector(TestServices::transportModule, "transport.get", "{}", "transport.set", "{}", "tempoBpm"),
             new Vector(TestServices::transportModule, "transport.get", "{}", "transport.set", "{}", "preRoll"),
             new Vector(TestServices::transportModule, "transport.get", "{}", "transport.set", "{}", "metronomeVolume"),
@@ -52,6 +53,18 @@ public final class RoundTripTest {
                     "transport.set",
                     "{}",
                     "recordQuantizationGrid"));
+
+    private static final String TRACK_B = "{\"target\":" + HostFixture.track(HostFixture.B) + "}";
+
+    private static List<Vector> vectors() {
+        List<Vector> out = new ArrayList<>(TRANSPORT);
+        for (String field : List.of(
+                "name", "volume", "pan", "mute", "solo", "arm", "color", "activated", "monitorMode", "crossFadeMode"))
+            out.add(new Vector(TestServices::mix, "tracks.get", TRACK_B, "tracks.set", TRACK_B, field));
+        return out;
+    }
+
+    private static final List<Vector> VECTORS = vectors();
 
     /** The field's options: inside its read unit, or where a read still lists them apart under options. */
     private static JsonArray options(JsonObject read, String field) {

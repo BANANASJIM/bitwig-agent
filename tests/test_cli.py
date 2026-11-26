@@ -21,6 +21,9 @@ from bitwig_agent.protocol.grid import DEVICE
 from bitwig_agent.protocol.grid import TARGET as GRID
 from bitwig_agent.protocol.launcher import SLOT_REF, TRACK_REF
 
+TRACK_REF = {"kind": "track", "id": TRACK, "name": "Lead"}
+TARGET_FLAG = "--target=" + json.dumps(TRACK_REF)
+
 pytestmark = [pytest.mark.anyio, pytest.mark.usefixtures("all_methods")]  # parser tests cover hidden blocks too
 
 
@@ -40,9 +43,9 @@ async def test_typed_arguments_forward_without_null_defaults(host, monkeypatch):
     payload, code = await execute(
         [
             "tracks.set",
-            f"--trackId={TRACK}",
+            TARGET_FLAG,
             "--mute=false",
-            "--volumeNormalized=0.25",
+            "--volume=0.25",
             "--name=Sketch = \u03b1",
             "--timeoutMs",
             "250",
@@ -51,7 +54,7 @@ async def test_typed_arguments_forward_without_null_defaults(host, monkeypatch):
     assert code == 0
     assert payload == {"result": result}
     request = host.requests[0]
-    assert request["params"] == {"trackId": TRACK, "mute": False, "volumeNormalized": 0.25, "name": "Sketch = \u03b1"}
+    assert request["params"] == {"target": TRACK_REF, "mute": False, "volume": 0.25, "name": "Sketch = \u03b1"}
     assert request["timeoutMs"] == 250
     assert host.connections == 1
 
@@ -84,8 +87,8 @@ async def test_nested_note_arguments_and_raw_json_are_equivalent(host, monkeypat
         ["transport.set", "--tempoBpm=1e9999"],
         ["transport.set", "--tempoBpm=19"],
         ["transport.set"],
-        ["tracks.set", f"--trackId={TRACK}", "--mute=true", "--volumeNormalized=2"],
-        ["tracks.create", "--type=instrument", "--position=1.5", "--name=x"],
+        ["tracks.set", TARGET_FLAG, "--mute=true", "--volume=2"],
+        ["tracks.insert", "--type=instrument", "--position=1.5", "--name=x"],
         ["clips.import", f"--to={json.dumps(SLOT_REF)}", "--path=relative.wav"],
         ["clips.import", f"--to={json.dumps(SLOT_REF)}", "--path=/tmp/audio.wav", "--overwrite=true"],
         ["status", "[]"],
@@ -630,9 +633,9 @@ def test_flag_forms_bare_boolean_separate_value_and_operand_end():
     params, timeout = parse_arguments("transport.set", ["--playing", "--timeoutMs", "250", "--", '{"tempoBpm":120}'])
     assert params == {"playing": True, "tempoBpm": 120}
     assert timeout == 250
-    assert parse_arguments("tracks.set", [f"--trackId={TRACK}", "--name", "Bass"])[0]["name"] == "Bass"
+    assert parse_arguments("tracks.set", [TARGET_FLAG, "--name", "Bass"])[0]["name"] == "Bass"
     with pytest.raises(ValueError, match="needs a value"):
-        parse_arguments("tracks.set", [f"--trackId={TRACK}", "--name", "-7 Bass"])
+        parse_arguments("tracks.set", [TARGET_FLAG, "--name", "-7 Bass"])
 
 
 async def test_stdin_feeds_one_value_or_the_whole_operand(host, monkeypatch):
@@ -662,12 +665,12 @@ async def test_operand_file_and_flags_merge_and_a_repeat_is_an_error(host, monke
 
 async def test_a_pipeline_feeds_one_result_into_the_next_call(host, monkeypatch):
     monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
-    reply_with(host, {"tracks": [{"trackId": TRACK, "name": "Bass"}], "scope": "s"})
-    listed = await cli.execute(["tracks", "list", "--format=jsonl", "--fields=trackId"])
-    ident = json.loads(listed.stdout.splitlines()[0])["trackId"]
+    reply_with(host, {"tracks": [{"ref": TRACK_REF, "index": 0}], "scope": "s"})
+    listed = await cli.execute(["tracks", "list", "--format=jsonl", "--fields=ref"])
+    ref = json.loads(listed.stdout.splitlines()[0])["ref"]
     reply_with(host, {"outcome": "applied"})
-    assert (await execute(["tracks", "set", f"--trackId={ident}", "--mute"]))[1] == 0
-    assert host.requests[-1]["params"] == {"trackId": TRACK, "mute": True}
+    assert (await execute(["tracks", "set", f"--target={json.dumps(ref)}", "--mute"]))[1] == 0
+    assert host.requests[-1]["params"] == {"target": TRACK_REF, "mute": True}
 
 
 async def test_row_formats_print_only_the_records_and_json_keeps_the_rest(host, monkeypatch):
@@ -689,7 +692,7 @@ async def test_a_partial_list_warns_once_on_stderr_and_still_exits_zero(host, mo
     assert warning["warning"] == "partial"
     assert "--limit" in warning["message"]
     assert out.stderr.count("\n") == 1
-    windowed = {"tracks": [{"trackId": TRACK}], "window": {"complete": False}}
+    windowed = {"tracks": [{"ref": TRACK_REF}], "window": {"complete": False}}
     out = await stdout_of(["tracks", "list", "--format=csv"], host, monkeypatch, result=windowed)
     assert json.loads(out.stderr)["warning"] == "partial"
     plain = await stdout_of(["actions", "list"], host, monkeypatch, result=PARTIAL)
@@ -830,7 +833,7 @@ async def test_help_layers_are_plain_text_on_stdout_and_exit_zero(monkeypatch):
     method = (await cli.execute(["tracks", "set", "--help"])).stdout
     assert "(writes)" in method
     assert "(required)" in method
-    assert "Example:\n  bitwig-agent tracks set --trackId=" in method
+    assert "Example:\n  bitwig-agent tracks set --target=" in method
     assert (await cli.execute(["help", "tracks"])).stdout == resource
     assert json.loads((await cli.execute(["help", "tracks.set"])).stdout)["method"] == "tracks.set"
 
@@ -866,7 +869,7 @@ async def test_batch_runs_lines_in_order_and_prints_one_result_line_each(host, m
     monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
     reply_with(host, {"outcome": "applied"})
     stdin = lines_of(
-        {"method": "tracks.set", "params": {"trackId": TRACK, "mute": True}},
+        {"method": "tracks.set", "params": {"target": TRACK_REF, "mute": True}},
         {"method": "transport.set", "params": {"playing": False}},
     )
     out = await cli.execute(["batch"], stdin=lambda: stdin)
@@ -1041,7 +1044,7 @@ async def test_batch_takes_only_stdin_or_a_file(host, monkeypatch):
 
 
 async def test_a_bare_boolean_flag_does_not_take_a_separate_value():
-    out = await cli.execute(["tracks", "set", f"--trackId={TRACK}", "--mute", "false"])
+    out = await cli.execute(["tracks", "set", TARGET_FLAG, "--mute", "false"])
     assert out.code == 2
     assert "write --mute=false" in json.loads(out.stderr)["message"]
 

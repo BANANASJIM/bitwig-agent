@@ -21,9 +21,9 @@ spec.loader.exec_module(mix_policy)
 
 def mix_row():
     return {
-        "trackId": "fixture",
+        "ref": {"kind": "track", "id": "00000000-0000-0000-0000-000000000001", "name": "fixture"},
         "selected": False,
-        "readable": {"selected": True, "mute": True},
+        "mute": True,
         "sendObservationsComplete": True,
         "observationsComplete": True,
         "sends": [],
@@ -33,10 +33,8 @@ def mix_row():
 @pytest.mark.parametrize(
     "changes",
     [
-        {"observationsComplete": False},
         {"observationsComplete": 1},
-        {"readable": {"selected": True, "mute": 1}},
-        {"selected": None},
+        {"sendObservationsComplete": False},
     ],
 )
 def test_inconsistent_mix_evidence_is_rejected_with_optimized_python(changes):
@@ -68,11 +66,9 @@ raise SystemExit(7)
 
 def test_unknown_send_values_and_readiness_remain_protected():
     before = mix_row()
-    before.update(
-        sendObservationsComplete=False, observationsComplete=False, sends=[{"valueNormalized": None, "readable": False}]
-    )
+    before.update(sendObservationsComplete=False, observationsComplete=False, sends=[{"value": {"value": None}}])
     after = copy.deepcopy(before)
-    after["sends"][0]["valueNormalized"] = 0.25
+    after["sends"][0]["value"]["value"] = 0.25
     assert mix_policy.compare_mix([before], [after])["musicalEqual"] is False
 
     after = copy.deepcopy(before)

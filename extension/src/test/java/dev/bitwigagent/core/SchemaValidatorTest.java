@@ -336,7 +336,7 @@ public final class SchemaValidatorTest {
 
     @Test
     void patternMessagesShowTheSchemaPattern() {
-        String message = reject("tracks.get", "{\"trackId\":\"x\"}");
+        String message = reject("tracks.get", "{\"target\":{\"kind\":\"track\",\"id\":\"x\",\"name\":\"n\"}}");
         assertTrue(message.contains("[0-9a-fA-F]{8}") && !message.contains("\\z"), message);
     }
 

@@ -4,6 +4,7 @@ import com.bitwig.extension.callback.*;
 import com.bitwig.extension.controller.api.*;
 import com.google.gson.*;
 import dev.bitwigagent.core.MethodSpecs;
+import dev.bitwigagent.core.Refs;
 import dev.bitwigagent.core.SchemaValidator;
 import java.util.*;
 import java.util.function.Consumer;
@@ -30,6 +31,9 @@ final class HostFixture {
     final TestServices services;
     boolean onHost;
     int flushRequests;
+    /** The position the last track factory was asked for. */
+    int createPosition;
+
     Consumer<String> create = type -> {};
     Runnable addMarker = () -> {};
     Consumer<Integer> delete = slot -> {};
@@ -67,7 +71,7 @@ final class HostFixture {
             track.child("volume").child("value").data = .5;
             track.child("volume").child("displayedValue").data = "-12 dB";
             track.child("pan").child("value").data = .5;
-            track.child("pan").child("displayedValue").data = "Center";
+            track.child("pan").child("displayedValue").data = "0.00 %";
             for (String key : List.of("mute", "solo", "arm", "selected")) track.child(key).data = false;
             track.child("color").data = new float[] {0f, 0f, 0f};
             track.child("isActivated").data = true;
@@ -225,6 +229,7 @@ final class HostFixture {
                 Application.class, name -> name.startsWith("create") && name.endsWith("Track"), (name, args) -> {
                     mutation();
                     application.actions++;
+                    createPosition = (Integer) args[0];
                     create.accept(name);
                     return null;
                 });
@@ -465,6 +470,18 @@ final class HostFixture {
     static JsonObject target(String id) {
         JsonObject p = new JsonObject();
         p.addProperty("trackId", id);
+        return p;
+    }
+
+    /** The ref of a fixture track A, B or C, named as the fixture names its slot. */
+    static JsonObject track(String id) {
+        return Refs.track(id, "Track " + (id.equals(A) ? 0 : id.equals(B) ? 1 : 2));
+    }
+
+    /** Params whose target is the track ref of {@link #track}. */
+    static JsonObject targeting(String id) {
+        JsonObject p = new JsonObject();
+        p.add("target", track(id));
         return p;
     }
 }

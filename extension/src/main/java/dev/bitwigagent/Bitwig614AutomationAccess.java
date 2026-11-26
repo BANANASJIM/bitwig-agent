@@ -111,7 +111,6 @@ final class Bitwig614AutomationAccess implements AutomationModule.Access {
     /** One resolved parameter lane; every native call re-checks it against the proxy and the parameter source. */
     private final class Lane {
         final Object proxy, track, laneSet, parameter, ref, project;
-        final String trackId;
         final AutomationModule.Target spec;
         final GridSnapshotReader.ParameterBinding grid;
         final Object[] models;
@@ -123,7 +122,6 @@ final class Bitwig614AutomationAccess implements AutomationModule.Access {
             a.documentThread();
             check.run();
             this.proxy = proxy;
-            this.trackId = trackId;
             this.spec = spec;
             track = resolver.resolve(proxy, trackId, Bitwig614TrackResolver.Kind.CHANNEL);
             laneSet = a.invoke(lanes, track);
@@ -233,7 +231,7 @@ final class Bitwig614AutomationAccess implements AutomationModule.Access {
         Lane lane = new Lane(trackProxy, trackId, target, check);
         List<AutomationModule.Point> points = lane.describe(lane.natives());
         lane.guard(check);
-        return AutomationModule.lane(new JsonObject(), trackId, target, lane.lane != null, points, range);
+        return AutomationModule.lane(new JsonObject(), lane.lane != null, points, range);
     }
 
     @Override
@@ -241,7 +239,6 @@ final class Bitwig614AutomationAccess implements AutomationModule.Access {
             Object trackProxy,
             String trackId,
             AutomationModule.Target target,
-            int expectedCount,
             String expectedHash,
             List<AutomationModule.Point> requested,
             double[] range,
@@ -250,14 +247,14 @@ final class Bitwig614AutomationAccess implements AutomationModule.Access {
         Lane lane = new Lane(trackProxy, trackId, target, check);
         List<Object> before = lane.natives();
         List<AutomationModule.Point> current = lane.describe(before);
-        AutomationModule.requireExpected(current, expectedCount, expectedHash);
+        AutomationModule.requireExpected(current, expectedHash);
         List<AutomationModule.Point> desired = AutomationModule.desired(current, range, requested);
         boolean existed = lane.lane != null;
         if (existed) lane.valueRange();
         else if (!rangeType.isInstance(a.invoke(referenceRange, lane.ref)))
             throw Errors.notApplied(
                     Reason.UNSUPPORTED_SCOPE, "Only continuous (decimal) automation lanes are supported.");
-        if (AutomationModule.same(current, desired)) {
+        if (AutomationModule.same(AutomationModule.withoutBasePoint(current, desired), desired)) {
             lane.guard(check);
             JsonObject out = written(Outcome.ALREADY_MATCHED, lane, current, range, current, 0, 0, false);
             out.addProperty("nativeUndo", false);
@@ -300,13 +297,15 @@ final class Bitwig614AutomationAccess implements AutomationModule.Access {
                 throw Errors.unknown(
                         Reason.READBACK_MISMATCH,
                         "A point outside the range disappeared during the write; inspect automation.points.get.");
+        List<AutomationModule.Point> actual = lane.describe(after);
+        List<AutomationModule.Point> settled = AutomationModule.withoutBasePoint(actual, desired);
+        Object base = settled == actual ? null : after.get(0);
         for (Object point : removed)
-            if (present.contains(point))
+            if (present.contains(point) && point != base)
                 throw Errors.unknown(
                         Reason.READBACK_MISMATCH,
                         "A replaced point is still on the lane; inspect automation.points.get.");
-        List<AutomationModule.Point> actual = lane.describe(after);
-        AutomationModule.verify(desired, actual);
+        AutomationModule.verify(desired, settled);
         return written(Outcome.APPLIED, lane, actual, range, current, removed.size(), requested.size(), !existed);
     }
 
@@ -319,8 +318,7 @@ final class Bitwig614AutomationAccess implements AutomationModule.Access {
             int removed,
             int inserted,
             boolean created) {
-        JsonObject out =
-                AutomationModule.lane(Results.outcome(outcome), lane.trackId, lane.spec, lane.lane != null, all, range);
+        JsonObject out = AutomationModule.lane(Results.outcome(outcome), lane.lane != null, all, range);
         JsonObject before = new JsonObject();
         before.addProperty("count", previous.size());
         before.addProperty("pointsHash", AutomationModule.hash(previous));

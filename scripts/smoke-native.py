@@ -298,11 +298,9 @@ async def probe(target, report):  # noqa: PLR0915
         )
         device_count = 0
         for track in tracks["tracks"]:
-            track_params = {"trackId": track["trackId"]}
-            await call("tracks.get", track_params)
-            await call("launcher.list", {"parent": {"kind": "track", "id": track["trackId"], "name": track["name"]}})
-            track_ref = {"kind": "track", "id": track["trackId"], "name": track["name"]}
-            devices = await call("devices.list", {"parent": track_ref})
+            await call("tracks.get", {"target": track["ref"]})
+            await call("launcher.list", {"parent": track["ref"]})
+            devices = await call("devices.list", {"parent": track["ref"]})
             if devices["devices"]:
                 device = devices["devices"][0]["ref"]
                 await call("devices.get", {"target": device})

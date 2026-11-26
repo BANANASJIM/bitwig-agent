@@ -3,7 +3,6 @@ package dev.bitwigagent;
 import static dev.bitwigagent.HostLimits.*;
 import static dev.bitwigagent.Results.*;
 
-import com.bitwig.extension.controller.api.*;
 import com.google.gson.*;
 import java.util.*;
 
@@ -11,9 +10,11 @@ import java.util.*;
 final class TrackListModule implements HostModule {
     static final Set<String> METHODS = Set.of("tracks.list");
     private final TrackWindow window;
+    private final TrackRefs trackRefs;
 
-    TrackListModule(TrackWindow window) {
+    TrackListModule(TrackWindow window, TrackRefs trackRefs) {
         this.window = window;
+        this.trackRefs = trackRefs;
     }
 
     @Override
@@ -22,9 +23,7 @@ final class TrackListModule implements HostModule {
     }
 
     @Override
-    public void validate(String method, JsonObject params) {
-        Params.fields(params, Set.of(), Set.of());
-    }
+    public void validate(String method, JsonObject params) {}
 
     @Override
     public void dispatch(HostOperation operation, String method, JsonObject params) {
@@ -37,12 +36,10 @@ final class TrackListModule implements HostModule {
         JsonArray items = new JsonArray();
         TrackTree tree = TrackTree.capture(window);
         for (TrackTree.Node node : tree.nodes) {
-            Track track = window.at(node.slot);
             JsonObject item = new JsonObject();
-            item.addProperty("trackId", node.id);
+            item.add("ref", trackRefs.ref(node.slot));
             item.addProperty("index", node.position);
-            item.addProperty("name", track.name().get());
-            tree.describe(item, node);
+            tree.describe(item, node, trackRefs::ref);
             items.add(item);
         }
         result.add("tracks", items);

@@ -1,14 +1,10 @@
-"""Argument contracts of the mixer-display, send, meter, marker and time-signature tools (host-free)."""
+"""Argument contracts of the marker and time-signature tools (host-free)."""
 
 import re
 
 import pytest
 
 from bitwig_agent.protocol import TOOLS, validate_call
-from bitwig_agent.protocol.limits import TRACK_WINDOW
-
-TRACK = "12345678-1234-1234-1234-123456789abc"
-OTHER = "12345678-1234-1234-1234-123456789abd"
 
 
 def ok(method, **args):
@@ -20,64 +16,12 @@ def bad(method, **args):
         validate_call(method, args)
 
 
-def test_new_tools_are_registered_with_examples():
-    for name in (
-        "tracks.sends.set",
-        "tracks.meters",
-        "markers.list",
-        "markers.insert",
-        "markers.set",
-        "markers.delete",
-    ):
+def test_marker_tools_are_registered_with_examples():
+    for name in ("markers.list", "markers.insert", "markers.set", "markers.delete"):
         assert name in TOOLS
         assert TOOLS[name].examples
-    assert TOOLS["tracks.meters"].read_only
     assert TOOLS["markers.list"].read_only
-    assert not TOOLS["tracks.sends.set"].read_only
     assert not TOOLS["markers.insert"].read_only
-
-
-def test_send_addressing_and_value_rules():
-    assert ok("tracks.sends.set", trackId=TRACK, sendIndex=0, valueNormalized=0.3) == {
-        "trackId": TRACK,
-        "sendIndex": 0,
-        "valueNormalized": 0.3,
-    }
-    ok("tracks.sends.set", trackId=TRACK, sendName="A-Reverb", display="-12 dB", enabled=True)
-    ok("tracks.sends.set", trackId=TRACK, sendIndex=2, expectedSendName="Delay", enabled=False)
-    bad("tracks.sends.set", trackId=TRACK, valueNormalized=0.3)  # no address
-    bad("tracks.sends.set", trackId=TRACK, sendIndex=0, sendName="A", valueNormalized=0.3)  # two addresses
-    bad("tracks.sends.set", trackId=TRACK, sendIndex=0)  # nothing to change
-    bad("tracks.sends.set", trackId=TRACK, sendIndex=0, valueNormalized=0.3, display="-6 dB")  # two level forms
-    bad("tracks.sends.set", trackId=TRACK, sendIndex=0, valueNormalized=1.1)
-    bad("tracks.sends.set", trackId=TRACK, sendIndex=-1, valueNormalized=0.1)
-    bad("tracks.sends.set", trackId=TRACK, sendIndex=0, display="")
-    bad("tracks.sends.set", trackId=TRACK, sendIndex=0, valueNormalized=0.1, levelDb=-6)
-
-
-def test_track_display_fields_are_alternatives():
-    assert ok("tracks.set", trackId=TRACK, volumeDb=-6, panPercent=-25) == {
-        "trackId": TRACK,
-        "volumeDb": -6,
-        "panPercent": -25,
-    }
-    ok("tracks.set", trackId=TRACK, volumeDisplay="-inf dB", panDisplay="Center", mute=True)
-    bad("tracks.set", trackId=TRACK, volumeNormalized=0.5, volumeDb=-6)
-    bad("tracks.set", trackId=TRACK, volumeDb=-6, volumeDisplay="-6 dB")
-    bad("tracks.set", trackId=TRACK, panNormalized=0.5, panPercent=10)
-    bad("tracks.set", trackId=TRACK, panPercent=101)
-    bad("tracks.set", trackId=TRACK, volumeDb=25)
-    ok("tracks.set", trackId=TRACK, volumeNormalized=0.5, panPercent=10)
-
-
-def test_meters_arguments():
-    ok("tracks.meters", trackIds=[TRACK, OTHER], windowMs=500)
-    bad("tracks.meters", trackIds=[], windowMs=500)
-    bad("tracks.meters", trackIds=[TRACK, TRACK.upper()], windowMs=500)
-    bad("tracks.meters", trackIds=[TRACK], windowMs=49)
-    bad("tracks.meters", trackIds=[TRACK], windowMs=5001)
-    bad("tracks.meters", trackIds=[TRACK] * (TRACK_WINDOW + 1), windowMs=100)
-    bad("tracks.meters", trackIds=["nope"], windowMs=100)
 
 
 def marker(index=3, name="Verse", beat=8):

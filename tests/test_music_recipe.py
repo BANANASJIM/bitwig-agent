@@ -68,7 +68,7 @@ async def test_recipe_stops_after_session_changes_during_creation(tmp_path, monk
             if method == "tracks.list":
                 return {"status": "observed", "tracks": [], "window": {"complete": True, "capacity": 16}}
             mutations.append(method)
-            if method == "tracks.create":
+            if method == "tracks.insert":
                 created = True
                 if transition == "creation_unknown":
                     return {
@@ -82,18 +82,21 @@ async def test_recipe_stops_after_session_changes_during_creation(tmp_path, monk
                         "outcome": "unknown",
                         "reason": "deadline",
                         "message": "Native completion is unresolved",
-                        "trackId": "11111111-1111-1111-1111-111111111111",
+                        "ref": {"kind": "track", "id": "11111111-1111-1111-1111-111111111111", "name": "Toolkit"},
                         "nameApplied": True,
                     }
                 if transition == "error_refused":
                     raise bridge_error("host_refused", "The host refused the track")
-                return {"outcome": "applied", "trackId": "11111111-1111-1111-1111-111111111111"}
+                return {
+                    "outcome": "applied",
+                    "ref": {"kind": "track", "id": "11111111-1111-1111-1111-111111111111", "name": "Toolkit"},
+                }
             raise AssertionError(f"A changed session must not receive another mutation: {method}")
 
     monkeypatch.setattr(recipe, "BridgeClient", lambda port: Session())
     monkeypatch.setattr(recipe, "configured_port", lambda: 61172)
     assert await recipe.create(args) == 1
-    assert mutations == ["tracks.create"]
+    assert mutations == ["tracks.insert"]
     report = json.loads((args.artifacts / "report.json").read_text())
     assert report["status"] == "incomplete_inspect_state"
     if transition == "error_refused":
@@ -102,7 +105,7 @@ async def test_recipe_stops_after_session_changes_during_creation(tmp_path, monk
     elif transition in {"creation_unknown", "observed_unknown"}:
         assert report["createdTracks"] == []
         uncertain = report["uncertainOperations"][0]
-        assert uncertain["method"] == "tracks.create"
+        assert uncertain["method"] == "tracks.insert"
         assert uncertain["result"]["outcome"] == "unknown"
         assert uncertain["result"]["nameApplied"] is (transition == "observed_unknown")
     else:
@@ -192,12 +195,9 @@ async def test_recipe_does_not_report_authored_when_clip_readback_is_wrong(
             nonlocal inserted
             if method in static:
                 return static[method]
-            if method == "tracks.list":
-                listed = [{"trackId": track_id, "index": 0, "name": "Toolkit"}] if creations else []
-                return {"status": "observed", "tracks": listed, "window": {"complete": True, "capacity": 16}}
-            if method == "tracks.create":
+            if method == "tracks.insert":
                 creations.append(track_id)
-                return {"status": "observed", "trackId": track_id}
+                return {"status": "observed", "ref": {"kind": "track", "id": track_id, "name": "Toolkit"}}
             if method == "devices.list":
                 track = {"kind": "track", "id": track_id, "name": "Toolkit"}
                 device = {"kind": "device", "track": track, "index": 0, "name": "Test preset"}

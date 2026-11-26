@@ -4,6 +4,7 @@ import static dev.bitwigagent.RpcAssert.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 import com.google.gson.*;
+import dev.bitwigagent.core.Refs;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
@@ -17,9 +18,7 @@ public final class MixDisplayWriteTest {
 
     private static String pan(double n) {
         double p = (n - 0.5) * 200;
-        return Math.abs(p) < 0.5
-                ? "Center"
-                : String.format(java.util.Locale.ROOT, "%.0f%% %s", Math.abs(p), p < 0 ? "L" : "R");
+        return Math.abs(p) < 0.5 ? "0.00 %" : String.format(java.util.Locale.ROOT, "%.0f %%", p);
     }
 
     private static HostFixture fixture(MixModule[] out) {
@@ -40,7 +39,17 @@ public final class MixDisplayWriteTest {
 
     private static JsonObject params(String json) {
         JsonObject p = HostFixture.json(json);
-        p.addProperty("trackId", HostFixture.A);
+        p.add("target", HostFixture.track(HostFixture.A));
+        return p;
+    }
+
+    private static JsonObject send(String json) {
+        return send(json, "Reverb", 0);
+    }
+
+    private static JsonObject send(String json, String name, int index) {
+        JsonObject p = HostFixture.json(json);
+        p.add("target", Refs.send(HostFixture.track(HostFixture.A), index, name));
         return p;
     }
     /** Runs queued host tasks until the operation completes (each poll is one task). */
@@ -63,27 +72,28 @@ public final class MixDisplayWriteTest {
         HostFixture f = fixture(m);
         for (String text : List.of(
                 "{}",
-                "{\"sendIndex\":0}",
-                "{\"sendIndex\":0,\"sendName\":\"Reverb\",\"valueNormalized\":0.1}",
-                "{\"sendIndex\":0,\"valueNormalized\":0.1,\"display\":\"-6 dB\"}",
-                "{\"sendIndex\":-1,\"valueNormalized\":0.1}",
-                "{\"sendIndex\":128,\"valueNormalized\":0.1}",
-                "{\"sendIndex\":0,\"valueNormalized\":1.1}",
-                "{\"sendIndex\":0,\"enabled\":1}",
-                "{\"sendIndex\":0,\"display\":\"\"}",
-                "{\"sendIndex\":0,\"extra\":1,\"enabled\":true}")) {
-            assertRpcError("invalid_params", f.submit(m[0], "tracks.sends.set", params(text)));
+                "{\"value\":1.1}",
+                "{\"value\":-0.1}",
+                "{\"enabled\":1}",
+                "{\"value\":{\"display\":\"\"}}",
+                "{\"value\":{\"label\":\"-6 dB\"}}",
+                "{\"extra\":1,\"enabled\":true}",
+                "{\"sendIndex\":0,\"value\":0.1}")) {
+            assertRpcError("invalid_params", f.submit(m[0], "tracks.sends.set", send(text)));
             assertTrue(f.tasks.isEmpty(), "invalid send request not scheduled: " + text);
         }
+        JsonObject byIndex =
+                HostFixture.json("{\"value\":0.1,\"target\":{\"kind\":\"send\",\"index\":128,\"name\":\"x\"}}");
+        byIndex.getAsJsonObject("target").add("track", HostFixture.track(HostFixture.A));
+        assertRpcError("invalid_params", f.submit(m[0], "tracks.sends.set", byIndex));
         for (String text : List.of(
-                "{\"volumeNormalized\":0.5,\"volumeDb\":-6}",
-                "{\"volumeDb\":-6,\"volumeDisplay\":\"-6 dB\"}",
-                "{\"volumeDb\":25}",
-                "{\"volumeDb\":-151}",
-                "{\"panPercent\":101}",
-                "{\"panPercent\":-101}",
-                "{\"panNormalized\":0.5,\"panDisplay\":\"C\"}",
-                "{\"panDisplay\":\"\"}")) {
+                "{\"volume\":{\"display\":\"\"}}",
+                "{\"volume\":{\"label\":\"-6 dB\"}}",
+                "{\"volume\":{\"display\":\"-6 dB\",\"label\":\"x\"}}",
+                "{\"pan\":{}}",
+                "{\"volumeDb\":-6}",
+                "{\"panPercent\":25}",
+                "{\"volume\":-0.5}")) {
             assertRpcError("invalid_params", f.submit(m[0], "tracks.set", params(text)));
             assertTrue(f.tasks.isEmpty(), "invalid display request not scheduled: " + text);
         }
@@ -95,41 +105,33 @@ public final class MixDisplayWriteTest {
         HostFixture f = fixture(m);
         f.addTrack(2, HostFixture.C, "Effect");
         f.tracks[2].child("name").data = "Reverb";
-        JsonObject before = f.call(m[0], "tracks.get", HostFixture.target(HostFixture.A));
+        JsonObject before = f.call(m[0], "tracks.get", HostFixture.targeting(HostFixture.A));
         JsonObject row = before.getAsJsonArray("sends").get(0).getAsJsonObject();
         assertTrue(
-                row.getAsJsonObject("effectTrack").get("trackId").getAsString().equals(HostFixture.C),
-                "send maps to the first effect track");
-        assertTrue(
-                row.getAsJsonObject("effectTrack").get("name").getAsString().equals("Reverb")
-                        && row.get("nameMatchesEffectTrack").getAsBoolean(),
-                "effect track name reported and compared");
-        JsonObject result = call(
-                f,
-                m[0],
-                "tracks.sends.set",
-                params("{\"sendIndex\":0,\"expectedSendName\":\"Reverb\",\"valueNormalized\":0.6}"));
+                row.getAsJsonObject("effectTrack").equals(Refs.track(HostFixture.C, "Reverb")),
+                "send maps to the first effect track, as a track ref");
+        JsonObject result = call(f, m[0], "tracks.sends.set", send("{\"value\":0.6}"));
         assertTrue(
                 result.get("outcome").getAsString().matches("applied|already_matched")
                         && result.get("outcome").getAsString().matches("applied|already_matched"),
                 "send level observed");
         assertTrue(
                 result.getAsJsonObject("fields")
-                        .getAsJsonObject("valueNormalized")
+                        .getAsJsonObject("value")
                         .get("outcome")
                         .getAsString()
                         .equals("applied"),
                 "echo verified");
-        assertTrue(
-                result.get("sendName").getAsString().equals("Reverb")
-                        && result.get("sendIndex").getAsInt() == 0,
-                "send identity echoed");
+        assertEquals(
+                Refs.send(HostFixture.track(HostFixture.A), 0, "Reverb"),
+                result.getAsJsonObject("ref"),
+                "the written send's ref");
         assertTrue(f.tracks[0].child("sendBank").item(0).child("value").writes == 1, "exactly one send write");
         assertTrue(f.tracks[0].child("volume").child("value").writes == 0, "track volume untouched");
-        JsonObject again = call(f, m[0], "tracks.sends.set", params("{\"sendIndex\":0,\"valueNormalized\":0.6}"));
+        JsonObject again = call(f, m[0], "tracks.sends.set", send("{\"value\":0.6}"));
         assertTrue(
                 again.getAsJsonObject("fields")
-                                .getAsJsonObject("valueNormalized")
+                                .getAsJsonObject("value")
                                 .get("outcome")
                                 .getAsString()
                                 .equals("already_matched")
@@ -141,18 +143,18 @@ public final class MixDisplayWriteTest {
     void sendDisplayWriteBisectsObservedText() {
         MixModule[] m = new MixModule[1];
         HostFixture f = fixture(m);
-        JsonObject result = call(f, m[0], "tracks.sends.set", params("{\"sendIndex\":0,\"display\":\"-12 dB\"}"));
+        JsonObject result = call(f, m[0], "tracks.sends.set", send("{\"value\":{\"display\":\"-12 dB\"}}"));
         assertTrue(
                 result.get("outcome").getAsString().matches("applied|already_matched")
                         && result.get("outcome").getAsString().matches("applied|already_matched"),
                 "display write observed: " + result);
-        JsonObject dw = result.getAsJsonObject("displayWrite");
+        JsonObject dw = result.getAsJsonObject("displayWrite").getAsJsonObject("value");
         assertTrue(
                 dw.get("matched").getAsBoolean()
                         && dw.get("observedDisplay").getAsString().equals("-12.0 dB"),
                 "host display shows the target: " + dw);
         double n = result.getAsJsonObject("fields")
-                .getAsJsonObject("valueNormalized")
+                .getAsJsonObject("value")
                 .get("requested")
                 .getAsDouble();
         assertTrue(
@@ -160,7 +162,7 @@ public final class MixDisplayWriteTest {
                 "normalized value really maps to -12 dB under the host curve");
         assertTrue(
                 result.getAsJsonObject("fields")
-                        .getAsJsonObject("valueNormalized")
+                        .getAsJsonObject("value")
                         .get("outcome")
                         .getAsString()
                         .equals("applied"),
@@ -171,28 +173,46 @@ public final class MixDisplayWriteTest {
     }
 
     @Test
-    void sendByNameAndCas() {
+    void sendRefsAreComparedAndExpectIsAValueCas() {
         MixModule[] m = new MixModule[1];
         HostFixture f = fixture(m);
-        JsonObject ok = call(f, m[0], "tracks.sends.set", params("{\"sendName\":\"Reverb\",\"valueNormalized\":0.7}"));
-        assertTrue(ok.get("outcome").getAsString().matches("applied|already_matched"), "name addressing works");
-        HostOperation missing =
-                f.submit(m[0], "tracks.sends.set", params("{\"sendName\":\"Delay\",\"valueNormalized\":0.7}"));
+        HostOperation renamed = f.submit(m[0], "tracks.sends.set", send("{\"value\":0.1}", "Delay", 0));
         f.next();
-        assertRpcError("unknown_name", missing);
-        HostOperation wrong = f.submit(
-                m[0],
-                "tracks.sends.set",
-                params("{\"sendIndex\":0,\"expectedSendName\":\"Delay\",\"valueNormalized\":0.1}"));
+        RpcException changed = assertRpcError("target_changed", renamed);
+        assertEquals(Refs.send(HostFixture.track(HostFixture.A), 0, "Reverb"), changed.current);
+        HostOperation absent = f.submit(m[0], "tracks.sends.set", send("{\"value\":0.1}", "Reverb", 3));
         f.next();
-        assertRpcError("stale_target", wrong);
-        HostOperation absent = f.submit(m[0], "tracks.sends.set", params("{\"sendIndex\":3,\"valueNormalized\":0.1}"));
+        assertRpcError("target_not_found", absent);
+        HostOperation mismatch =
+                f.submit(m[0], "tracks.sends.set", send("{\"value\":0.1,\"expect\":{\"value\":0.9,\"enabled\":true}}"));
         f.next();
-        assertRpcError("unknown_name", absent);
-        HostOperation far = f.submit(m[0], "tracks.sends.set", params("{\"sendIndex\":9,\"valueNormalized\":0.1}"));
-        f.next();
-        assertRpcError("outside_window", far);
-        assertTrue(f.tracks[0].child("sendBank").item(0).child("value").writes == 1, "no refused request wrote");
+        RpcException expect = assertRpcError("target_changed", mismatch);
+        assertEquals(.25, expect.observed.get("value").getAsDouble());
+        assertEquals(0, f.tracks[0].child("sendBank").item(0).child("value").writes, "no refused request wrote");
+        JsonObject ok =
+                call(f, m[0], "tracks.sends.set", send("{\"value\":0.7,\"expect\":{\"value\":0.25,\"enabled\":true}}"));
+        assertTrue(ok.get("outcome").getAsString().matches("applied|already_matched"), "a matching expect writes");
+    }
+
+    @Test
+    void aSendAtMinusInfinityIsTheMinimumAndAcceptsADisplayWrite() {
+        MixModule[] m = new MixModule[1];
+        HostFixture f = fixture(m);
+        FakeHost send = f.tracks[0].child("sendBank").item(0);
+        send.child("value").emit(Double.NaN);
+        send.child("displayedValue").emit("-Inf dB");
+        JsonObject read = f.call(m[0], "tracks.get", HostFixture.targeting(HostFixture.A));
+        assertEquals(
+                0.0,
+                read.getAsJsonArray("sends")
+                        .get(0)
+                        .getAsJsonObject()
+                        .getAsJsonObject("value")
+                        .get("value")
+                        .getAsDouble(),
+                "-Inf dB reads as the minimum");
+        JsonObject result = call(f, m[0], "tracks.sends.set", send("{\"value\":{\"display\":\"-12 dB\"}}"));
+        assertTrue(result.get("outcome").getAsString().matches("applied|already_matched"), result.toString());
     }
 
     @Test
@@ -200,17 +220,16 @@ public final class MixDisplayWriteTest {
         MixModule[] m = new MixModule[1];
         HostFixture f = fixture(m);
         FakeHost send = f.tracks[0].child("sendBank").item(0);
-        call(f, m[0], "tracks.sends.set", params("{\"sendIndex\":0,\"enabled\":false}"));
+        call(f, m[0], "tracks.sends.set", send("{\"enabled\":false}"));
         assertTrue(Boolean.FALSE.equals(send.child("isEnabled").data), "send disabled");
         // The host turns a send on when its level moves (guide 7.1.6); model that and require the report.
         send.child("value").afterWrite = () -> {
             send.child("isEnabled").emit(true);
             send.child("displayedValue").emit(db(((Number) send.child("value").data).doubleValue()));
         };
-        JsonObject result = call(f, m[0], "tracks.sends.set", params("{\"sendIndex\":0,\"valueNormalized\":0.4}"));
+        JsonObject result = call(f, m[0], "tracks.sends.set", send("{\"value\":0.4}"));
         assertTrue(result.get("autoEnabled").getAsBoolean(), "auto-enable by a level write is reported, not hidden");
-        JsonObject both = call(
-                f, m[0], "tracks.sends.set", params("{\"sendIndex\":0,\"valueNormalized\":0.2,\"enabled\":false}"));
+        JsonObject both = call(f, m[0], "tracks.sends.set", send("{\"value\":0.2,\"enabled\":false}"));
         assertTrue(
                 both.get("outcome").getAsString().matches("applied|already_matched")
                         && Boolean.FALSE.equals(send.child("isEnabled").data),
@@ -218,16 +237,17 @@ public final class MixDisplayWriteTest {
     }
 
     @Test
-    void volumeDbAndDisplay() {
+    void volumeDisplay() {
         MixModule[] m = new MixModule[1];
         HostFixture f = fixture(m);
-        JsonObject result = call(f, m[0], "tracks.set", params("{\"volumeDb\":-6}"));
+        JsonObject result = call(f, m[0], "tracks.set", params("{\"volume\":{\"display\":\"-6 dB\"}}"));
         assertTrue(
                 result.get("outcome").getAsString().matches("applied|already_matched")
                         && result.get("outcome").getAsString().matches("applied|already_matched"),
-                "volumeDb observed: " + result);
+                "volume display observed: " + result);
         assertTrue(
-                result.getAsJsonObject("volumeDisplayWrite")
+                result.getAsJsonObject("displayWrite")
+                        .getAsJsonObject("volume")
                         .get("observedDisplay")
                         .getAsString()
                         .equals("-6.0 dB"),
@@ -236,51 +256,54 @@ public final class MixDisplayWriteTest {
         assertTrue(Math.abs(60 * Math.log10(n) + 6) < 0.06, "host value matches -6 dB");
         assertTrue(
                 result.getAsJsonObject("fields")
-                        .getAsJsonObject("volumeNormalized")
+                        .getAsJsonObject("volume")
                         .get("outcome")
                         .getAsString()
                         .equals("applied"),
                 "display readback verification");
-        JsonObject text = call(f, m[0], "tracks.set", params("{\"volumeDisplay\":\"-20 dB\",\"mute\":true}"));
+        JsonObject text = call(f, m[0], "tracks.set", params("{\"volume\":{\"display\":\"-20 dB\"},\"mute\":true}"));
         assertTrue(
                 text.get("outcome").getAsString().matches("applied|already_matched")
                         && Boolean.TRUE.equals(f.tracks[0].child("mute").data),
                 "display text plus another field in one call");
         FakeHost vol = f.tracks[0].child("volume").child("value");
         int writes = vol.writes;
-        HostOperation bad = f.submit(m[0], "tracks.set", params("{\"volumeDisplay\":\"quiet\"}"));
+        HostOperation bad = f.submit(m[0], "tracks.set", params("{\"volume\":{\"display\":\"quiet\"}}"));
         f.next();
-        assertRpcError("invalid_params", bad);
+        assertRpcError("unsupported_unit", bad);
         assertTrue(vol.writes == writes, "unparseable request text never reaches the host");
     }
 
     @Test
-    void panPercentAndDisplay() {
+    void panDisplay() {
         MixModule[] m = new MixModule[1];
         HostFixture f = fixture(m);
-        JsonObject result = call(f, m[0], "tracks.set", params("{\"panPercent\":-25}"));
+        JsonObject result = call(f, m[0], "tracks.set", params("{\"pan\":{\"display\":\"25% L\"}}"));
         assertTrue(
                 result.get("outcome").getAsString().matches("applied|already_matched"),
-                "panPercent observed: " + result);
+                "pan display observed: " + result);
         assertTrue(
-                result.getAsJsonObject("panDisplayWrite")
+                result.getAsJsonObject("displayWrite")
+                        .getAsJsonObject("pan")
                         .get("observedDisplay")
                         .getAsString()
-                        .equals("25% L"),
-                "host shows 25% L");
-        JsonObject right = call(f, m[0], "tracks.set", params("{\"panDisplay\":\"40% R\"}"));
+                        .equals("-25 %"),
+                "host shows -25 %");
+        JsonObject right = call(f, m[0], "tracks.set", params("{\"pan\":{\"display\":\"40% R\"}}"));
         assertTrue(
                 right.get("outcome").getAsString().matches("applied|already_matched")
-                        && right.getAsJsonObject("panDisplayWrite")
+                        && right.getAsJsonObject("displayWrite")
+                                .getAsJsonObject("pan")
                                 .get("observedDisplay")
                                 .getAsString()
-                                .equals("40% R"),
+                                .equals("40 %"),
                 "display text form");
-        JsonObject both = call(f, m[0], "tracks.set", params("{\"volumeDb\":-3,\"panPercent\":0}"));
+        JsonObject both =
+                call(f, m[0], "tracks.set", params("{\"volume\":{\"display\":\"-3 dB\"},\"pan\":{\"display\":\"C\"}}"));
         assertTrue(
                 both.get("outcome").getAsString().matches("applied|already_matched")
-                        && both.has("volumeDisplayWrite")
-                        && both.has("panDisplayWrite"),
+                        && both.getAsJsonObject("displayWrite").has("volume")
+                        && both.getAsJsonObject("displayWrite").has("pan"),
                 "volume then pan resolved in one call");
     }
 
@@ -289,17 +312,21 @@ public final class MixDisplayWriteTest {
         MixModule[] m = new MixModule[1];
         HostFixture f = fixture(m);
         FakeHost vol = f.tracks[0].child("volume").child("value");
-        JsonObject result = call(f, m[0], "tracks.set", params("{\"volumeDb\":20,\"mute\":true}"));
+        JsonObject result = call(f, m[0], "tracks.set", params("{\"volume\":{\"display\":\"20 dB\"},\"mute\":true}"));
         assertTrue(
                 !result.get("outcome").getAsString().matches("applied|already_matched")
-                        && result.getAsJsonObject("volumeDisplayWrite")
+                        && result.getAsJsonObject("displayWrite")
+                                .getAsJsonObject("volume")
                                 .get("failure")
                                 .getAsString()
                                 .equals("display_not_reachable"),
                 "refused: " + result);
         assertTrue(Math.abs(((Number) vol.data).doubleValue() - 0.5) < 1e-9, "original normalized value restored");
         assertTrue(
-                result.getAsJsonObject("volumeDisplayWrite").get("restored").getAsBoolean()
+                result.getAsJsonObject("displayWrite")
+                                .getAsJsonObject("volume")
+                                .get("restored")
+                                .getAsBoolean()
                         && result.get("outcome").getAsString().equals("not_applied"),
                 "restore observed");
         assertTrue(
@@ -315,9 +342,10 @@ public final class MixDisplayWriteTest {
         FakeHost vol = f.tracks[0].child("volume").child("value");
         vol.afterWrite =
                 () -> f.tracks[0].child("volume").child("displayedValue").emit("???");
-        JsonObject result = call(f, m[0], "tracks.set", params("{\"volumeDb\":-6,\"arm\":true}"));
+        JsonObject result = call(f, m[0], "tracks.set", params("{\"volume\":{\"display\":\"-6 dB\"},\"arm\":true}"));
         assertTrue(
-                result.getAsJsonObject("volumeDisplayWrite")
+                result.getAsJsonObject("displayWrite")
+                                .getAsJsonObject("volume")
                                 .get("failure")
                                 .getAsString()
                                 .equals("display_unparseable")
@@ -336,9 +364,11 @@ public final class MixDisplayWriteTest {
         FakeHost vol = f.tracks[0].child("volume").child("value");
         FakeHost pan = f.tracks[0].child("pan").child("value");
         pan.afterWrite = () -> f.tracks[0].child("pan").child("displayedValue").emit("???");
-        JsonObject result = call(f, m[0], "tracks.set", params("{\"volumeDb\":-6,\"panPercent\":-25}"));
+        JsonObject result = call(
+                f, m[0], "tracks.set", params("{\"volume\":{\"display\":\"-6 dB\"},\"pan\":{\"display\":\"25% L\"}}"));
         assertTrue(
-                result.getAsJsonObject("panDisplayWrite")
+                result.getAsJsonObject("displayWrite")
+                                .getAsJsonObject("pan")
                                 .get("failure")
                                 .getAsString()
                                 .equals("display_unparseable")
@@ -363,14 +393,16 @@ public final class MixDisplayWriteTest {
             f.tasks.advance(java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(100));
             show.run();
         };
-        HostOperation op = f.submit(m[0], "tracks.set", params("{\"volumeDb\":-6}"), f.tasks.after(1300));
+        HostOperation op =
+                f.submit(m[0], "tracks.set", params("{\"volume\":{\"display\":\"-6 dB\"}}"), f.tasks.after(1300));
         JsonObject result = run(f, op);
         assertTrue(
                 result.get("reason").getAsString().equals("deadline"),
                 "stopped at the deadline budget, not deadline_exceeded: " + result);
         assertTrue(
                 Math.abs(((Number) vol.data).doubleValue() - 0.5) < 1e-9
-                        && result.getAsJsonObject("volumeDisplayWrite")
+                        && result.getAsJsonObject("displayWrite")
+                                .getAsJsonObject("volume")
                                 .get("restored")
                                 .getAsBoolean(),
                 "original restored before the deadline");
@@ -390,8 +422,7 @@ public final class MixDisplayWriteTest {
             enabled.data = true;
             f.tasks.add(() -> enabled.emit(enabled.data));
         };
-        JsonObject result = call(
-                f, m[0], "tracks.sends.set", params("{\"sendIndex\":0,\"valueNormalized\":0.3,\"enabled\":false}"));
+        JsonObject result = call(f, m[0], "tracks.sends.set", send("{\"value\":0.3,\"enabled\":false}"));
         assertTrue(Boolean.FALSE.equals(enabled.data), "send really ends disabled: " + result);
         assertTrue(
                 result.get("outcome").getAsString().matches("applied|already_matched")
@@ -415,16 +446,20 @@ public final class MixDisplayWriteTest {
             show.run();
             enabled.emit(true);
         };
-        JsonObject result = call(f, m[0], "tracks.sends.set", params("{\"sendIndex\":0,\"display\":\"5 dB\"}"));
+        JsonObject result = call(f, m[0], "tracks.sends.set", send("{\"value\":{\"display\":\"5 dB\"}}"));
         assertTrue(
                 result.getAsJsonObject("displayWrite")
+                        .getAsJsonObject("value")
                         .get("failure")
                         .getAsString()
                         .equals("display_not_reachable"),
                 "unreachable: " + result);
         assertTrue(Boolean.FALSE.equals(enabled.data), "enabled state restored");
         assertTrue(
-                result.getAsJsonObject("displayWrite").get("restored").getAsBoolean()
+                result.getAsJsonObject("displayWrite")
+                                .getAsJsonObject("value")
+                                .get("restored")
+                                .getAsBoolean()
                         && result.get("outcome").getAsString().equals("not_applied"),
                 "restore reported only after both were put back: " + result);
     }
@@ -433,10 +468,11 @@ public final class MixDisplayWriteTest {
     void minusInfinity() {
         MixModule[] m = new MixModule[1];
         HostFixture f = fixture(m);
-        JsonObject result = call(f, m[0], "tracks.set", params("{\"volumeDisplay\":\"-inf dB\"}"));
+        JsonObject result = call(f, m[0], "tracks.set", params("{\"volume\":{\"display\":\"-inf dB\"}}"));
         assertTrue(
                 result.get("outcome").getAsString().matches("applied|already_matched")
-                        && result.getAsJsonObject("volumeDisplayWrite")
+                        && result.getAsJsonObject("displayWrite")
+                                        .getAsJsonObject("volume")
                                         .get("probes")
                                         .getAsInt()
                                 == 1,
@@ -451,7 +487,7 @@ public final class MixDisplayWriteTest {
         MixModule[] m = new MixModule[1];
         HostFixture f = fixture(m);
         FakeHost vol = f.tracks[0].child("volume").child("value");
-        HostOperation op = f.submit(m[0], "tracks.set", params("{\"volumeDb\":-6}"));
+        HostOperation op = f.submit(m[0], "tracks.set", params("{\"volume\":{\"display\":\"-6 dB\"}}"));
         f.next();
         int writes = vol.writes;
         f.tracks[0].child("channelId").emit("00000000-0000-0000-0000-0000000000ff");
@@ -466,10 +502,11 @@ public final class MixDisplayWriteTest {
         MixModule[] m = new MixModule[1];
         HostFixture f = fixture(m);
         f.tracks[0].child("volume").child("value").afterWrite = () -> {};
-        JsonObject result = call(f, m[0], "tracks.set", params("{\"volumeDisplay\":\"-inf dB\"}"));
+        JsonObject result = call(f, m[0], "tracks.set", params("{\"volume\":{\"display\":\"-inf dB\"}}"));
         assertTrue(
                 result.get("reason").getAsString().equals("readback_mismatch")
-                        && result.getAsJsonObject("volumeDisplayWrite")
+                        && result.getAsJsonObject("displayWrite")
+                                .getAsJsonObject("volume")
                                 .get("failure")
                                 .getAsString()
                                 .equals("display_not_reachable"),
@@ -481,7 +518,8 @@ public final class MixDisplayWriteTest {
         MixModule[] m = new MixModule[1];
         HostFixture f = fixture(m);
         f.tracks[0].child("volume").child("value").notifyWrites = false;
-        HostOperation op = f.submit(m[0], "tracks.set", params("{\"volumeDb\":-6}"), f.tasks.after(3000));
+        HostOperation op =
+                f.submit(m[0], "tracks.set", params("{\"volume\":{\"display\":\"-6 dB\"}}"), f.tasks.after(3000));
         JsonObject result = run(f, op);
         assertTrue(result.get("reason").getAsString().equals("not_observed"), "probe never observed: " + result);
     }

@@ -4,19 +4,11 @@ from typing import TYPE_CHECKING, Literal, Self
 
 from pydantic import Field, model_validator
 
-from bitwig_agent.protocol.base import (
-    PROJECT_READY,
-    TARGET,
-    TRACK,
-    DeviceArgs,
-    Nonempty,
-    ParameterArgs,
-    StrictModel,
-    ToolSpec,
-    Uuid,
-    omitted,
-)
+from bitwig_agent.protocol.base import PROJECT_READY, Nonempty, StatusArgs, StrictModel, ToolSpec, Uuid, omitted
 from bitwig_agent.protocol.limits import TRACK_WINDOW
+from bitwig_agent.protocol.refs import SidechainRef, TrackDeviceRef, TrackRef
+from bitwig_agent.protocol.tracks import EXAMPLE_OTHER, EXAMPLE_TRACK
+from bitwig_agent.protocol.values import Expect
 
 ROUTING_TRACK_KINDS = frozenset({"track_audio_input", "track_note_input", "pre_fader", "post_fader", "track_notes"})
 OutputKind = Literal["none", "track_audio_input", "track_note_input"]
@@ -25,7 +17,9 @@ SourceKind = Literal[
 ]
 
 
-ROUTING_TRACK_ID = f"A track of the current {TRACK_WINDOW}-track window (tracks.list); for a group, its trackId."
+ROUTING_TRACK_ID = (
+    f"The id of a track ref in the current {TRACK_WINDOW}-track window (tracks.list); for a group, its id."
+)
 
 
 class RoutingEntry(StrictModel):
@@ -83,74 +77,61 @@ class ExpectedSourceEntry(ObservedEntry):
     ]
 
 
-class TrackRoutingGetArgs(DeviceArgs):
+class RoutingExpect(Expect):
+    output: ExpectedOutputEntry = omitted()
+    input: ExpectedSourceEntry = omitted()
+
+
+class SidechainExpect(Expect):
+    source: ExpectedSourceEntry
+
+
+class TrackRoutingGetArgs(StatusArgs):
+    target: TrackRef
     includeChoices: bool = omitted(description="Also list every v1 entry with accepted (Bitwig's own cycle check).")
 
 
-class TrackRoutingSetArgs(DeviceArgs):
+class TrackRoutingSetArgs(StatusArgs):
+    target: TrackRef
     output: OutputEntry = omitted()
-    expectedOutput: ExpectedOutputEntry = omitted(
-        description="output.entry from a fresh tracks.routing.get (compare-and-set)."
-    )
     input: SourceEntry = omitted()
-    expectedInput: ExpectedSourceEntry = omitted(
-        description="input.entry from a fresh tracks.routing.get (compare-and-set)."
+    expect: RoutingExpect = omitted(
+        description="Keyed like the write: expect.output / expect.input is the entry object of output / input from a fresh tracks.routing.get, copied verbatim; a mismatch writes nothing."
     )
 
     @model_validator(mode="after")
-    def validate_pairs(self) -> Self:
+    def validate_fields(self) -> Self:
         given = self.model_fields_set
         if not given & {"output", "input"}:
             raise ValueError("supply output, input or both")
-        for field, expected in (("output", "expectedOutput"), ("input", "expectedInput")):
-            if (field in given) != (expected in given):
-                raise ValueError(f"{field} and {expected} must be supplied together")
+        if "expect" in given and self.expect.model_fields_set - given:
+            raise ValueError("expect keys must also be written")
         return self
 
 
-class SidechainGetArgs(ParameterArgs):
+class SidechainGetArgs(StatusArgs):
+    target: TrackDeviceRef
     includeChoices: bool = omitted(
         description="Also list every v1 source with accepted (Bitwig's own cycle check) per writable component."
     )
 
 
-class SidechainSetArgs(ParameterArgs):
-    componentIndex: int = omitted(
-        ge=0,
-        le=255,
-        description="componentIndex from a fresh devices.sidechain.get; exactly one of componentIndex or componentId.",
-    )
-    expectedComponentId: Nonempty = omitted(
-        description="That row's componentId; required with componentIndex (guards against shifted components)."
-    )
-    componentId: Nonempty = omitted(
-        description="componentId from devices.sidechain.get when it is unique on the device."
-    )
-    expectedModulatorId: Uuid = omitted(
-        description="Required when the component's host is modulator: its modulatorId from the get."
-    )
-    expectedModuleId: Uuid = omitted(
-        description="Required when the component's host is grid_module: its moduleId from the get."
-    )
+class SidechainSetArgs(StatusArgs):
+    target: SidechainRef
     source: SourceEntry
-    expectedSource: ExpectedSourceEntry = Field(
-        description="The component's source from a fresh devices.sidechain.get (compare-and-set)."
+    expect: SidechainExpect = omitted(
+        description="The component's source from a fresh devices.sidechain.get; a mismatch writes nothing."
     )
 
-    @model_validator(mode="after")
-    def validate_component(self) -> Self:
-        given = self.model_fields_set
-        if ("componentIndex" in given) == ("componentId" in given):
-            raise ValueError("supply exactly one of componentIndex or componentId")
-        if ("componentIndex" in given) != ("expectedComponentId" in given):
-            raise ValueError("componentIndex needs expectedComponentId, and only it")
-        return self
 
+EXAMPLE_DEVICE = {"kind": "device", "track": EXAMPLE_TRACK, "index": 0, "name": "Compressor"}
+EXAMPLE_SIDECHAIN = {"kind": "sidechain", "device": EXAMPLE_DEVICE, "index": 0, "id": "from-devices.sidechain.get"}
+OTHER_ID = EXAMPLE_OTHER["id"]
 
-TRACKS_ROUTING_GET_DESCRIPTION = "Read one track's output chooser and, for audio/instrument/hybrid tracks, its input chooser (the guide's Track I/O Settings), by trackId from tracks.list. output.entry / input.entry are {kind, trackId?} (copy them verbatim as expectedOutput/expectedInput; the display name is beside them): output none | track_audio_input | track_note_input (another track, group, effect track or master); input none | pre_fader | post_fader | track_notes (another track) | all_ins | computer_keyboard | onscreen_keyboard; anything else (hardware ports, device outputs, master's own hardware output) reads as {kind other, name, nativeType} and cannot be set. input is null with inputUnavailableReason where the track type has no input chooser (group, effect, master). kinds lists what that chooser accepts; writable says whether this version can set it. includeChoices adds choices [{entry, name, accepted}] for every bank track, accepted (Bitwig's own cycle check; rejected entries are listed, not hidden) and unresolvedTracks. nativeTrackKind/nativeRole are diagnostics. Native read (inspected Bitwig 6.1.4 JAR); no selection, no stopped transport needed. Rows naming a track carry its public name beside the entry (trackName; sourceTrackName for a sidechain source), since native bus names are blank or generic (\"Pre-Fader\")."
-TRACKS_ROUTING_SET_DESCRIPTION = "Set a track's output and/or input chooser entry with compare-and-set: expectedOutput/expectedInput are the entries from a fresh tracks.routing.get (mismatch: stale_target, nothing changed). Entries name tracks of the current window by trackId. Refused before any write (not_applied): kind_mismatch (an audio track's input takes only pre_fader/post_fader, an instrument track's only note sources; Bitwig's setter does not check this itself), rejected_cycle (Bitwig's own cycle check, a track routed to itself, or output and input naming the same track in one call), unsupported_scope (no input chooser, master output). Both fields change inside one project undo transaction; each is read back by native identity: applied, already_matched, or unknown. Needs stopped transport with recording/automation-write off. An unknown field holds routing writes until you inspect with tracks.routing.get and ack routing.quarantine; never retry."
-DEVICES_SIDECHAIN_GET_DESCRIPTION = "Read the sidechain source choosers of one top-level device (trackId, deviceIndex, exact expectedDeviceName from devices.list): the native device's own audio/note sidechain (Compressor, Dynamics, Gate, Transient Control, ...), its modulators' (Audio Sidechain, Note Sidechain, Audio Rate; modulatorId as in modulators.get), its Grid Audio Sidechain modules (moduleId is the id of a grid.export refs entry) and a plug-in's audio sidechain. components [{componentIndex, componentId, label, kind audio|note|plugin_audio|audio_in|other, host device|modulator|grid_module, modulatorId?, moduleId?, kinds, writable, reason?, source (an entry), sourceName, choices?}]; source kinds as tracks.routing.get input. Nested devices inside chains/layers are not included. includeChoices adds choices [{entry, name, accepted}] for every bank track, accepted. Native read (inspected Bitwig 6.1.4 JAR); no selection."
-DEVICES_SIDECHAIN_SET_DESCRIPTION = "Set one sidechain component's source with compare-and-set expectedSource (its source entry from a fresh devices.sidechain.get). Address it by componentIndex plus expectedComponentId, or by componentId when unique; a modulator's component also needs expectedModulatorId and a Grid module's expectedModuleId (components shift when their owners change). The component's kinds (from the get) are what it accepts, e.g. an audio sidechain pre_fader/post_fader of a track, a note sidechain track_notes; anything else is kind_mismatch (Bitwig's setter does not check it). Same refusals, undo transaction, identity readback, stopped-transport requirement and unknown hold as tracks.routing.set."
+TRACKS_ROUTING_GET_DESCRIPTION = "Read one track's output chooser and, for audio/instrument/hybrid tracks, its input chooser (the guide's Track I/O Settings), by track ref. output.entry / input.entry are {kind, trackId?} (copy an entry verbatim into expect.output / expect.input; the display name is beside them): output none | track_audio_input | track_note_input (another track, group, effect track or master); input none | pre_fader | post_fader | track_notes (another track) | all_ins | computer_keyboard | onscreen_keyboard; anything else (hardware ports, device outputs, master's own hardware output) reads as {kind other, name, nativeType} and cannot be set. input is null with inputUnavailableReason where the track type has no input chooser (group, effect, master). kinds lists what that chooser accepts; writable says whether this version can set it. includeChoices adds choices [{entry, name, accepted}] for every bank track, accepted (Bitwig's own cycle check; rejected entries are listed, not hidden) and unresolvedTracks. nativeTrackKind/nativeRole are diagnostics. Native read (inspected Bitwig 6.1.4 JAR); no selection, no stopped transport needed. Rows naming a track carry its public name beside the entry (trackName; sourceTrackName for a sidechain source), since native bus names are blank or generic (\"Pre-Fader\")."
+TRACKS_ROUTING_SET_DESCRIPTION = "Set a track's output and/or input chooser entry, optionally with expect (expect.output / expect.input: the entry object of output / input from a fresh tracks.routing.get, copied verbatim; mismatch: stale/target_changed with observed, nothing changed). Entries name tracks of the current window by trackId. Refused before any write (not_applied): kind_mismatch (an audio track's input takes only pre_fader/post_fader, an instrument track's only note sources; Bitwig's setter does not check this itself), routing_cycle (Bitwig's own cycle check, a track routed to itself, or output and input naming the same track in one call), unsupported_scope (no input chooser, master output). Both fields change inside one project undo transaction; each is read back by native identity: applied, already_matched, or unknown. Returns ref. Needs stopped transport with recording/automation-write off. An unknown field holds routing writes until you inspect with tracks.routing.get and ack routing.quarantine; never retry."
+DEVICES_SIDECHAIN_GET_DESCRIPTION = "Read the sidechain source choosers of one top-level device (a device ref from devices.list): the native device's own audio/note sidechain (Compressor, Dynamics, Gate, Transient Control, ...), its modulators' (Audio Sidechain, Note Sidechain, Audio Rate), its Grid Audio Sidechain modules and a plug-in's audio sidechain. components [{ref (the sidechain ref devices.sidechain.set takes), label, kind audio|note|plugin_audio|audio_in|other, host device|modulator|grid_module, kinds, writable, reason?, source (an entry), sourceName, choices?}]; source kinds as tracks.routing.get input. Nested devices inside chains/layers are not included. includeChoices adds choices [{entry, name, accepted}] for every bank track, accepted. Native read (inspected Bitwig 6.1.4 JAR); no selection."
+DEVICES_SIDECHAIN_SET_DESCRIPTION = "Set one sidechain component's source, addressed by the sidechain ref devices.sidechain.get returned (its index, componentId and owning modulator or Grid module are compared, so a shifted component is stale), optionally with expect.source (its source entry from a fresh get). The component's kinds are what it accepts, e.g. an audio sidechain pre_fader/post_fader of a track, a note sidechain track_notes; anything else is kind_mismatch (Bitwig's setter does not check it). Returns ref. Same refusals, undo transaction, identity readback, stopped-transport requirement and unknown hold as tracks.routing.set."
 
 
 SPECS: dict[str, ToolSpec] = {
@@ -159,10 +140,10 @@ SPECS: dict[str, ToolSpec] = {
         TRACKS_ROUTING_GET_DESCRIPTION,
         True,
         examples=(
-            {"trackId": TRACK},
-            {"trackId": TRACK, "includeChoices": True},
+            {"target": EXAMPLE_TRACK},
+            {"target": EXAMPLE_TRACK, "includeChoices": True},
         ),
-        summary="Read one track's output chooser and, for audio/instrument/hybrid tracks, its input chooser. output.entry and input.entry are copied verbatim as expectedOutput/expectedInput in tracks.routing.set; kinds lists what a chooser accepts, writable whether it can be set. includeChoices lists every track's accepted entries.",
+        summary="Read one track's output chooser and, for audio/instrument/hybrid tracks, its input chooser by track ref. the entry of output and of input is copied verbatim into expect.output / expect.input of tracks.routing.set; kinds lists what a chooser accepts, writable whether it can be set. includeChoices lists every track's accepted entries.",
     ),
     "tracks.routing.set": ToolSpec(
         TrackRoutingSetArgs,
@@ -170,27 +151,35 @@ SPECS: dict[str, ToolSpec] = {
         False,
         examples=(
             {
-                "trackId": TRACK,
-                "output": {"kind": "track_audio_input", "trackId": "12345678-1234-1234-1234-123456789abd"},
-                "expectedOutput": {"kind": "track_audio_input", "trackId": "12345678-1234-1234-1234-123456789abe"},
+                "target": EXAMPLE_TRACK,
+                "output": {"kind": "track_audio_input", "trackId": OTHER_ID},
+                "expect": {"output": {"kind": "none"}},
             },
             {
-                "trackId": TRACK,
-                "input": {"kind": "post_fader", "trackId": "12345678-1234-1234-1234-123456789abd"},
-                "expectedInput": {"kind": "none"},
+                "target": EXAMPLE_TRACK,
+                "input": {"kind": "post_fader", "trackId": OTHER_ID},
+                "expect": {"input": {"kind": "none"}},
             },
             {
-                "trackId": TRACK,
+                "target": EXAMPLE_TRACK,
                 "input": {"kind": "all_ins"},
-                "expectedInput": {"kind": "other", "name": "exact name from tracks.routing.get"},
+                "expect": {
+                    "input": {
+                        "kind": "other",
+                        "name": "exact name from tracks.routing.get",
+                        "nativeType": "from-tracks.routing.get",
+                    }
+                },
             },
             {
-                "trackId": TRACK,
+                "target": EXAMPLE_TRACK,
                 "output": {"kind": "none"},
-                "expectedOutput": {
-                    "kind": "other",
-                    "name": "exact name from tracks.routing.get",
-                    "nativeType": "from-tracks.routing.get",
+                "expect": {
+                    "output": {
+                        "kind": "other",
+                        "name": "exact name from tracks.routing.get",
+                        "nativeType": "from-tracks.routing.get",
+                    }
                 },
             },
         ),
@@ -200,44 +189,33 @@ SPECS: dict[str, ToolSpec] = {
         SidechainGetArgs,
         DEVICES_SIDECHAIN_GET_DESCRIPTION,
         True,
-        examples=({**TARGET, "expectedDeviceName": "Compressor"},),
-        summary="Read the sidechain source choosers of one top-level device (trackId, deviceIndex, expectedDeviceName from devices.list): the device's own, its modulators', Grid Audio Sidechain modules' and a plug-in's. Copy a component's source as expectedSource in devices.sidechain.set. includeChoices lists the accepted tracks.",
+        examples=({"target": EXAMPLE_DEVICE},),
+        summary="Read the sidechain source choosers of one top-level device (a device ref from devices.list): the device's own, its modulators', Grid Audio Sidechain modules' and a plug-in's. Each component carries the sidechain ref devices.sidechain.set takes. includeChoices lists the accepted tracks.",
     ),
     "devices.sidechain.set": ToolSpec(
         SidechainSetArgs,
         DEVICES_SIDECHAIN_SET_DESCRIPTION,
         False,
         examples=(
+            {"target": EXAMPLE_SIDECHAIN, "source": {"kind": "none"}},
             {
-                **TARGET,
-                "expectedDeviceName": "Compressor",
-                "componentIndex": 0,
-                "expectedComponentId": "from-devices.sidechain.get",
-                "source": {"kind": "pre_fader", "trackId": "12345678-1234-1234-1234-123456789abd"},
-                "expectedSource": {"kind": "none"},
+                "target": EXAMPLE_SIDECHAIN,
+                "source": {"kind": "pre_fader", "trackId": OTHER_ID},
+                "expect": {"source": {"kind": "none"}},
             },
             {
-                **TARGET,
-                "expectedDeviceName": "Dynamics",
-                "componentId": "from-devices.sidechain.get",
-                "source": {"kind": "none"},
-                "expectedSource": {"kind": "post_fader", "trackId": "12345678-1234-1234-1234-123456789abd"},
-            },
-            {
-                **TARGET,
-                "expectedDeviceName": "Polysynth",
-                "componentIndex": 1,
-                "expectedComponentId": "from-devices.sidechain.get",
-                "expectedModulatorId": "abcdef01-2345-6789-abcd-0123456789ab",
-                "source": {"kind": "track_notes", "trackId": "12345678-1234-1234-1234-123456789abd"},
-                "expectedSource": {
-                    "kind": "other",
-                    "name": "exact name from devices.sidechain.get",
-                    "nativeType": "from-devices.sidechain.get",
+                "target": {**EXAMPLE_SIDECHAIN, "index": 1, "modulatorId": "abcdef01-2345-6789-abcd-0123456789ab"},
+                "source": {"kind": "track_notes", "trackId": OTHER_ID},
+                "expect": {
+                    "source": {
+                        "kind": "other",
+                        "name": "exact name from devices.sidechain.get",
+                        "nativeType": "from-devices.sidechain.get",
+                    }
                 },
             },
         ),
         requires=PROJECT_READY,
-        summary="Set one sidechain component's source with expectedSource from a fresh devices.sidechain.get; address it by componentIndex and expectedComponentId. A kind the component does not accept is kind_mismatch.",
+        summary="Set one sidechain component's source by the sidechain ref devices.sidechain.get returned; optional expect.source. An unaccepted kind is kind_mismatch.",
     ),
 }

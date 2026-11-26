@@ -34,7 +34,7 @@ public final class ValueTest {
 
     @Test
     void aReadUnitCarriesDisplayAndOptionsOnlyWhenTheWriteTakesThem() {
-        assertEquals(json("{\"value\":0.5,\"display\":\"C\"}"), Results.unit(json("0.5"), "C", null));
+        assertEquals(json("{\"value\":0.5,\"display\":\"0.00 %\"}"), Results.unit(json("0.5"), "0.00 %", null));
         JsonArray options = json("[\"1/16\",\"1/8\"]").getAsJsonArray();
         assertEquals(
                 json("{\"value\":\"1/16\",\"options\":[\"1/16\",\"1/8\"]}"),

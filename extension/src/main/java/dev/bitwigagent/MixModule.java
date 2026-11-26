@@ -3,103 +3,40 @@ package dev.bitwigagent;
 import com.bitwig.extension.callback.*;
 import com.bitwig.extension.controller.api.*;
 import com.google.gson.*;
+import dev.bitwigagent.core.Refs;
 import java.util.*;
-import java.util.concurrent.TimeUnit;
 
-/** UUID-targeted mix operations over the single shared, bounded track bank. */
+/** Ref-addressed mix operations over the single shared, bounded track bank. */
 final class MixModule implements HostModule {
-    static final Set<String> METHODS = Set.of(
-            "tracks.get",
-            "tracks.set",
-            "tracks.create",
-            "tracks.select",
-            "tracks.sends.set",
-            "tracks.group",
-            "tracks.delete");
-    /** Long enough for the native group operation, which may first save plug-in states asynchronously. */
-    static final long GROUP_OBSERVE_NANOS = TimeUnit.MILLISECONDS.toNanos(3000);
-
-    interface GroupAccess {
-        void execute(Runnable work);
-
-        JsonObject group(List<Object> trackProxies, List<String> trackIds, Runnable check, Runnable beforeWrite);
-    }
+    static final Set<String> METHODS = Set.of("tracks.get", "tracks.set", "tracks.select", "tracks.sends.set");
 
     private static final String[] FIELDS = {
-        "name",
-        "volumeNormalized",
-        "panNormalized",
-        "mute",
-        "solo",
-        "arm",
-        "selected",
-        "color",
-        "activated",
-        "monitorMode",
-        "crossFadeMode"
+        "name", "volume", "pan", "mute", "solo", "arm", "selected", "color", "activated", "monitorMode", "crossFadeMode"
     };
+    private static final int NAME = 0, VOLUME = 1, PAN = 2, SELECTED = 6, COLOR = 7, MONITOR = 9, CROSS_FADE = 10;
     /** The first FIELDS entries every track reports; the later ones never decide observationsComplete. */
     private static final int BASE_FIELDS = 7;
 
     private static final Set<String> WRITABLE = Set.of(
-            "name",
-            "volumeNormalized",
-            "panNormalized",
-            "mute",
-            "solo",
-            "arm",
-            "color",
-            "activated",
-            "monitorMode",
-            "crossFadeMode");
-    private static final java.util.regex.Pattern RGB = java.util.regex.Pattern.compile("#[0-9a-fA-F]{6}");
-    // Display-addressed alternatives to volumeNormalized/panNormalized, resolved against the host's own display text.
-    private static final Set<String> DISPLAY_WRITABLE = Set.of("volumeDb", "volumeDisplay", "panPercent", "panDisplay");
-    private static final Set<String> SEND_OPTIONAL =
-            Set.of("sendIndex", "sendName", "expectedSendName", "valueNormalized", "display", "enabled");
+            "name", "volume", "pan", "mute", "solo", "arm", "color", "activated", "monitorMode", "crossFadeMode");
+    private static final Map<String, ValueMatch> TRACK_RULES = rules(Set.of("volume", "pan"), WRITABLE);
+    private static final Map<String, ValueMatch> SEND_RULES = rules(Set.of("value"), Set.of("value", "enabled"));
     private final Scheduler scheduler;
     private final TrackWindow window;
-    private final Application application;
-    private final TransportSafety transportSafety;
+    private final TrackRefs trackRefs;
     private final SelectionLease selection;
-    private final NativeRuntime natives;
-    private final Holds holds;
     private final State[] states = new State[HostLimits.TRACKS];
-    private HostOperation creation;
-    // A completed/cancelled RPC does not cancel a void native factory. Never reuse its attribution window.
-    private static final String CREATION = "tracks.create", GROUP = "tracks.group";
-    private GroupAccess groupAccess;
 
     MixModule(
             ControllerHost host,
             Scheduler scheduler,
             TrackWindow window,
-            Application application,
-            TransportSafety transportSafety,
-            SelectionLease selection,
-            NativeRuntime natives,
-            Holds holds) {
-        this(host, scheduler, window, application, transportSafety, selection, natives, holds, null);
-    }
-
-    MixModule(
-            ControllerHost host,
-            Scheduler scheduler,
-            TrackWindow window,
-            Application application,
-            TransportSafety transportSafety,
-            SelectionLease selection,
-            NativeRuntime natives,
-            Holds holds,
-            GroupAccess groupAccess) {
+            TrackRefs trackRefs,
+            SelectionLease selection) {
         this.scheduler = scheduler;
         this.window = window;
-        this.application = application;
-        this.transportSafety = transportSafety;
+        this.trackRefs = trackRefs;
         this.selection = selection;
-        this.natives = natives;
-        this.holds = holds;
-        this.groupAccess = groupAccess;
         for (int i = 0; i < states.length; i++) {
             Track track = window.at(i);
             State state = new State(track, host);
@@ -108,20 +45,20 @@ final class MixModule implements HostModule {
             track.exists().addValueObserver((BooleanValueChangedCallback) state::existence);
             observe(state, "type", track.trackType());
             observe(state, "index", track.position());
-            track.name().addValueObserver((StringValueChangedCallback) v -> state.seen(0));
-            track.volume().value().addValueObserver((DoubleValueChangedCallback) v -> state.seen(1));
-            track.pan().value().addValueObserver((DoubleValueChangedCallback) v -> state.seen(2));
+            track.name().addValueObserver((StringValueChangedCallback) v -> state.seen(NAME));
+            track.volume().value().addValueObserver((DoubleValueChangedCallback) v -> state.seen(VOLUME));
+            track.pan().value().addValueObserver((DoubleValueChangedCallback) v -> state.seen(PAN));
             track.mute().addValueObserver((BooleanValueChangedCallback) v -> state.seen(3));
             track.solo().addValueObserver((BooleanValueChangedCallback) v -> state.seen(4));
             track.arm().addValueObserver((BooleanValueChangedCallback) v -> state.seen(5));
             track.addIsSelectedInEditorObserver(v -> {
                 state.selected = v;
-                state.seen(6);
+                state.seen(SELECTED);
             });
-            track.color().addValueObserver((ColorValueChangedCallback) (r, g, b) -> state.seen(7));
+            track.color().addValueObserver((ColorValueChangedCallback) (r, g, b) -> state.seen(COLOR));
             track.isActivated().addValueObserver((BooleanValueChangedCallback) v -> state.seen(8));
-            track.monitorMode().addValueObserver((EnumValueChangedCallback) v -> state.seen(9));
-            track.crossFadeMode().addValueObserver((EnumValueChangedCallback) v -> state.seen(10));
+            track.monitorMode().addValueObserver((EnumValueChangedCallback) v -> state.seen(MONITOR));
+            track.crossFadeMode().addValueObserver((EnumValueChangedCallback) v -> state.seen(CROSS_FADE));
             observe(state, "volumeDisplay", track.volume().displayedValue());
             observe(state, "panDisplay", track.pan().displayedValue());
             SendBank sends = track.sendBank();
@@ -132,7 +69,7 @@ final class MixModule implements HostModule {
                 String prefix = "send" + j + ".";
                 observe(state, prefix + "exists", send.exists());
                 observe(state, prefix + "name", send.name());
-                observe(state, prefix + "valueNormalized", send.value());
+                observe(state, prefix + "value", send.value());
                 observe(state, prefix + "display", send.displayedValue());
                 observe(state, prefix + "enabled", send.isEnabled());
                 observe(state, prefix + "preFader", send.isPreFader());
@@ -155,126 +92,32 @@ final class MixModule implements HostModule {
         validateParams(method, p);
     }
 
+    /** What the schema cannot say: a write changes something. */
     static void validateParams(String method, JsonObject p) {
-        switch (method) {
-            case "tracks.get":
-            case "tracks.select":
-                Params.fields(p, Set.of("trackId"), Set.of());
-                Params.string(p, "trackId");
-                return;
-            case "tracks.set":
-                Params.fields(p, Set.of("trackId"), union(WRITABLE, DISPLAY_WRITABLE));
-                Params.string(p, "trackId");
-                if (p.size() == 1)
-                    throw Errors.notApplied(Reason.INVALID_PARAMS, "At least one track field is required.");
-                if (p.has("name")) Params.string(p, "name");
-                for (String key : List.of("volumeNormalized", "panNormalized"))
-                    if (p.has(key)) Params.number(p, key, 0, 1);
-                for (String key : List.of("mute", "solo", "arm", "activated")) if (p.has(key)) Params.bool(p, key);
-                if (p.has("color") && !RGB.matcher(Params.string(p, "color")).matches())
-                    throw Errors.notApplied(Reason.INVALID_PARAMS, "color must be #RRGGBB.");
-                for (String key : List.of("monitorMode", "crossFadeMode")) if (p.has(key)) Params.string(p, key);
-                if (p.has("volumeDb")) Params.number(p, "volumeDb", -150, 24);
-                if (p.has("panPercent")) Params.number(p, "panPercent", -100, 100);
-                for (String key : List.of("volumeDisplay", "panDisplay")) if (p.has(key)) Params.string(p, key);
-                atMostOne(p, "volumeNormalized", "volumeDb", "volumeDisplay");
-                atMostOne(p, "panNormalized", "panPercent", "panDisplay");
-                return;
-            case "tracks.sends.set":
-                Params.fields(p, Set.of("trackId"), SEND_OPTIONAL);
-                Params.string(p, "trackId");
-                if (p.has("sendIndex") == p.has("sendName"))
-                    throw Errors.notApplied(Reason.INVALID_PARAMS, "Supply exactly one of sendIndex or sendName.");
-                if (p.has("sendIndex")) Params.integer(p, "sendIndex", 0, 127);
-                for (String key : List.of("sendName", "expectedSendName", "display"))
-                    if (p.has(key)) Params.string(p, key);
-                if (p.has("valueNormalized")) Params.number(p, "valueNormalized", 0, 1);
-                if (p.has("enabled")) Params.bool(p, "enabled");
-                atMostOne(p, "valueNormalized", "display");
-                if (!p.has("valueNormalized") && !p.has("display") && !p.has("enabled"))
-                    throw Errors.notApplied(
-                            Reason.INVALID_PARAMS, "At least one of valueNormalized, display or enabled is required.");
-                return;
-            case "tracks.create":
-                Params.fields(p, Set.of("type", "position", "name"), Set.of());
-                if (!Set.of("audio", "instrument", "effect").contains(Params.string(p, "type")))
-                    throw Errors.notApplied(Reason.INVALID_PARAMS, "type must be audio, instrument, or effect.");
-                Params.integer(p, "position", -1, Integer.MAX_VALUE);
-                Params.string(p, "name");
-                return;
-            case "tracks.group":
-                Params.fields(p, Set.of("trackIds"), Set.of("name"));
-                trackIds(p);
-                if (p.has("name")) Params.string(p, "name");
-                return;
-            case "tracks.delete":
-                Params.fields(p, Set.of("trackId", "expectedName"), Set.of());
-                Params.string(p, "trackId");
-                Params.string(p, "expectedName");
-                return;
-            default:
-                throw Errors.notApplied(Reason.UNKNOWN_METHOD, "Unknown track method.");
-        }
+        ValueMatch.requireNamed(p);
+        if (method.equals("tracks.set") && WRITABLE.stream().noneMatch(p::has))
+            throw Errors.invalid("tracks.set requires at least one changed field.");
+        if (method.equals("tracks.sends.set") && !p.has("value") && !p.has("enabled"))
+            throw Errors.invalid("tracks.sends.set requires value or enabled.");
     }
 
-    private static Set<String> union(Set<String> a, Set<String> b) {
-        Set<String> out = new HashSet<>(a);
-        out.addAll(b);
+    private static Map<String, ValueMatch> rules(Set<String> normalized, Set<String> keys) {
+        Map<String, ValueMatch> out = new HashMap<>();
+        for (String key : keys) out.put(key, normalized.contains(key) ? ValueMatch.NORMALIZED : ValueMatch.EXACT);
         return out;
-    }
-
-    private static void atMostOne(JsonObject p, String... keys) {
-        int n = 0;
-        for (String key : keys) if (p.has(key)) n++;
-        if (n > 1)
-            throw Errors.notApplied(Reason.INVALID_PARAMS, "Supply at most one of " + String.join(", ", keys) + ".");
-    }
-
-    static List<String> trackIds(JsonObject p) {
-        JsonElement value = p.get("trackIds");
-        if (!value.isJsonArray()
-                || value.getAsJsonArray().size() < 1
-                || value.getAsJsonArray().size() > HostLimits.TRACKS)
-            throw Errors.notApplied(
-                    Reason.INVALID_PARAMS, "trackIds must be an array of 1.." + HostLimits.TRACKS + " track UUIDs.");
-        List<String> ids = new ArrayList<>();
-        Set<String> seen = new HashSet<>();
-        for (JsonElement item : value.getAsJsonArray()) {
-            if (!item.isJsonPrimitive()
-                    || !item.getAsJsonPrimitive().isString()
-                    || !DeviceSources.canonicalUuid(item.getAsString()))
-                throw Errors.notApplied(Reason.INVALID_PARAMS, "Each trackIds entry must be a canonical track UUID.");
-            if (!seen.add(item.getAsString().toLowerCase(Locale.ROOT)))
-                throw Errors.notApplied(Reason.INVALID_PARAMS, "trackIds must be distinct.");
-            ids.add(item.getAsString().toLowerCase(Locale.ROOT));
-        }
-        return ids;
     }
 
     @Override
     public void dispatch(HostOperation op, String method, JsonObject p) {
         scheduler.check(op);
-        if (method.equals("tracks.create")) {
-            create(op, p);
+        if (method.equals("tracks.sends.set")) {
+            sendSet(op, p);
             return;
         }
-        if (method.equals("tracks.group")) {
-            group(op, p);
-            return;
-        }
-        String id = p.get("trackId").getAsString();
-        State state = states[window.trackSlot(id)];
-        Target target = new Target(id, state);
-        if (method.equals("tracks.delete")) {
-            delete(op, target, p.get("expectedName").getAsString());
-            return;
-        }
+        boolean write = method.equals("tracks.set");
+        Target target = target(p.getAsJsonObject("target"), write);
         if (method.equals("tracks.get")) {
             op.result.complete(snapshot(target));
-            return;
-        }
-        if (method.equals("tracks.sends.set")) {
-            sendSet(op, target, p);
             return;
         }
         if (method.equals("tracks.select")) {
@@ -283,8 +126,8 @@ final class MixModule implements HostModule {
             op.markDispatched();
             target.state.track.selectInEditor();
             guard(op, target);
-            JsonObject result = snapshot(target);
-            result.addProperty("outcome", Outcome.SENT.wire());
+            JsonObject result = Results.outcome(Outcome.SENT);
+            result.add("ref", ref(target));
             op.result.complete(result);
             return;
         }
@@ -292,6 +135,7 @@ final class MixModule implements HostModule {
         for (String key : WRITABLE) if (p.has(key)) changes.add(key, p.get(key));
         if (changes.has("color"))
             changes.addProperty("color", changes.get("color").getAsString().toLowerCase(Locale.ROOT));
+        if (p.has("expect")) requireExpected(target, p.getAsJsonObject("expect"));
         // The host's own option list validates the enums before any write or display probe.
         if (changes.has("monitorMode"))
             EnumOptions.require(
@@ -304,25 +148,11 @@ final class MixModule implements HostModule {
                     target.state.track.crossFadeMode(),
                     changes.get("crossFadeMode").getAsString());
         List<Solve> solves = new ArrayList<>();
-        if (p.has("volumeDb") || p.has("volumeDisplay"))
-            solves.add(new Solve(
-                    "volumeNormalized",
-                    1,
-                    "volumeDisplay",
-                    DisplayScale.Kind.DB,
-                    p.get(p.has("volumeDb") ? "volumeDb" : "volumeDisplay"),
-                    p.has("volumeDb")));
-        if (p.has("panPercent") || p.has("panDisplay"))
-            solves.add(new Solve(
-                    "panNormalized",
-                    2,
-                    "panDisplay",
-                    DisplayScale.Kind.PERCENT,
-                    p.get(p.has("panPercent") ? "panPercent" : "panDisplay"),
-                    p.has("panPercent")));
-        if (solves.isEmpty()) {
-            set(op, target, changes, null);
-            return;
+        for (String key : List.of("volume", "pan")) {
+            if (!changes.has(key)) continue;
+            ValueInput input = ValueInput.parse(key, changes.get(key));
+            if (input.form == ValueInput.Form.BARE) changes.addProperty(key, input.normalized(key));
+            else solves.add(new Solve(key, input.text));
         }
         // Parse every display target before the first probe write: a bad string must never reach the host.
         for (Solve solve : solves) solve.parse();
@@ -331,41 +161,32 @@ final class MixModule implements HostModule {
 
     /** One display-addressed mixer value, resolved to a normalized value by DisplaySolver before the ordinary set flow. */
     private static final class Solve {
-        final String key, displayKey;
+        final String key, displayKey, text;
         final int field;
         final DisplayScale.Kind kind;
-        final JsonElement request;
-        final boolean numeric;
         double target, original;
-        String text;
         long restoreSeq;
 
-        Solve(String key, int field, String displayKey, DisplayScale.Kind kind, JsonElement request, boolean numeric) {
+        Solve(String key, String text) {
             this.key = key;
-            this.field = field;
-            this.displayKey = displayKey;
-            this.kind = kind;
-            this.request = request;
-            this.numeric = numeric;
+            this.text = text;
+            boolean pan = key.equals("pan");
+            field = pan ? PAN : VOLUME;
+            displayKey = pan ? "panDisplay" : "volumeDisplay";
+            kind = pan ? DisplayScale.Kind.PERCENT : DisplayScale.Kind.DB;
         }
 
         void parse() {
-            if (numeric) {
-                target = request.getAsDouble();
-                text = kind == DisplayScale.Kind.DB ? target + " dB" : target + " %";
-            } else {
-                text = request.getAsString();
-                target = DisplayScale.parse(kind, text);
-                if (Double.isNaN(target))
-                    throw Errors.notApplied(
-                            Reason.INVALID_PARAMS, "Display text not understood for " + kind + ": " + text);
-            }
+            target = DisplayScale.parse(kind, text);
+            if (Double.isNaN(target))
+                throw Errors.notApplied(
+                        Reason.UNSUPPORTED_UNIT, "The display text of " + key + " is not understood: " + text);
         }
     }
 
     private void solveNext(HostOperation op, Target target, JsonObject changes, List<Solve> solves, int index) {
         if (index == solves.size()) {
-            set(op, target, changes, null);
+            set(op, target, changes, null, null);
             return;
         }
         Solve solve = solves.get(index);
@@ -388,7 +209,7 @@ final class MixModule implements HostModule {
 
             @Override
             public void write(double x) {
-                if (solve.field == 1) state.track.volume().value().setImmediately(x);
+                if (solve.field == VOLUME) state.track.volume().value().setImmediately(x);
                 else state.track.pan().value().setImmediately(x);
             }
 
@@ -399,9 +220,7 @@ final class MixModule implements HostModule {
         };
         try {
             new DisplaySolver(scheduler, op, port, solve.kind, solve.target, result -> {
-                        target.extra.add(
-                                solve.displayKey.replace("Display", "DisplayWrite"),
-                                result.json(solve.text, solve.target));
+                        target.displayWrite.add(solve.key, result.json(solve.text, solve.target));
                         if (!result.ok) {
                             restoreEarlier(
                                     op, target, solves, index, restored -> solverFailure(op, target, result, restored));
@@ -434,7 +253,7 @@ final class MixModule implements HostModule {
                     continue;
                 earlier.restoreSeq = target.state.sequence[earlier.field];
                 Track track = target.state.track;
-                if (earlier.field == 1) track.volume().value().setImmediately(earlier.original);
+                if (earlier.field == VOLUME) track.volume().value().setImmediately(earlier.original);
                 else track.pan().value().setImmediately(earlier.original);
                 pending.add(earlier);
             }
@@ -464,21 +283,40 @@ final class MixModule implements HostModule {
     /** A failed display write applied nothing else; it either put the original back (not applied) or leaves the outcome unknown. */
     private void solverFailure(HostOperation op, Target target, DisplaySolver.Result result, boolean earlierRestored) {
         boolean current = target.matches(window);
-        JsonObject out = current ? snapshot(target) : scope();
-        out.addProperty("trackId", target.id);
+        JsonObject out = new JsonObject();
+        if (current) out.add("ref", ref(target));
         boolean restored = (!result.dispatched || result.restored) && earlierRestored;
         out.addProperty("outcome", (restored && current ? Outcome.NOT_APPLIED : Outcome.UNKNOWN).wire());
         out.addProperty("reason", result.reason.wire());
         out.addProperty("otherFieldsApplied", !earlierRestored);
-        for (Map.Entry<String, JsonElement> entry : target.extra.entrySet()) out.add(entry.getKey(), entry.getValue());
+        out.add("displayWrite", target.displayWrite);
         op.result.complete(out);
     }
 
-    private void set(HostOperation op, Target target, JsonObject changes, JsonObject created) {
-        set(op, target, changes, created, "creation");
+    /** Every key of expect must equal the value observed now, else nothing is written. */
+    private void requireExpected(Target target, JsonObject expect) {
+        guard(null, target);
+        JsonObject observed = new JsonObject();
+        for (String key : expect.keySet()) {
+            JsonElement now = value(target.state, List.of(FIELDS).indexOf(key));
+            if (now.isJsonNull()) throw Errors.notApplied(Reason.NOT_READY, key + " is not observed yet.");
+            observed.add(key, now);
+        }
+        JsonObject lowered = expect.deepCopy();
+        if (lowered.has("color"))
+            lowered.addProperty("color", lowered.get("color").getAsString().toLowerCase(Locale.ROOT));
+        ValueMatch.requireExpected(lowered, observed, TRACK_RULES);
     }
 
-    private void set(HostOperation op, Target target, JsonObject changes, JsonObject created, String createdKey) {
+    /** Names a track this module did not create a ref for: the same write flow, with {@code info} added to the result. */
+    void rename(HostOperation op, String id, String name, JsonObject info, String infoKey) {
+        Target target = new Target(id, states[window.trackSlot(id)]);
+        JsonObject changes = new JsonObject();
+        changes.addProperty("name", name);
+        set(op, target, changes, info, infoKey);
+    }
+
+    private void set(HostOperation op, Target target, JsonObject changes, JsonObject info, String infoKey) {
         Map<String, Long> writes = new LinkedHashMap<>();
         try {
             for (int i = 0; i < FIELDS.length; i++) {
@@ -491,19 +329,22 @@ final class MixModule implements HostModule {
                 }
                 long before = target.state.sequence[i];
                 guard(op, target);
+                // No callback has ever reported this field: the getter is the only evidence, and an equal write raises
+                // none.
+                if (before == 0 && matchesField(i, raw(target.state, i), changes.get(key))) target.unchanged.add(key);
                 writes.put(key, before);
                 op.markDispatched();
                 JsonElement next = changes.get(key);
                 Track track = target.state.track;
                 switch (i) {
-                    case 0:
+                    case NAME:
                         track.name().set(next.getAsString());
                         break;
                     // Absolute RPC targets must not participate in physical-controller pickup.
-                    case 1:
+                    case VOLUME:
                         track.volume().value().setImmediately(next.getAsDouble());
                         break;
-                    case 2:
+                    case PAN:
                         track.pan().value().setImmediately(next.getAsDouble());
                         break;
                     case 3:
@@ -515,7 +356,7 @@ final class MixModule implements HostModule {
                     case 5:
                         track.arm().set(next.getAsBoolean());
                         break;
-                    case 7:
+                    case COLOR:
                         track.color()
                                 .set(
                                         Integer.parseInt(next.getAsString().substring(1, 3), 16) / 255f,
@@ -525,10 +366,10 @@ final class MixModule implements HostModule {
                     case 8:
                         track.isActivated().set(next.getAsBoolean());
                         break;
-                    case 9:
+                    case MONITOR:
                         track.monitorMode().set(next.getAsString());
                         break;
-                    case 10:
+                    case CROSS_FADE:
                         track.crossFadeMode().set(next.getAsString());
                         break;
                     default:
@@ -537,96 +378,100 @@ final class MixModule implements HostModule {
             }
         } catch (RpcException error) {
             if (!op.dispatched()) throw error;
-            finish(op, target, changes, writes, created, createdKey, error.reason);
+            finish(op, target, changes, writes, info, infoKey, error.reason);
             return;
         }
-        await(op, target, changes, writes, created, createdKey);
+        await(op, target, changes, writes, info, infoKey);
     }
 
-    /** Compare-and-set of one send, addressed by index or exact name; levels are verified by observed readback. */
-    private void sendSet(HostOperation op, Target target, JsonObject p) {
+    /** One send, addressed by its ref; levels are verified by observed readback. */
+    private void sendSet(HostOperation op, JsonObject p) {
+        JsonObject ref = p.getAsJsonObject("target");
+        int trackSlot = trackRefs.resolve(ref.getAsJsonObject("track"), false);
+        State state = states[trackSlot];
+        Target target = new Target(window.at(trackSlot).channelId().get(), state);
         guard(op, target);
-        State state = target.state;
         JsonElement offset = state.meta("sendOffset");
         if (offset.isJsonNull() || state.meta("sendCount").isJsonNull())
             throw Errors.notApplied(Reason.NOT_READY, "Send window is not observed yet.");
-        int slot = -1;
-        if (p.has("sendIndex")) {
-            slot = p.get("sendIndex").getAsInt() - offset.getAsInt();
-            if (slot < 0 || slot >= HostLimits.SENDS)
-                throw Errors.notApplied(Reason.OUTSIDE_WINDOW, "sendIndex is outside the observed send window.");
-        } else {
-            String wanted = p.get("sendName").getAsString();
-            for (int j = 0; j < HostLimits.SENDS; j++) {
-                JsonElement exists = state.meta("send" + j + ".exists"), name = state.meta("send" + j + ".name");
-                if (exists.isJsonNull() || name.isJsonNull())
-                    throw Errors.notApplied(Reason.NOT_READY, "Send names are not all observed yet.");
-                if (exists.getAsBoolean() && name.getAsString().equals(wanted)) {
-                    if (slot >= 0)
-                        throw Errors.notApplied(
-                                Reason.AMBIGUOUS_NAME, "More than one send is named " + wanted + "; use sendIndex.");
-                    slot = j;
-                }
-            }
-            if (slot < 0) throw Errors.notApplied(Reason.UNKNOWN_NAME, "No send is named " + wanted + ".");
-        }
+        int index = ref.get("index").getAsInt(), slot = index - offset.getAsInt();
+        if (slot < 0 || slot >= HostLimits.SENDS)
+            throw Errors.notApplied(Reason.OUTSIDE_WINDOW, "The send is outside the observed send window.");
         String prefix = "send" + slot + ".";
         JsonElement exists = state.meta(prefix + "exists"), name = state.meta(prefix + "name");
         if (exists.isJsonNull() || name.isJsonNull())
             throw Errors.notApplied(Reason.NOT_READY, "Send is not observed yet.");
-        if (!exists.getAsBoolean()) throw Errors.notApplied(Reason.UNKNOWN_NAME, "No send exists at that index.");
-        if (p.has("expectedSendName")
-                && !p.get("expectedSendName").getAsString().equals(name.getAsString()))
-            throw Errors.notApplied(
-                    Reason.STALE_TARGET,
-                    "Send name is " + name.getAsString() + ", not the expected "
-                            + p.get("expectedSendName").getAsString() + ".");
-        double displayTarget = Double.NaN;
-        if (p.has("display")) {
-            displayTarget =
-                    DisplayScale.parse(DisplayScale.Kind.DB, p.get("display").getAsString());
-            if (Double.isNaN(displayTarget))
-                throw Errors.notApplied(
-                        Reason.INVALID_PARAMS,
-                        "Send display must read like \"-12 dB\" or \"-inf dB\": "
-                                + p.get("display").getAsString());
+        if (!exists.getAsBoolean()) throw Errors.targetNotFound(ref, "No send exists at that index.");
+        JsonObject current = Refs.send(trackRefs.ref(trackSlot), index, name.getAsString());
+        if (!Refs.matches(ref, current, true))
+            throw Errors.targetChanged("Another send is at this index than the one read.", current);
+        if (p.has("expect")) requireExpectedSend(state, prefix, p.getAsJsonObject("expect"));
+        Solve solve = null;
+        if (p.has("value")) {
+            ValueInput input = ValueInput.parse("value", p.get("value"));
+            if (input.form == ValueInput.Form.DISPLAY) {
+                solve = new Solve("value", input.text);
+                solve.parse();
+            }
         }
         new SendWrite(
                         op,
                         target,
+                        trackSlot,
                         slot,
+                        index,
                         name.getAsString(),
                         (Send) state.track.sendBank().getItemAt(slot),
                         p,
-                        displayTarget)
+                        solve)
                 .start();
+    }
+
+    private void requireExpectedSend(State state, String prefix, JsonObject expect) {
+        JsonObject observed = new JsonObject();
+        for (String key : expect.keySet()) {
+            JsonElement now = state.send(prefix, key);
+            if (now.isJsonNull()) throw Errors.notApplied(Reason.NOT_READY, "The send's " + key + " is not observed.");
+            observed.add(key, now);
+        }
+        ValueMatch.requireExpected(expect, observed, SEND_RULES);
     }
 
     private final class SendWrite {
         final HostOperation op;
         final Target target;
         final State state;
-        final int slot;
+        final int trackSlot, slot, index;
         final String prefix, name;
         final Send send;
         final JsonObject p;
-        final double displayTarget;
+        final Solve solve;
         final Map<String, Long> writes = new LinkedHashMap<>();
         final Map<String, JsonElement> requested = new LinkedHashMap<>();
         JsonElement enabledBefore = JsonNull.INSTANCE;
         boolean solvedValue;
 
         SendWrite(
-                HostOperation op, Target target, int slot, String name, Send send, JsonObject p, double displayTarget) {
+                HostOperation op,
+                Target target,
+                int trackSlot,
+                int slot,
+                int index,
+                String name,
+                Send send,
+                JsonObject p,
+                Solve solve) {
             this.op = op;
             this.target = target;
             this.state = target.state;
+            this.trackSlot = trackSlot;
             this.slot = slot;
+            this.index = index;
             this.prefix = "send" + slot + ".";
             this.name = name;
             this.send = send;
             this.p = p;
-            this.displayTarget = displayTarget;
+            this.solve = solve;
         }
 
         void guardSend() {
@@ -635,24 +480,24 @@ final class MixModule implements HostModule {
             if (!state.meta(prefix + "exists").equals(new JsonPrimitive(true))
                     || now.isJsonNull()
                     || !now.getAsString().equals(name))
-                throw Errors.notApplied(Reason.STALE_TARGET, "Send changed during operation.");
+                throw Errors.notApplied(Reason.TARGET_CHANGED, "Send changed during operation.");
         }
 
         void start() {
             enabledBefore = state.meta(prefix + "enabled");
-            if (!p.has("display")) {
+            if (solve == null) {
                 writeFields();
                 return;
             }
             DisplaySolver.Port port = new DisplaySolver.Port() {
                 @Override
                 public long valueSeq() {
-                    return state.metaSeq(prefix + "valueNormalized");
+                    return state.metaSeq(prefix + "value");
                 }
 
                 @Override
                 public JsonElement value() {
-                    return state.meta(prefix + "valueNormalized");
+                    return state.send(prefix, "value");
                 }
 
                 @Override
@@ -685,15 +530,14 @@ final class MixModule implements HostModule {
                     send.isEnabled().set(on);
                 }
             };
-            String text = p.get("display").getAsString();
-            new DisplaySolver(scheduler, op, port, DisplayScale.Kind.DB, displayTarget, result -> {
-                        target.extra.add("displayWrite", result.json(text, displayTarget));
+            new DisplaySolver(scheduler, op, port, solve.kind, solve.target, result -> {
+                        target.displayWrite.add("value", result.json(solve.text, solve.target));
                         if (!result.ok) {
                             solverFailure(op, target, result, true);
                             return;
                         }
-                        requested.put("valueNormalized", new JsonPrimitive(result.normalized));
-                        writes.put("valueNormalized", -1L);
+                        requested.put("value", new JsonPrimitive(result.normalized));
+                        writes.put("value", -1L);
                         solvedValue = true;
                         writeFields();
                     })
@@ -702,10 +546,10 @@ final class MixModule implements HostModule {
 
         void writeFields() {
             try {
-                boolean level = p.has("valueNormalized") && write("valueNormalized", p.get("valueNormalized"), false);
+                boolean level = p.has("value") && solve == null && write("value", p.get("value"), false);
                 // Last: a level write can auto-enable the send on a later flush, so the metadata is stale and the
                 // explicit enabled write is dispatched regardless of what it currently shows.
-                if (p.has("enabled")) write("enabled", p.get("enabled"), level);
+                if (p.has("enabled")) write("enabled", p.get("enabled"), level || solvedValue);
             } catch (RpcException error) {
                 if (!op.dispatched()) throw error;
                 finish(error.reason);
@@ -717,7 +561,7 @@ final class MixModule implements HostModule {
         boolean write(String key, JsonElement value, boolean force) {
             guardSend();
             requested.put(key, value);
-            if (!force && matches(state.meta(prefix + key), value)) {
+            if (!force && matches(state.send(prefix, key), value)) {
                 writes.put(key, -1L);
                 return false;
             }
@@ -733,7 +577,7 @@ final class MixModule implements HostModule {
             Long before = writes.get(key);
             return before != null
                     && (before == -1 || state.metaSeq(prefix + key) > before)
-                    && matches(state.meta(prefix + key), requested.get(key));
+                    && matches(state.send(prefix, key), requested.get(key));
         }
 
         void await() {
@@ -750,14 +594,8 @@ final class MixModule implements HostModule {
 
         void finish(Reason reason) {
             boolean current = target.matches(window);
-            JsonObject result = current ? snapshot(target) : scope();
-            result.addProperty("trackId", target.id);
-            result.addProperty(
-                    "sendIndex",
-                    state.meta("sendOffset").isJsonNull()
-                            ? -1
-                            : state.meta("sendOffset").getAsInt() + slot);
-            result.addProperty("sendName", name);
+            JsonObject result = new JsonObject();
+            if (current) result.add("ref", Refs.send(trackRefs.ref(trackSlot), index, name));
             JsonObject fields = new JsonObject();
             for (Map.Entry<String, JsonElement> entry : requested.entrySet()) {
                 String key = entry.getKey();
@@ -765,12 +603,12 @@ final class MixModule implements HostModule {
                         key,
                         writeField(
                                 entry.getValue(),
-                                current ? state.meta(prefix + key) : JsonNull.INSTANCE,
+                                current ? state.send(prefix, key) : JsonNull.INSTANCE,
                                 current,
                                 writes.get(key),
                                 state.metaSeq(prefix + key),
                                 current && verified(key),
-                                key.equals("valueNormalized") && solvedValue));
+                                key.equals("value") && solvedValue));
             }
             stamp(result, fields, current ? reason : null);
             result.add("fields", fields);
@@ -782,32 +620,55 @@ final class MixModule implements HostModule {
                     && !enabledBefore.getAsBoolean()
                     && now.getAsBoolean();
             result.addProperty("autoEnabled", auto);
-            for (Map.Entry<String, JsonElement> entry : target.extra.entrySet())
-                result.add(entry.getKey(), entry.getValue());
+            if (target.displayWrite.size() > 0) result.add("displayWrite", target.displayWrite);
             op.result.complete(result);
         }
     }
 
     /** The effect (FX) track a send feeds: sends follow effect-track order. Null when that track is not in the observed window. */
     private JsonObject effectTrack(int sendIndex) {
-        for (State state : states) {
-            Track track = state.track;
-            if (!track.exists().get() || !"Effect".equals(track.trackType().get()) || ordinal(track, true) != sendIndex)
+        for (int slot = 0; slot < states.length; slot++) {
+            Track track = states[slot].track;
+            if (!track.exists().get() || !"Effect".equals(track.trackType().get()) || ordinal(track) != sendIndex)
                 continue;
-            JsonObject out = new JsonObject();
-            out.addProperty("trackId", track.channelId().get());
-            out.addProperty("name", track.name().get());
-            return out;
+            return trackRefs.ref(slot);
         }
         return null;
     }
 
-    private void guard(HostOperation op, Target target) {
+    private int ordinal(Track candidate) {
+        int ordinal = 0;
+        for (State state : states) {
+            Track track = state.track;
+            if (!track.exists().get() || track.trackType().get().equals("Master")) continue;
+            if (track.trackType().get().equals("Effect")
+                    && track.position().get() < candidate.position().get()) ordinal++;
+        }
+        return ordinal;
+    }
+
+    /** The target's current guard: the same UUID on the same observed proxy, ready and not rebinding. */
+    void guard(HostOperation op, Target target) {
         if (!target.matches(window))
-            throw Errors.notApplied(Reason.STALE_TARGET, "Track UUID/proxy changed during operation.");
+            throw Errors.notApplied(Reason.TARGET_CHANGED, "The track changed during the operation.");
         if (target.state.rebindPending)
             throw Errors.notApplied(Reason.NOT_READY, "Track proxy rebind awaits a host flush.");
-        scheduler.check(op);
+        if (op != null) scheduler.check(op);
+    }
+
+    /** The track a ref names, refused as stale when it is gone, or renamed and {@code write} says it is the target. */
+    Target target(JsonObject ref, boolean write) {
+        int slot = trackRefs.resolve(ref, write);
+        return new Target(ref.get("id").getAsString(), states[slot]);
+    }
+
+    /** The observed metadata of a bank slot (type, index), or JSON null while unobserved. */
+    JsonElement meta(int slot, String key) {
+        return states[slot].meta(key);
+    }
+
+    private JsonObject ref(Target target) {
+        return trackRefs.ref(window.trackSlot(target.id));
     }
 
     private void await(
@@ -815,8 +676,8 @@ final class MixModule implements HostModule {
             Target target,
             JsonObject changes,
             Map<String, Long> writes,
-            JsonObject created,
-            String createdKey) {
+            JsonObject info,
+            String infoKey) {
         scheduler.poll(
                 op,
                 scheduler.observeUntil(op),
@@ -825,7 +686,7 @@ final class MixModule implements HostModule {
                     boolean all = true;
                     for (int i = 0; i < FIELDS.length; i++)
                         if (changes.has(FIELDS[i]))
-                            all &= verified(target.state, i, changes.get(FIELDS[i]), writes.get(FIELDS[i]));
+                            all &= verified(target.state, i, changes.get(FIELDS[i]), effective(target, i, writes));
                     return all;
                 },
                 done -> finish(
@@ -833,8 +694,8 @@ final class MixModule implements HostModule {
                         target,
                         changes,
                         writes,
-                        created,
-                        createdKey,
+                        info,
+                        infoKey,
                         target.matches(window) ? null : Reason.TARGET_CHANGED));
     }
 
@@ -843,22 +704,24 @@ final class MixModule implements HostModule {
             Target target,
             JsonObject changes,
             Map<String, Long> writes,
-            JsonObject created,
-            String createdKey,
+            JsonObject info,
+            String infoKey,
             Reason reason) {
         boolean current = target.matches(window);
-        JsonObject result = current ? snapshot(target) : scope();
-        result.addProperty("trackId", target.id);
+        JsonObject result = new JsonObject();
+        if (current) result.add("ref", ref(target));
         JsonObject fields = new JsonObject();
         for (int i = 0; i < FIELDS.length; i++) {
             String key = FIELDS[i];
             if (!changes.has(key)) continue;
-            Long before = writes.get(key);
+            Long before = effective(target, i, writes);
             fields.add(
                     key,
                     writeField(
                             changes.get(key),
-                            current ? value(target.state, i) : JsonNull.INSTANCE,
+                            current
+                                    ? (before != null && before == -1 ? raw(target.state, i) : value(target.state, i))
+                                    : JsonNull.INSTANCE,
                             current,
                             before,
                             target.state.sequence[i],
@@ -867,10 +730,16 @@ final class MixModule implements HostModule {
         }
         stamp(result, fields, current ? reason : null);
         result.add("fields", fields);
-        if (created != null) result.add(createdKey, created);
-        for (Map.Entry<String, JsonElement> entry : target.extra.entrySet())
-            result.add(entry.getKey(), entry.getValue());
+        if (info != null) result.add(infoKey, info);
+        if (target.displayWrite.size() > 0) result.add("displayWrite", target.displayWrite);
         op.result.complete(result);
+    }
+
+    /** A write that found the getter already at the value raises no callback: with none, it changed nothing. */
+    private static Long effective(Target target, int i, Map<String, Long> writes) {
+        Long before = writes.get(FIELDS[i]);
+        boolean quiet = before != null && before != -1 && target.unchanged.contains(FIELDS[i]);
+        return quiet && target.state.sequence[i] <= before ? Long.valueOf(-1) : before;
     }
 
     /** One written field: its outcome and, when it is not a success, why. */
@@ -909,447 +778,42 @@ final class MixModule implements HostModule {
         if (!worst.succeeded()) result.addProperty("reason", reason != null ? reason.wire() : why);
     }
 
-    private void create(HostOperation op, JsonObject p) {
-        if (holds.held(CREATION))
-            throw holds.blocked(
-                    CREATION,
-                    "A prior native track factory remains unattributed; track creation is refused.",
-                    "Inspect tracks.list");
-        if (holds.held(GROUP))
-            throw holds.blocked(
-                    GROUP,
-                    "A prior tracks.group operation remains unattributed; track creation is refused.",
-                    "Inspect tracks.list");
-        if (creation != null && !creation.result.isDone())
-            throw Errors.notApplied(Reason.BUSY, "Another track creation or grouping awaits observations.");
-        if (!window.observed()) throw Errors.notApplied(Reason.NOT_READY, "Track bank has not reported its size yet.");
-        Creation before = capture();
-        if (!before.complete)
-            throw Errors.notApplied(
-                    Reason.NOT_READY,
-                    "Creation requires a complete observed UUID/type/position baseline inside the track window.");
-        if (before.total >= HostLimits.TRACKS)
-            throw Errors.notApplied(
-                    Reason.OUTSIDE_WINDOW,
-                    "The " + HostLimits.TRACKS
-                            + "-track window is full: the new track could not be observed; nothing changed.");
-        if (before.groups && !before.tree.complete)
-            throw Errors.notApplied(
-                    Reason.UNSUPPORTED_SCOPE,
-                    "Track creation in a grouped project needs every track's parent observed (" + before.tree.reason
-                            + "); the insertion position cannot be attributed safely and nothing changed.");
-        creation = op;
-        scheduler.check(op);
-        op.markDispatched();
-        holds.place(CREATION, "A prior tracks.create factory remains unattributed.");
-        int position = p.get("position").getAsInt();
-        switch (p.get("type").getAsString()) {
-            case "audio":
-                application.createAudioTrack(position);
-                break;
-            case "instrument":
-                application.createInstrumentTrack(position);
-                break;
-            case "effect":
-                application.createEffectTrack(position);
-                break;
-            default:
-                throw new IllegalArgumentException("type");
-        }
-        awaitCreation(op, p, before);
-    }
-
-    private void group(HostOperation op, JsonObject p) {
-        if (holds.held(CREATION))
-            throw holds.blocked(
-                    CREATION,
-                    "A prior native track factory remains unattributed; grouping is refused.",
-                    "Inspect tracks.list");
-        if (holds.held(GROUP))
-            throw holds.blocked(
-                    GROUP,
-                    "A prior tracks.group operation remains unattributed; grouping is refused.",
-                    "Inspect tracks.list");
-        if (creation != null && !creation.result.isDone())
-            throw Errors.notApplied(Reason.BUSY, "Another track creation or grouping awaits observations.");
-        if (!window.observed()) throw Errors.notApplied(Reason.NOT_READY, "Track bank has not reported its size yet.");
-        transportSafety.recording(op);
-        selection.requireFree();
-        List<String> ids = trackIds(p);
-        Creation before = capture();
-        if (!before.complete)
-            throw Errors.notApplied(
-                    Reason.NOT_READY,
-                    "Grouping requires a complete observed UUID/type/position window of at most " + HostLimits.TRACKS
-                            + " tracks.");
-        if (before.total >= HostLimits.TRACKS)
-            throw Errors.notApplied(
-                    Reason.OUTSIDE_WINDOW,
-                    "The " + HostLimits.TRACKS
-                            + "-track window is full: the new group could not be observed; nothing changed.");
-        if (!before.tree.complete)
-            throw Errors.notApplied(
-                    Reason.UNSUPPORTED_SCOPE,
-                    "Grouping needs every track's parent observed (" + before.tree.reason + "); nothing changed.");
-        List<TrackTree.Node> nodes = new ArrayList<>();
-        for (String id : ids) {
-            TrackTree.Node node = before.tree.byId.get(id);
-            if (node == null)
-                throw Errors.notApplied(
-                        Reason.OUTSIDE_WINDOW,
-                        "Track UUID is absent from the current " + HostLimits.TRACKS + "-track window: " + id);
-            if (node.master() || "Effect".equals(node.type))
-                throw Errors.notApplied(
-                        Reason.UNSUPPORTED_SCOPE,
-                        "Only audio, instrument, hybrid and group tracks can be grouped; " + id + " is " + node.type
-                                + ".");
-            nodes.add(node);
-        }
-        String parent = nodes.get(0).parentId;
-        for (TrackTree.Node node : nodes)
-            if (!Objects.equals(node.parentId, parent))
-                throw Errors.notApplied(
-                        Reason.UNSUPPORTED_SCOPE,
-                        "All trackIds must share one parent (top level or the same group); nothing changed.");
-        nodes.sort(Comparator.comparingInt(n -> n.position));
-        List<Object> proxies = new ArrayList<>();
-        List<String> ordered = new ArrayList<>();
-        for (TrackTree.Node node : nodes) {
-            proxies.add(window.bank().getItemAt(node.slot));
-            ordered.add(node.id);
-        }
-        if (groupAccess == null) {
-            try {
-                groupAccess = new Bitwig614TrackGroupAccess(natives.get(op).access());
-            } catch (ReflectiveOperationException error) {
-                throw Errors.notApplied(
-                        Reason.NATIVE_UNAVAILABLE, "Exact track group descriptors unavailable: " + error.getMessage());
-            }
-        }
-        GroupAccess access = groupAccess;
-        // The native operation selects the new group: hold the selection lease like other selection-moving calls.
-        selection.acquire(op);
-        creation = op;
-        Runnable check = () -> {
-            scheduler.check(op);
-            transportSafety.requirePlaybackSafe();
-        };
-        access.execute(() -> {
-            try {
-                JsonObject nativeInfo = access.group(proxies, ordered, check, () -> {
-                    check.run();
-                    op.markDispatched();
-                    holds.place(GROUP, "A prior tracks.group operation remains unattributed.");
-                });
-                long until = Math.min(scheduler.deadlineUntil(op), scheduler.now() + GROUP_OBSERVE_NANOS);
-                scheduler.schedule(op, () -> awaitGroup(op, p, before, ordered, parent, nativeInfo, until), 0);
-            } catch (RuntimeException | Error error) {
-                op.fail(error);
-            }
-        });
-    }
-
-    private void awaitGroup(
-            HostOperation op,
-            JsonObject p,
-            Creation before,
-            List<String> ids,
-            String parent,
-            JsonObject nativeInfo,
-            long until) {
-        String[] candidate = {null};
-        scheduler.conclude(
-                op,
-                until,
-                () -> groupStep(op, p, before, ids, parent, nativeInfo, candidate),
-                () -> unknownGroup(op, p, Reason.NOT_OBSERVED, "group_membership_not_observed"));
-    }
-
-    /** The conclusion once the group is attributed (seen on two polls in a row) or cannot be; null to keep polling. */
-    private Runnable groupStep(
-            HostOperation op,
-            JsonObject p,
-            Creation before,
-            List<String> ids,
-            String parent,
-            JsonObject nativeInfo,
-            String[] candidate) {
-        Creation after = capture();
-        if (after.offset != before.offset || !after.ids.containsAll(before.ids))
-            return () -> unknownGroup(op, p, Reason.TARGET_CHANGED, "track_window_or_existing_targets_changed");
-        Set<String> added = new HashSet<>(after.ids);
-        added.removeAll(before.ids);
-        if (added.size() > 1 || after.total > before.total + 1)
-            return () -> unknownGroup(op, p, Reason.SIDE_EFFECT, "ambiguous_added_tracks");
-        String found = null;
-        if (after.complete && after.tree.complete && added.size() == 1 && after.total == before.total + 1) {
-            String id = added.iterator().next();
-            TrackTree.Node group = after.tree.byId.get(id);
-            boolean ok = group != null && group.group() && Objects.equals(group.parentId, parent);
-            for (TrackTree.Node node : before.tree.nodes) {
-                if (node.master()) continue;
-                TrackTree.Node now = after.tree.byId.get(node.id);
-                ok &= now != null && Objects.equals(now.parentId, ids.contains(node.id) ? id : node.parentId);
-            }
-            for (int i = 1; ok && i < ids.size(); i++)
-                ok = after.tree.byId.get(ids.get(i - 1)).position < after.tree.byId.get(ids.get(i)).position;
-            if (ok) found = id;
-        }
-        if (found != null && found.equals(candidate[0])) {
-            String group = found;
-            return () -> groupAttributed(op, p, ids, parent, nativeInfo, group);
-        }
-        candidate[0] = found;
-        return null;
-    }
-
-    private void groupAttributed(
-            HostOperation op, JsonObject p, List<String> ids, String parent, JsonObject nativeInfo, String found) {
-        holds.release(GROUP);
-        JsonObject info = nativeInfo.deepCopy();
-        info.addProperty("verification", "unique_added_group_uuid_and_every_track_parent_observed_twice");
-        JsonArray children = new JsonArray();
-        for (String id : ids) children.add(id);
-        info.add("children", children);
-        info.add("parentId", parent == null ? JsonNull.INSTANCE : new JsonPrimitive(parent));
-        info.addProperty("selectionSideEffect", "native_operation_selects_the_new_group");
-        State state = states[window.trackSlot(found)];
-        Target target = new Target(found, state);
-        if (p.has("name")) {
-            JsonObject changes = new JsonObject();
-            changes.add("name", p.get("name"));
-            set(op, target, changes, info, "group");
-            return;
-        }
-        JsonObject result = scope();
-        result.addProperty("outcome", Outcome.APPLIED.wire());
-        result.addProperty("trackId", found);
-        result.add("group", info);
-        op.result.complete(result);
-    }
-
-    private void unknownGroup(HostOperation op, JsonObject p, Reason reason, String detail) {
-        op.result.complete(unattributed(p, reason, detail, GROUP));
-    }
-
-    private JsonObject unattributed(JsonObject p, Reason reason, String detail, String hold) {
-        JsonObject result = scope();
-        result.addProperty("outcome", Outcome.UNKNOWN.wire());
-        result.addProperty("reason", reason.wire());
-        result.addProperty("detail", detail);
-        result.addProperty("nameApplied", false);
-        result.add("requested", p);
-        result.add("trackId", JsonNull.INSTANCE);
-        result.addProperty("next", "Inspect tracks.list, then ack " + hold + "; never retry before that.");
-        return result;
-    }
-
-    /** Delete one audio/instrument/hybrid/effect track by Track.deleteObject (DeleteableObject), verified by bank UUID set and count. */
-    private void delete(HostOperation op, Target target, String expectedName) {
-        SafetyObservation safety = transportSafety.stopped(op);
-        if (!window.observed()) throw Errors.notApplied(Reason.NOT_READY, "Track bank has not reported its size yet.");
-        guard(op, target);
-        JsonElement type = target.state.meta("type"), name = value(target.state, 0), index = target.state.meta("index");
-        if (type.isJsonNull() || name.isJsonNull())
-            throw Errors.notApplied(Reason.NOT_READY, "Track type/name have not been observed.");
-        if (!Set.of("Audio", "Instrument", "Hybrid", "Effect").contains(type.getAsString()))
-            throw Errors.notApplied(
-                    Reason.UNSUPPORTED_SCOPE,
-                    "Only Audio, Instrument, Hybrid and Effect tracks can be deleted; this track is "
-                            + type.getAsString() + " (group and master are refused); nothing changed.");
-        if (!name.getAsString().equals(expectedName))
-            throw Errors.notApplied(Reason.STALE_TARGET, "Track name differs from expectedName; nothing changed.");
-        Creation before = capture();
-        if (!before.complete || !before.ids.contains(target.id))
-            throw Errors.notApplied(
-                    Reason.NOT_READY,
-                    "Deletion needs the whole project observed in the " + HostLimits.TRACKS
-                            + "-track bank window (offset 0, at most " + HostLimits.TRACKS
-                            + " tracks including group children and effect tracks, every UUID/type/position read); this project exceeds it or is not fully observed yet. Nothing changed.");
-        transportSafety.guardStopped(safety);
-        guard(op, target);
-        op.markDispatched();
-        target.state.track.deleteObject();
-        JsonObject deleted = new JsonObject();
-        deleted.addProperty("trackId", target.id);
-        deleted.addProperty("name", expectedName);
-        deleted.addProperty("type", type.getAsString());
-        deleted.add("index", index);
-        awaitDeletion(op, target.id, deleted, before);
-    }
-
-    private void awaitDeletion(HostOperation op, String id, JsonObject deleted, Creation before) {
-        scheduler.poll(op, scheduler.observeUntil(op), () -> deletedFrom(capture(), before, id), gone -> {
-            Creation after = capture();
-            JsonObject result = scope();
-            result.addProperty("outcome", (gone ? Outcome.APPLIED : Outcome.UNKNOWN).wire());
-            if (!gone) result.addProperty("reason", Reason.NOT_OBSERVED.wire());
-            result.add("deleted", deleted);
-            result.addProperty("trackCountBefore", before.total);
-            result.addProperty("trackCountAfter", after.total);
-            op.result.complete(result);
-        });
-    }
-
-    private static boolean deletedFrom(Creation after, Creation before, String id) {
-        Set<String> others = new HashSet<>(before.ids);
-        others.remove(id);
-        return after.complete && !after.ids.contains(id) && after.total == before.total - 1 && after.ids.equals(others);
-    }
-
-    private void awaitCreation(HostOperation op, JsonObject p, Creation before) {
-        String[] candidate = {null};
-        scheduler.conclude(
-                op,
-                scheduler.observeUntil(op),
-                () -> creationStep(op, p, before, candidate),
-                () -> unknownCreation(op, p, Reason.NOT_OBSERVED, "unique_added_track_not_observed"));
-    }
-
-    /** The conclusion once the new track is attributed (seen on two polls in a row) or cannot be; null to keep polling. */
-    private Runnable creationStep(HostOperation op, JsonObject p, Creation before, String[] candidate) {
-        Creation after = capture();
-        if (after.offset != before.offset || !after.ids.containsAll(before.ids))
-            return () -> unknownCreation(op, p, Reason.TARGET_CHANGED, "track_window_or_existing_targets_changed");
-        Set<String> added = new HashSet<>(after.ids);
-        added.removeAll(before.ids);
-        if (added.size() > 1 || after.total > before.total + 1)
-            return () -> unknownCreation(op, p, Reason.SIDE_EFFECT, "ambiguous_added_tracks");
-        if (after.complete && after.total == before.total + 1 && added.size() == 1) {
-            String id = added.iterator().next();
-            State state = states[window.trackSlot(id)];
-            String type = p.get("type").getAsString();
-            boolean effect = type.equals("effect");
-            int requested = p.get("position").getAsInt();
-            if (!before.groups && after.groups)
-                return () -> unknownCreation(op, p, Reason.SIDE_EFFECT, "group_appeared_during_creation");
-            // Application inserts into the root group's main or effect list: in a grouped project the index counts
-            // only top-level tracks, so attribution needs the observed parent of the new track.
-            int oldSize;
-            Integer observed;
-            if (before.groups) {
-                TrackTree.Node node = after.tree.complete ? after.tree.byId.get(id) : null;
-                oldSize = before.tree.topLevelCount(effect);
-                observed = node != null && node.topLevel ? after.tree.topLevelOrdinal(node) : null;
-            } else {
-                oldSize = effect ? before.effects : before.main;
-                observed = ordinal(state.track, effect);
-            }
-            int expected = requested == -1 ? oldSize : Math.min(requested, oldSize);
-            if (state.track.trackType().get().equalsIgnoreCase(type) && observed != null && observed == expected) {
-                if (id.equals(candidate[0])) return () -> creationAttributed(op, p, before, id, state, type, requested);
-                candidate[0] = id;
-            } else candidate[0] = null;
-        } else candidate[0] = null;
-        return null;
-    }
-
-    private void creationAttributed(
-            HostOperation op, JsonObject p, Creation before, String id, State state, String type, int requested) {
-        holds.release(CREATION);
-        JsonObject creationInfo = new JsonObject();
-        creationInfo.addProperty("verification", "unique_added_uuid_count_type_position");
-        creationInfo.addProperty("identityScope", "observed_addition_not_factory_return_identity");
-        creationInfo.addProperty("requestedPosition", requested);
-        creationInfo.addProperty("observedPosition", state.track.position().get());
-        creationInfo.addProperty("type", type);
-        creationInfo.addProperty("parentScope", before.groups ? "top_level_of_grouped_project" : "flat_project");
-        JsonObject changes = new JsonObject();
-        changes.add("name", p.get("name"));
-        set(op, new Target(id, state), changes, creationInfo);
-    }
-
-    private int ordinal(Track candidate, boolean effect) {
-        int ordinal = 0;
-        for (State state : states) {
-            Track track = state.track;
-            if (!track.exists().get() || track.trackType().get().equals("Master")) continue;
-            if (track.trackType().get().equals("Effect") == effect
-                    && track.position().get() < candidate.position().get()) ordinal++;
-        }
-        return ordinal;
-    }
-
-    private Creation capture() {
-        Creation out = new Creation();
-        out.offset = window.offset();
-        out.total = window.total();
-        boolean unique = true;
-        for (State state : states)
-            if (state.track.exists().get()) {
-                String id = state.track.channelId().get();
-                unique &= id != null && !id.isEmpty() && out.ids.add(id);
-                JsonElement observedType = state.meta("type");
-                if (observedType.isJsonNull() || state.meta("index").isJsonNull()) {
-                    unique = false;
-                    continue;
-                }
-                String type = observedType.getAsString();
-                out.groups |= type.equals("Group");
-                if (type.equals("Effect")) out.effects++;
-                else if (!type.equals("Master")) out.main++;
-            }
-        out.complete = unique && out.offset == 0 && out.total <= HostLimits.TRACKS && out.ids.size() == out.total;
-        out.tree = TrackTree.capture(window);
-        out.groups |= out.tree.groups;
-        return out;
-    }
-
-    private void unknownCreation(HostOperation op, JsonObject p, Reason reason, String detail) {
-        op.result.complete(unattributed(p, reason, detail, CREATION));
-    }
-
-    private JsonObject scope() {
-        JsonObject result = new JsonObject();
-        result.addProperty("scope", "flat_track_bank");
-        result.addProperty("identityScope", "observed_uuid_on_bank_proxy");
-        result.add("window", Results.window(window.offset(), HostLimits.TRACKS, window.total()));
-        return result;
-    }
-
     /** Compact identity row for context.get (null fields when unobserved); never selects. */
     JsonObject brief(int i) {
         State state = states[i];
         JsonObject out = new JsonObject();
-        out.addProperty("trackId", state.track.channelId().get());
+        out.add("ref", trackRefs.ref(i));
         out.add("index", state.meta("index"));
-        out.add("name", value(state, 0));
+        out.add("name", value(state, NAME));
         out.add("type", state.meta("type"));
-        out.add("selected", value(state, 6));
+        out.add("selected", value(state, SELECTED));
         return out;
     }
 
     private JsonObject snapshot(Target target) {
-        JsonObject result = scope();
         State state = target.state;
-        result.addProperty("trackId", target.id);
-        JsonObject readable = new JsonObject();
+        JsonObject ref = ref(target);
+        JsonObject result = new JsonObject();
+        result.add("ref", ref);
         boolean complete = true;
         for (int i = 0; i < FIELDS.length; i++) {
             JsonElement observed = value(state, i);
-            result.add(FIELDS[i], observed);
-            readable.addProperty(FIELDS[i], !observed.isJsonNull());
+            String key = FIELDS[i];
+            if (i == VOLUME || i == PAN) {
+                JsonObject unit = Results.unit(observed, text(state.meta(key + "Display")), null);
+                unit.add("ref", Refs.parameter(ref, key, null));
+                result.add(key, unit);
+                complete &= !state.meta(key + "Display").isJsonNull();
+            } else if (i == MONITOR || i == CROSS_FADE) {
+                result.add(key, Results.unit(observed, null, EnumOptions.json(enumValue(state.track, i))));
+            } else result.add(key, observed);
             if (i < BASE_FIELDS) complete &= !observed.isJsonNull();
         }
-        JsonObject options = new JsonObject();
-        options.add("monitorMode", EnumOptions.json(state.track.monitorMode()));
-        options.add("crossFadeMode", EnumOptions.json(state.track.crossFadeMode()));
-        result.add("options", options);
-        JsonArray outside = new JsonArray();
-        if (EnumOptions.outsideOptions(state.track.monitorMode())) outside.add("monitorMode");
-        if (EnumOptions.outsideOptions(state.track.crossFadeMode())) outside.add("crossFadeMode");
-        result.add("observedOutsideOptions", outside);
-        for (String key : List.of("index", "type", "volumeDisplay", "panDisplay")) {
+        for (String key : List.of("index", "type")) {
             JsonElement observed = state.meta(key);
             result.add(key, observed);
-            readable.addProperty(key, !observed.isJsonNull());
             complete &= !observed.isJsonNull();
         }
-        result.add("readable", readable);
-        JsonObject units = new JsonObject();
-        units.addProperty("volumeNormalized", "normalized_0_1_not_db");
-        units.addProperty("panNormalized", "normalized_0_1");
-        result.add("units", units);
         JsonElement offset = state.meta("sendOffset"), count = state.meta("sendCount");
         boolean sendsComplete = !offset.isJsonNull() && !count.isJsonNull();
         JsonArray sends = new JsonArray();
@@ -1362,22 +826,17 @@ final class MixModule implements HostModule {
             }
             if (!exists.getAsBoolean()) continue;
             JsonObject item = new JsonObject();
-            item.add("sendIndex", offset.isJsonNull() ? JsonNull.INSTANCE : new JsonPrimitive(offset.getAsInt() + i));
-            for (String key : List.of("name", "valueNormalized", "display", "enabled", "preFader")) {
-                JsonElement observed = state.meta(prefix + key);
-                item.add(key, observed);
-                sendsComplete &= !observed.isJsonNull();
-            }
-            item.addProperty("unit", "normalized_0_1_not_db");
-            JsonElement sendIndex = item.get("sendIndex");
-            JsonObject effect = sendIndex.isJsonNull() ? null : effectTrack(sendIndex.getAsInt());
+            JsonElement name = state.meta(prefix + "name");
+            if (!offset.isJsonNull() && !name.isJsonNull())
+                item.add("ref", Refs.send(ref, offset.getAsInt() + i, name.getAsString()));
+            else sendsComplete = false;
+            item.add("value", Results.unit(state.send(prefix, "value"), text(state.meta(prefix + "display")), null));
+            for (String key : List.of("enabled", "preFader")) item.add(key, state.meta(prefix + key));
+            sendsComplete &= !state.send(prefix, "value").isJsonNull()
+                    && !state.meta(prefix + "enabled").isJsonNull()
+                    && !state.meta(prefix + "preFader").isJsonNull();
+            JsonObject effect = offset.isJsonNull() ? null : effectTrack(offset.getAsInt() + i);
             item.add("effectTrack", effect == null ? JsonNull.INSTANCE : effect);
-            JsonElement sendName = item.get("name");
-            item.add(
-                    "nameMatchesEffectTrack",
-                    effect == null || sendName.isJsonNull()
-                            ? JsonNull.INSTANCE
-                            : new JsonPrimitive(effect.get("name").getAsString().equals(sendName.getAsString())));
             sends.add(item);
         }
         result.add("sends", sends);
@@ -1391,14 +850,22 @@ final class MixModule implements HostModule {
         return result;
     }
 
+    private static String text(JsonElement element) {
+        return element.isJsonNull() ? null : element.getAsString();
+    }
+
+    private static EnumValue enumValue(Track track, int field) {
+        return field == MONITOR ? track.monitorMode() : track.crossFadeMode();
+    }
+
     private static boolean verified(State state, int i, JsonElement expected, Long before) {
         return before != null
                 && (before == -1 || state.sequence[i] > before)
-                && matchesField(i, value(state, i), expected);
+                && matchesField(i, before == -1 ? raw(state, i) : value(state, i), expected);
     }
     /** Colors are stored as floats, so the host's 8-bit readback can land one step off the requested hex. */
     private static boolean matchesField(int i, JsonElement a, JsonElement b) {
-        if (i != 7 || a.isJsonNull() || !a.getAsJsonPrimitive().isString()) return matches(a, b);
+        if (i != COLOR || a.isJsonNull() || !a.getAsJsonPrimitive().isString()) return matches(a, b);
         String x = a.getAsString(), y = b.getAsString();
         if (x.length() != 7 || y.length() != 7) return false;
         for (int c = 1; c < 7; c += 2)
@@ -1419,14 +886,19 @@ final class MixModule implements HostModule {
     }
 
     private static JsonElement value(State state, int i) {
+        return state.sequence[i] == 0 ? JsonNull.INSTANCE : raw(state, i);
+    }
+
+    /** The getter's current value, readable even before any callback reported it. */
+    private static JsonElement raw(State state, int i) {
         Track track = state.track;
-        if (!state.readable() || state.sequence[i] == 0) return JsonNull.INSTANCE;
+        if (!state.readable()) return JsonNull.INSTANCE;
         switch (i) {
-            case 0:
+            case NAME:
                 return new JsonPrimitive(track.name().get());
-            case 1:
+            case VOLUME:
                 return finite(track.volume().value().get());
-            case 2:
+            case PAN:
                 return finite(track.pan().value().get());
             case 3:
                 return new JsonPrimitive(track.mute().get());
@@ -1435,9 +907,9 @@ final class MixModule implements HostModule {
             case 5:
                 return new JsonPrimitive(track.arm().get());
             // This legacy observer has no interested-value getter to refresh at flush.
-            case 6:
+            case SELECTED:
                 return state.fresh(i) ? new JsonPrimitive(state.selected) : JsonNull.INSTANCE;
-            case 7:
+            case COLOR:
                 return new JsonPrimitive(String.format(
                         "#%02x%02x%02x",
                         Math.round(track.color().red() * 255),
@@ -1445,9 +917,9 @@ final class MixModule implements HostModule {
                         Math.round(track.color().blue() * 255)));
             case 8:
                 return new JsonPrimitive(track.isActivated().get());
-            case 9:
+            case MONITOR:
                 return new JsonPrimitive(track.monitorMode().get());
-            case 10:
+            case CROSS_FADE:
                 return new JsonPrimitive(track.crossFadeMode().get());
             default:
                 throw new IllegalArgumentException("field");
@@ -1538,6 +1010,16 @@ final class MixModule implements HostModule {
             return !rebindPending && sourceMatches();
         }
 
+        /** A send's metadata; a level the host shows as -Inf dB with no value is the minimum, 0. */
+        JsonElement send(String prefix, String key) {
+            JsonElement value = meta(prefix + key);
+            if (!key.equals("value") || !value.isJsonNull()) return value;
+            JsonElement display = meta(prefix + "display");
+            boolean minusInf = !display.isJsonNull()
+                    && DisplayScale.parse(DisplayScale.Kind.DB, display.getAsString()) <= DisplayScale.MINUS_INF;
+            return minusInf ? new JsonPrimitive(0.0) : value;
+        }
+
         JsonElement meta(String key) {
             return readable() ? metadata.getOrDefault(key, JsonNull.INSTANCE) : JsonNull.INSTANCE;
         }
@@ -1577,12 +1059,13 @@ final class MixModule implements HostModule {
         }
     }
 
-    private static final class Target {
+    /** A resolved track: its UUID on one observed bank proxy generation, and what a request wrote while solving. */
+    static final class Target {
         final String id;
-        final State state;
-        final long generation;
-        final JsonObject extra = new JsonObject();
-        final Set<String> solved = new HashSet<>();
+        private final State state;
+        private final long generation;
+        final JsonObject displayWrite = new JsonObject();
+        final Set<String> solved = new HashSet<>(), unchanged = new HashSet<>();
 
         Target(String id, State state) {
             this.id = id;
@@ -1593,12 +1076,5 @@ final class MixModule implements HostModule {
         boolean matches(TrackWindow window) {
             return generation == state.generation && state.sourceMatches() && window.trackMatches(id, state.track);
         }
-    }
-
-    private static final class Creation {
-        final Set<String> ids = new HashSet<>();
-        int offset, total, main, effects;
-        boolean complete, groups;
-        TrackTree tree;
     }
 }

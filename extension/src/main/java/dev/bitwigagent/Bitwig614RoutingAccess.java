@@ -1,6 +1,7 @@
 package dev.bitwigagent;
 
 import com.google.gson.*;
+import dev.bitwigagent.core.Refs;
 import java.lang.reflect.Method;
 import java.util.*;
 import java.util.stream.Stream;
@@ -322,7 +323,7 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
             } catch (RpcException error) {
                 if (unresolved == null) throw error;
                 JsonObject row = new JsonObject();
-                row.addProperty("trackId", ref.id);
+                row.add("ref", Refs.track(ref.id, ref.name));
                 row.addProperty("type", ref.type);
                 row.addProperty("reason", error.reason.wire());
                 row.addProperty("message", error.getMessage());
@@ -466,7 +467,6 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
     private JsonObject snapshot(
             TrackView view, Object ports, Map<String, Channel> channels, boolean includeChoices, JsonArray unresolved) {
         JsonObject out = new JsonObject();
-        out.addProperty("trackId", view.self.ref.id);
         out.addProperty("trackType", view.self.ref.type);
         out.addProperty("nativeTrackKind", view.nativeKind);
         out.addProperty("nativeRole", view.self.role());
@@ -579,11 +579,7 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
             JsonObject request = p.getAsJsonObject("output");
             Object current = a.invoke(outCurrent, view.outputChooser);
             JsonObject previous = describeDestination(current);
-            if (!RoutingModule.sameEntry(p.getAsJsonObject("expectedOutput"), previous))
-                throw Errors.notApplied(
-                        Reason.STALE_TARGET,
-                        "Current output is " + previous
-                                + ", not expectedOutput; re-read tracks.routing.get. Nothing changed.");
+            requireExpected(p, "output", previous);
             String kind = request.get("kind").getAsString();
             if (!kind.equals("none") && !RoutingModule.OUTPUT_GROUP.containsKey(kind))
                 throw Errors.notApplied(Reason.KIND_MISMATCH, "Output kind " + kind + " is not a destination kind.");
@@ -608,11 +604,7 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
             JsonObject request = p.getAsJsonObject("input");
             Object current = a.invoke(inCurrent, view.inputChooser);
             JsonObject previous = describeSource(current, ports);
-            if (!RoutingModule.sameEntry(p.getAsJsonObject("expectedInput"), previous))
-                throw Errors.notApplied(
-                        Reason.STALE_TARGET,
-                        "Current input is " + previous
-                                + ", not expectedInput; re-read tracks.routing.get. Nothing changed.");
+            requireExpected(p, "input", previous);
             String kind = request.get("kind").getAsString();
             if (!RoutingModule.sourceKinds(view.inputGroups).contains(kind))
                 throw Errors.notApplied(
@@ -769,13 +761,7 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
             else if (kind.equals("audio_in") || kind.equals("other")) reason = "hardware_or_unknown_component_deferred";
             unavailable = reason;
         }
-
-        String ownerKey() {
-            return OWNER_KEYS.get(host);
-        }
     }
-
-    private static final Map<String, String> OWNER_KEYS = Map.of("modulator", "modulatorId", "grid_module", "moduleId");
 
     private List<Component> components(Object device) {
         List<Component> out = new ArrayList<>();
@@ -796,14 +782,13 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
         return out;
     }
 
-    private JsonObject row(Component c, Object ports, Map<String, Channel> channels, boolean includeChoices) {
+    private JsonObject row(
+            JsonObject device, Component c, Object ports, Map<String, Channel> channels, boolean includeChoices) {
         JsonObject out = new JsonObject();
-        out.addProperty("componentIndex", c.index);
-        out.addProperty("componentId", c.id);
+        out.add("ref", refOf(device, c));
         out.addProperty("label", c.label);
         out.addProperty("kind", c.kind);
         out.addProperty("host", c.host);
-        if (c.ownerId != null) out.addProperty(c.ownerKey(), c.ownerId);
         out.add("nativeSourceGroups", strings(c.groups));
         List<String> kinds = c.unavailable == null ? RoutingModule.sourceKinds(c.groups) : List.of();
         out.add("kinds", strings(kinds));
@@ -829,7 +814,7 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
         Map<String, Channel> channels = includeChoices ? channels(bank, unresolved) : Map.of();
         JsonObject out = new JsonObject();
         JsonArray rows = new JsonArray();
-        for (Component c : components) rows.add(row(c, ports, channels, includeChoices));
+        for (Component c : components) rows.add(row(source.ref(), c, ports, channels, includeChoices));
         out.add("components", rows);
         out.addProperty("count", components.size());
         if (unresolved != null && unresolved.size() > 0) out.add("unresolvedTracks", unresolved);
@@ -843,26 +828,24 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
         return out;
     }
 
-    private static String expectedKey(String ownerKey) {
-        return "expected" + Character.toUpperCase(ownerKey.charAt(0)) + ownerKey.substring(1);
+    /** When the request carries expect.{key}, the entry read now must be that one; otherwise nothing is written. */
+    private static void requireExpected(JsonObject p, String key, JsonObject observed) {
+        if (!p.has("expect") || !p.getAsJsonObject("expect").has(key)) return;
+        if (!RoutingModule.sameEntry(p.getAsJsonObject("expect").getAsJsonObject(key), observed)) {
+            JsonObject differs = new JsonObject();
+            differs.add(key, observed);
+            throw Errors.expectMismatch("The current " + key + " differs from expect; nothing changed.", differs);
+        }
     }
 
-    private void guardOwner(Component c, JsonObject p) {
-        for (String key : OWNER_KEYS.values()) {
-            String expected = expectedKey(key);
-            if (key.equals(c.ownerKey())) {
-                if (!(p.has(expected) && p.get(expected).getAsString().equalsIgnoreCase(c.ownerId)))
-                    throw Errors.notApplied(
-                            Reason.STALE_TARGET,
-                            "Component " + c.index + " belongs to " + c.host + " " + c.ownerId + "; pass it as "
-                                    + expected
-                                    + " (such components shift when their owners change). Nothing changed.");
-            } else if (p.has(expected))
-                throw Errors.notApplied(
-                        Reason.STALE_TARGET,
-                        "Component " + c.index + " is on " + c.host + ", but " + expected
-                                + " was given; re-read devices.sidechain.get. Nothing changed.");
-        }
+    /** The sidechain ref of a component: its index and componentId, plus the modulator or Grid module that owns it. */
+    private static JsonObject refOf(JsonObject device, Component c) {
+        return Refs.sidechain(
+                device,
+                c.index,
+                c.id,
+                "modulator".equals(c.host) ? c.ownerId : null,
+                "grid_module".equals(c.host) ? c.ownerId : null);
     }
 
     @Override
@@ -874,37 +857,14 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
             Runnable beforeWrite) {
         DeviceSources.Native.Capture device = targets.capture(source, check);
         List<Component> components = components(device.device);
-        Component c = null;
-        if (p.has("componentIndex")) {
-            int index = p.get("componentIndex").getAsInt();
-            if (index >= components.size())
-                throw Errors.notApplied(
-                        Reason.TARGET_NOT_FOUND,
-                        "componentIndex " + index + " is outside the " + components.size()
-                                + " components; re-read devices.sidechain.get.");
-            c = components.get(index);
-            if (!p.get("expectedComponentId").getAsString().equals(c.id))
-                throw Errors.notApplied(
-                        Reason.STALE_TARGET,
-                        "Component " + index + " has componentId " + c.id
-                                + ", not expectedComponentId; re-read devices.sidechain.get. Nothing changed.");
-        } else {
-            String id = p.get("componentId").getAsString();
-            for (Component candidate : components)
-                if (id.equals(candidate.id)) {
-                    if (c != null)
-                        throw Errors.notApplied(
-                                Reason.AMBIGUOUS_NAME,
-                                "componentId " + id
-                                        + " names more than one component; use componentIndex from devices.sidechain.get.");
-                    c = candidate;
-                }
-            if (c == null)
-                throw Errors.notApplied(
-                        Reason.TARGET_NOT_FOUND,
-                        "No component has componentId " + id + "; re-read devices.sidechain.get.");
-        }
-        guardOwner(c, p);
+        JsonObject ref = p.getAsJsonObject("target");
+        int index = ref.get("index").getAsInt();
+        if (index >= components.size())
+            throw Errors.targetNotFound(ref, "The device has no sidechain component at this index now.");
+        Component c = components.get(index);
+        JsonObject found = refOf(source.ref(), c);
+        if (!Refs.matches(ref, found, true))
+            throw Errors.targetChanged("Another sidechain component is at this index than the one read.", found);
         if (c.unavailable != null)
             throw Errors.notApplied(
                     Reason.UNSUPPORTED_SCOPE,
@@ -916,11 +876,7 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
         JsonObject request = p.getAsJsonObject("source");
         Object current = a.invoke(inCurrent, c.chooser);
         JsonObject previous = describeSource(current, ports);
-        if (!RoutingModule.sameEntry(p.getAsJsonObject("expectedSource"), previous))
-            throw Errors.notApplied(
-                    Reason.STALE_TARGET,
-                    "Current source is " + previous
-                            + ", not expectedSource; re-read devices.sidechain.get. Nothing changed.");
+        requireExpected(p, "source", previous);
         String kind = request.get("kind").getAsString();
         List<String> kinds = RoutingModule.sourceKinds(c.groups);
         if (!kinds.contains(kind))
@@ -945,7 +901,7 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
         same.run();
         JsonObject fields = write(scope, changes, "Change Sidechain Source", check, beforeWrite, same, ports);
         JsonObject out = new JsonObject();
-        out.add("component", row(c, ports, Map.of(), false));
+        out.add("component", row(source.ref(), c, ports, Map.of(), false));
         return finish(out, fields, changes);
     }
 }

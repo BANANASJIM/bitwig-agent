@@ -38,6 +38,12 @@ final class ValueMatch {
         return element.isJsonPrimitive() && ((JsonPrimitive) element).isNumber();
     }
 
+    /** An expect names at least one field. */
+    static void requireNamed(JsonObject params) {
+        if (params.has("expect") && params.getAsJsonObject("expect").size() == 0)
+            throw Errors.invalid("expect names at least one field.");
+    }
+
     /** Every key of an expect must match the value observed now, by its key's rule; otherwise nothing is written. */
     static void requireExpected(JsonObject expect, JsonObject observed, Map<String, ValueMatch> rules) {
         JsonObject differs = new JsonObject();

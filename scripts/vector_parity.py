@@ -29,7 +29,9 @@ from bitwig_agent.protocol.refs import CONTROL_ID, Ref
 UUID_PATTERN = r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 UUID = re.compile(UUID_PATTERN)
 SAMPLE_UUID = "12345678-1234-1234-1234-123456789abc"
-PATTERN_SAMPLES = {UUID_PATTERN: SAMPLE_UUID, CONTROL_ID: "0"}
+HASH_PATTERN = "^[0-9a-f]{64}$"
+SAMPLE_HASH = "0" * 64
+PATTERN_SAMPLES = {UUID_PATTERN: SAMPLE_UUID, CONTROL_ID: "0", HASH_PATTERN: SAMPLE_HASH}
 REF_MODELS = {model.__name__ for model in Ref.__subclasses__()}
 
 # (method, field path, vector kind) -> reason. Kind "accept"/"reject"/"optional"
@@ -192,11 +194,11 @@ def with_partner(key, value):
 
 FIXUPS = {
     **{
-        ("tracks.routing.set", f"expectedInput.{f}"): with_partner("input", {"kind": "all_ins"})
+        ("tracks.routing.set", f"expect.input.{f}"): with_partner("input", {"kind": "all_ins"})
         for f in ("name", "nativeType")
     },
     **{
-        ("tracks.routing.set", f"expectedOutput.{f}"): with_partner("output", {"kind": "none"})
+        ("tracks.routing.set", f"expect.output.{f}"): with_partner("output", {"kind": "none"})
         for f in ("name", "nativeType")
     },
     **{
@@ -306,31 +308,38 @@ def container_form(schema, defs):
 
 
 def child_schema(node, key, defs):
-    node = container_form(node, defs)
-    return node["items"] if isinstance(key, int) else node["properties"][key]
+    """The schema of node's child; of a union, the first form that has it."""
+    forms = variants(node, defs)
+    if isinstance(key, int):
+        return next(f for f in forms if "items" in f)["items"]
+    return next(f for f in forms if key in f.get("properties", {}))["properties"][key]
 
 
 def ensure(root, path, schema, defs):
-    """Create missing containers along path; return (parent, key) of the last step."""
+    """Create missing containers along path, as the form of a union that holds the next key; return (parent, key)."""
     node, node_schema = root, schema
-    for key in path[:-1]:
+    for i, key in enumerate(path[:-1]):
         node_schema = child_schema(node_schema, key, defs)
+        form = form_for(node_schema, path[i + 1], defs)
         if isinstance(key, int):
             if not node:
-                node.append(container(node_schema, defs))
-            elif not isinstance(node[key], dict | list):
-                node[key] = container(node_schema, defs)
-            node = node[key]
-        else:
-            if not isinstance(node.get(key), dict | list):
-                node[key] = container(node_schema, defs)
-            node = node[key]
+                node.append(generate(form, defs))
+        elif not isinstance(node.get(key), dict | list) or foreign(node[key], form):
+            node[key] = generate(form, defs)
+        node = node[key]
     return node, path[-1]
 
 
-def container(schema, defs):
-    """A minimal valid value of the object or array form of a schema node: a path through it needs a container, not a scalar form."""
-    return generate(container_form(schema, defs), defs)
+def form_for(schema, key, defs):
+    """The form of a union that has the key; else its object or array form, which a path needs instead of a scalar form."""
+    forms = variants(schema, defs)
+    has = (lambda f: "items" in f) if isinstance(key, int) else (lambda f: key in f.get("properties", {}))
+    return next((f for f in forms if has(f)), container_form(schema, defs))
+
+
+def foreign(value, form):
+    """Whether a container already holds keys that the chosen form does not have."""
+    return isinstance(value, dict) and not set(value) <= set(form.get("properties", {}))
 
 
 def leaves(schema, defs, path=()):
@@ -503,6 +512,12 @@ def names_field(label, field, error):
         return re.search(rf"missing required fields?[^;]*{word}", message) is not None
     named = [field, PARTNERS.get((label.split(":")[0], field), field)]
     if any(f"params{render(name)}" in message for name in named):
+        return True
+    parts = field.split(".")
+    if any(  # a union names itself when none of its forms takes the value
+        f"params{render('.'.join(parts[:depth]))} matches none of the allowed forms" in message
+        for depth in range(1, len(parts))
+    ):
         return True
     # the module checks own UTF-16 limits and name the bare field with their own wording
     return "utf16" in label and re.search(word, message) and re.search(UTF16_WORDING, message, re.I) is not None

@@ -91,13 +91,6 @@ public final class RefResolutionTest {
         assertEquals("EQ+", f.sources.device(eq, true).name, "a device ref survives its track's rename");
         JsonObject gone = Refs.track(HostFixture.C, "Gone");
         assertEquals("tracks.list", assertRpcError("target_not_found", () -> f.tracks.locate(gone)).next);
-        assertEquals(1, f.tracks.insertionIndex(json("{\"after\":" + track + "}")));
-        assertEquals(0, f.tracks.insertionIndex(json("{\"before\":" + track + "}")));
-        assertEquals(2, f.tracks.insertionIndex(null));
-        assertEquals(0, f.tracks.insertionIndex(new JsonPrimitive("start")));
-        f.host.tracks[0].child("createParentTrack").child("exists").data = true;
-        assertRpcError("unsupported_scope", () -> f.tracks.insertionIndex(json("{\"after\":" + track + "}")));
-        f.host.tracks[0].child("createParentTrack").child("exists").data = false;
         f.host.bank.child("itemCount").emit(HostLimits.TRACKS + 1);
         assertRpcError("outside_window", () -> f.tracks.locate(gone));
     }

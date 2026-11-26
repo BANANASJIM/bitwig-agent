@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import com.bitwig.extension.callback.*;
 import com.bitwig.extension.controller.api.*;
 import com.google.gson.*;
+import dev.bitwigagent.core.Refs;
 import java.lang.reflect.*;
 import java.util.*;
 import java.util.concurrent.*;
@@ -14,30 +15,31 @@ import org.junit.jupiter.api.Test;
 /** Validation, lane planning, safety and quarantine around a simulated native automation adapter; not native binding evidence. */
 public final class AutomationModuleTest {
     static final String ID = "11111111-1111-1111-1111-111111111111";
+    static final String MODULE = "22222222-2222-2222-2222-222222222222";
+    static final JsonObject TRACK = Refs.track(ID, "Track 0");
     static final String EMPTY = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
     @Test
     void validation() {
-        AutomationModule.validateParams("automation.points.get", get("volume"));
-        AutomationModule.validateParams("automation.points.get", gridGet(""));
+        accepted("automation.points.get", get("volume"));
+        accepted("automation.points.get", gridGet("CUTOFF"));
         JsonObject ranged = get("pan");
         ranged.add("range", range(4, 4));
-        AutomationModule.validateParams("automation.points.get", ranged);
-        bad("automation.points.get", get("mute"));
-        JsonObject extraField = get("volume");
-        extraField.getAsJsonObject("target").addProperty("deviceIndex", 0);
-        bad("automation.points.get", extraField);
-        JsonObject longId = gridGet("p".repeat(1025));
-        bad("automation.points.get", longId);
-        JsonObject badModule = gridGet("X");
-        badModule.getAsJsonObject("target").addProperty("moduleId", "nope");
-        bad("automation.points.get", badModule);
+        accepted("automation.points.get", ranged);
+        JsonObject mute = get("volume");
+        mute.getAsJsonObject("target").addProperty("id", "mute");
+        bad("automation.points.get", mute);
+        JsonObject deviceOwned = get("volume");
+        deviceOwned.add("target", Refs.parameter(Refs.device(TRACK, 0, "EQ+"), "gain", "Gain"));
+        bad("automation.points.get", deviceOwned);
+        JsonObject legacy = get("volume");
+        legacy.addProperty("trackId", ID);
+        bad("automation.points.get", legacy);
         JsonObject reversed = get("pan");
         reversed.add("range", range(5, 4));
         bad("automation.points.get", reversed);
-        AutomationModule.validateParams(
-                "automation.points.set", set(points(point(0, 0.25, "linear"), point(4, 1, "hold"))));
-        AutomationModule.validateParams("automation.points.set", set(new JsonArray()));
+        accepted("automation.points.set", set(points(point(0, 0.25, "linear"), point(4, 1, "hold"))));
+        accepted("automation.points.set", set(new JsonArray()));
         bad("automation.points.set", set(points(point(4, 0.25, "linear"), point(0, 1, "hold"))));
         bad("automation.points.set", set(points(point(0, 0.25, "linear"), point(0, 1, "hold"))));
         bad("automation.points.set", set(points(point(0, 1.5, "linear"))));
@@ -49,10 +51,13 @@ public final class AutomationModuleTest {
         outside.add("range", range(0, 4));
         bad("automation.points.set", outside);
         JsonObject hash = set(new JsonArray());
-        hash.addProperty("expectedHash", EMPTY.toUpperCase());
+        hash.getAsJsonObject("expect").addProperty("pointsHash", EMPTY.toUpperCase());
         bad("automation.points.set", hash);
+        JsonObject emptyExpect = set(new JsonArray());
+        emptyExpect.add("expect", new JsonObject());
+        bad("automation.points.set", emptyExpect);
         JsonObject count = set(new JsonArray());
-        count.addProperty("expectedCount", 65537);
+        count.addProperty("expectedCount", 0);
         bad("automation.points.set", count);
         JsonArray many = new JsonArray();
         for (int i = 0; i <= 1024; i++) many.add(point(i, 0.5, "hold"));
@@ -83,13 +88,15 @@ public final class AutomationModuleTest {
                 AutomationModule.same(
                         lane, AutomationModule.desired(lane, new double[] {8, 8}, List.of(p(8, 0.4 + 1e-12, false)))),
                 "an equal replacement is already matched");
-        AutomationModule.requireExpected(lane, 3, AutomationModule.hash(lane));
+        AutomationModule.requireExpected(lane, AutomationModule.hash(lane));
+        AutomationModule.requireExpected(lane, null);
         {
-            RpcException e = assertThrows(
-                    RpcException.class, () -> AutomationModule.requireExpected(lane, 2, AutomationModule.hash(lane)));
+            RpcException e = assertThrows(RpcException.class, () -> AutomationModule.requireExpected(lane, EMPTY));
             assertTrue(
-                    e.reason.wire().equals("stale_target") && !e.unknown,
-                    "count mismatch is stale_target before dispatch");
+                    e.reason.wire().equals("target_changed") && !e.unknown,
+                    "a hash mismatch is target_changed before dispatch");
+            assertEquals(
+                    AutomationModule.hash(lane), e.observed.get("pointsHash").getAsString());
         }
         {
             RpcException e = assertThrows(
@@ -99,16 +106,14 @@ public final class AutomationModuleTest {
         AutomationModule.verify(lane, List.of(a, p(8, 0.4 + 1e-12, false), c));
         List<AutomationModule.Point> big = new ArrayList<>();
         for (int i = 0; i < 1500; i++) big.add(p(i, 0.5, true));
-        JsonObject summary = AutomationModule.lane(
-                new JsonObject(), ID, AutomationModule.Target.parse(get("volume")), true, big, new double[] {10, 20});
+        JsonObject summary = AutomationModule.lane(new JsonObject(), true, big, new double[] {10, 20});
         assertTrue(
-                summary.get("count").getAsInt() == 1500
+                summary.getAsJsonObject("lane").get("count").getAsInt() == 1500
                         && summary.get("pointsInRange").getAsInt() == 11
                         && summary.getAsJsonArray("points").size() == 11
                         && !summary.get("truncated").getAsBoolean(),
                 "range filters listed points, count covers the lane");
-        JsonObject whole = AutomationModule.lane(
-                new JsonObject(), ID, AutomationModule.Target.parse(get("volume")), true, big, null);
+        JsonObject whole = AutomationModule.lane(new JsonObject(), true, big, null);
         assertTrue(
                 whole.getAsJsonArray("points").size() == AutomationModule.MAX_READ
                         && whole.get("truncated").getAsBoolean(),
@@ -116,13 +121,50 @@ public final class AutomationModuleTest {
     }
 
     @Test
-    void unknownMethodAndUngatedHostAreRefused() {
-        assertRpcError(
-                "unknown_method", () -> AutomationModule.validateParams("automation.points.clear", get("volume")));
+    void clearingALaneLeavesOnlyBitwigsBasePointAndThatCountsAsCleared() {
+        AutomationModule.Point base = p(0, 0.5, true), other = p(8, 0.4, false);
+        List<AutomationModule.Point> none = List.of();
+        assertEquals(none, AutomationModule.withoutBasePoint(none, none));
+        assertEquals(none, AutomationModule.withoutBasePoint(List.of(base), none));
+        AutomationModule.verify(none, AutomationModule.withoutBasePoint(List.of(base), none));
+        assertTrue(AutomationModule.same(AutomationModule.withoutBasePoint(List.of(base), none), none));
+        assertEquals(
+                List.of(other),
+                AutomationModule.withoutBasePoint(List.of(other), none),
+                "a lone point away from beat 0 is not a base point");
+        assertEquals(
+                List.of(base, other),
+                AutomationModule.withoutBasePoint(List.of(base, other), none),
+                "only a lone point is excused");
+        assertEquals(
+                List.of(base),
+                AutomationModule.withoutBasePoint(List.of(base), List.of(base)),
+                "a lane that should hold points is never adjusted");
+        RpcException extra = assertThrows(
+                RpcException.class,
+                () -> AutomationModule.verify(none, AutomationModule.withoutBasePoint(List.of(other), none)));
+        assertTrue(extra.reason.wire().equals("readback_mismatch") && extra.unknown, "any other point still fails");
+    }
+
+    @Test
+    void ungatedHostIsRefused() {
         HostFixture host = new HostFixture();
         host.tracks[0].child("channelId").emit(ID);
         HostOperation op = host.start(host.services.automation(null), "automation.points.get", get("volume"));
         assertRpcError("host_mismatch", op);
+    }
+
+    @Test
+    void aStaleTrackOwnerIsRefusedBeforeNativeAccess() {
+        Fixture f = new Fixture(false);
+        f.host.tracks[0].child("name").emit("Lead");
+        f.call("automation.points.get", get("volume"));
+        assertEquals(1, f.calls, "as an ancestor the track name is not compared");
+        f.host.tracks[0].child("channelId").emit("33333333-3333-3333-3333-333333333333");
+        HostOperation gone = f.start("automation.points.get", get("volume"));
+        f.drain();
+        assertRpcError("target_not_found", gone);
+        assertEquals(1, f.calls, "no native access for a track that is not there");
     }
 
     @Test
@@ -143,11 +185,13 @@ public final class AutomationModuleTest {
         Fixture f = new Fixture(false);
         JsonObject p = set(points(point(2, 0.25, "linear"), point(3, 0.75, "hold")));
         p.add("range", range(2, 6));
-        p.addProperty("expectedCount", 4);
         f.call("automation.points.set", p);
         assertTrue(
-                f.writes == 1 && f.lastPoints.size() == 2 && f.lastCount == 4 && f.lastHash.equals(EMPTY),
-                "points, count and hash reach the adapter");
+                f.writes == 1 && f.lastPoints.size() == 2 && f.lastHash.equals(EMPTY),
+                "points and the expected hash reach the adapter");
+        p.remove("expect");
+        f.call("automation.points.set", p);
+        assertNull(f.lastHash, "without expect there is no hash to compare");
         assertTrue(
                 f.lastPoints.get(0).linear
                         && !f.lastPoints.get(1).linear
@@ -210,7 +254,7 @@ public final class AutomationModuleTest {
         before.failBeforeWrite = true;
         HostOperation rejected = before.start("automation.points.set", set(new JsonArray()));
         before.drain();
-        assertRpcError("stale_target", rejected);
+        assertRpcError("target_changed", rejected);
         assertTrue(
                 !rejected.dispatched() && before.host.services.holds.list().isEmpty(),
                 "pre-dispatch refusal holds nothing");
@@ -220,32 +264,24 @@ public final class AutomationModuleTest {
         return new AutomationModule.Point(beat, value, linear, 0);
     }
 
-    static JsonObject target(String kind) {
-        JsonObject t = new JsonObject();
-        t.addProperty("kind", kind);
-        return t;
-    }
-
     static JsonObject get(String kind) {
         JsonObject p = new JsonObject();
-        p.addProperty("trackId", ID);
-        p.add("target", target(kind));
+        p.add("target", Refs.parameter(TRACK, kind, null));
         return p;
     }
 
     static JsonObject gridGet(String parameterId) {
-        JsonObject p = get("grid"), t = p.getAsJsonObject("target");
-        t.addProperty("deviceIndex", 0);
-        t.addProperty("expectedDeviceName", "Poly Grid");
-        t.addProperty("moduleId", "22222222-2222-2222-2222-222222222222");
-        t.addProperty("parameterId", parameterId);
+        JsonObject p = new JsonObject();
+        JsonObject module = Refs.gridModule(Refs.device(TRACK, 0, "Poly Grid"), MODULE, "F: lp");
+        p.add("target", Refs.parameter(module, parameterId, null));
         return p;
     }
 
     static JsonObject set(JsonArray points) {
         JsonObject p = get("volume");
-        p.addProperty("expectedCount", 0);
-        p.addProperty("expectedHash", EMPTY);
+        JsonObject expect = new JsonObject();
+        expect.addProperty("pointsHash", EMPTY);
+        p.add("expect", expect);
         p.add("points", points);
         return p;
     }
@@ -272,7 +308,11 @@ public final class AutomationModuleTest {
     }
 
     static void bad(String m, JsonObject p) {
-        assertRpcError("invalid_params", () -> AutomationModule.validateParams(m, p));
+        assertRpcError("invalid_params", () -> accepted(m, p));
+    }
+
+    static void accepted(String m, JsonObject p) {
+        AutomationModule.validateParams(m, HostBridge.checkSchema(HostFixture.SPECS, m, p));
     }
 
     static final class Fixture {
@@ -281,7 +321,7 @@ public final class AutomationModuleTest {
         final AutomationModule module;
         final boolean playing;
         boolean failAfterWrite, failBeforeWrite;
-        int writes, calls, reads, lastCount;
+        int writes, calls, reads;
         String lastHash;
         double[] lastRange;
         List<AutomationModule.Point> lastPoints;
@@ -310,7 +350,6 @@ public final class AutomationModuleTest {
                         Object track,
                         String id,
                         AutomationModule.Target target,
-                        int count,
                         String hash,
                         List<AutomationModule.Point> points,
                         double[] range,
@@ -319,11 +358,10 @@ public final class AutomationModuleTest {
                     calls++;
                     check.run();
                     lastTarget = target;
-                    lastCount = count;
                     lastHash = hash;
                     lastPoints = points;
                     lastRange = range;
-                    if (failBeforeWrite) throw Errors.notApplied(Reason.STALE_TARGET, "simulated hash mismatch");
+                    if (failBeforeWrite) throw Errors.notApplied(Reason.TARGET_CHANGED, "simulated hash mismatch");
                     before.run();
                     writes++;
                     if (failAfterWrite) throw Errors.unknown(Reason.READBACK_MISMATCH, "simulated readback mismatch");
