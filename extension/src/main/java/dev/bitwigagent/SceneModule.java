@@ -282,12 +282,16 @@ final class SceneModule implements HostModule {
         scheduler.check(op);
         op.markDispatched();
         window.scene(position).duplicateObject();
-        scheduler.poll(op, scheduler.observeUntil(op), () -> shown(at) && duplicated(offset, index, count, before, clips), done -> {
-            JsonObject out = result(done, "scene_count_and_window_names");
-            out.addProperty("sceneCountBefore", count);
-            if (done) completeWithScene(op, out, index + 1);
-            else op.result.complete(out);
-        });
+        scheduler.poll(
+                op,
+                scheduler.observeUntil(op),
+                () -> shown(at) && duplicated(offset, index, count, before, clips),
+                done -> {
+                    JsonObject out = result(done, "scene_count_and_window_names");
+                    out.addProperty("sceneCountBefore", count);
+                    if (done) completeWithScene(op, out, index + 1);
+                    else op.result.complete(out);
+                });
     }
 
     /** The copy sits directly after its source: names up to the source are unchanged and the old tail is shifted by one. */
@@ -342,13 +346,14 @@ final class SceneModule implements HostModule {
         scheduler.check(op);
         op.markDispatched();
         window.scene(at.position()).deleteObject();
-        scheduler.poll(op, scheduler.observeUntil(op), () -> shown(at) && deleted(offset, index, count, before), done -> {
-            JsonObject out = result(done, "scene_count_and_window_names");
-            out.addProperty("sceneCountBefore", count);
-            out.addProperty("deletedName", before.get(index - offset));
-            out.addProperty("clipsDeleted", clips.size());
-            op.result.complete(out);
-        });
+        scheduler.poll(
+                op, scheduler.observeUntil(op), () -> shown(at) && deleted(offset, index, count, before), done -> {
+                    JsonObject out = result(done, "scene_count_and_window_names");
+                    out.addProperty("sceneCountBefore", count);
+                    out.addProperty("deletedName", before.get(index - offset));
+                    out.addProperty("clipsDeleted", clips.size());
+                    op.result.complete(out);
+                });
     }
 
     private boolean deleted(int offset, int index, int count, List<String> before) {
