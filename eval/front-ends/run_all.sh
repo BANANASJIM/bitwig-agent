@@ -48,14 +48,14 @@ for cond in $conditions; do
   fresh=0
   if [[ "$extension" != "$loaded" ]]; then
     echo "== extension $extension for $cond"
-    "$EVAL_DIR/install_extension.sh" "$cond"
+    "$EVAL_DIR/install_extension.sh" "$cond" 9>&-
     loaded="$extension"
     fresh=1
   fi
   for run in $(seq 1 "$runs"); do
     echo "== $cond run $run"
     if [[ "$fresh" == 0 ]]; then
-      if [[ "$DRY_RUN" == 1 ]]; then echo "bash $restart"; else bash "$restart"; fi
+      if [[ "$DRY_RUN" == 1 ]]; then echo "bash $restart"; else bash "$restart" 9>&-; fi
     fi
     fresh=0
     if [[ "$DRY_RUN" != 1 ]]; then mkdir -p "$out/$cond"; fi
