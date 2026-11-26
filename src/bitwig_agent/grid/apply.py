@@ -99,7 +99,7 @@ class Session:
         except Stop as stop:
             return ledger.stop_report(stop)
         except Exception as exc:  # noqa: BLE001 - keep the report of work already dispatched
-            raw = {"error": {"code": "internal_error", "message": f"{type(exc).__name__}: {exc}", "outcome": "unknown"}}
+            raw = {"error": bridge_error("internal_error", f"{type(exc).__name__}: {exc}", "unknown").error}
             return ledger.stop_report(Stop("internal", raw, "unknown"))
         return ledger.report("applied" if any(ledger.applied.values()) else "unchanged")
 

@@ -8,7 +8,7 @@ from typing import Any
 
 from bitwig_agent.client import BridgeClient, configured_port, load_json
 from bitwig_agent.core import composed
-from bitwig_agent.errors import BridgeError
+from bitwig_agent.errors import BridgeError, bridge_error
 from bitwig_agent.protocol import invalid_params_message, validate_call
 
 
@@ -40,8 +40,7 @@ def decode(text: str) -> Any:
 
 
 def invalid_params(name: str, exc: Exception) -> Error:
-    error = {"code": "invalid_params", "message": invalid_params_message(name, exc), "outcome": "not_dispatched"}
-    return Error(error, usage=True)
+    return Error(bridge_error("invalid_params", invalid_params_message(name, exc)).error, usage=True)
 
 
 async def invoke(name: str, args: Mapping[str, Any], client: BridgeClient | None = None) -> Envelope:

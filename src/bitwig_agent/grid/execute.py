@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
+from bitwig_agent.errors import bridge_error
 from bitwig_agent.grid.channel import Channel, Stop, verify
 from bitwig_agent.grid.layout import Cell, has_rect, order_moves, row_rect, size_of
 from bitwig_agent.grid.params import plan_params
@@ -35,11 +36,13 @@ def next_insert_batch(size: int, elapsed_s: float, result: dict[str, Any]) -> in
 
 
 def _invalid_stop(exc: SpecError) -> Stop:
-    return Stop("grid.get", {"error": {"code": "invalid_spec", "message": "; ".join(exc.problems)}}, "not_applied")
+    return Stop(
+        "grid.get", {"error": bridge_error("invalid_spec", "; ".join(exc.problems), "not_applied").error}, "not_applied"
+    )
 
 
 def _stale_stop(message: str) -> Stop:
-    return Stop("grid.get", {"error": {"code": "stale_context", "message": message}}, "not_applied")
+    return Stop("grid.get", {"error": bridge_error("stale_context", message, "not_applied").error}, "not_applied")
 
 
 class Executor:

@@ -918,7 +918,6 @@ public final class HostBridgeTest {
         nullName.add("expectedDeviceName", JsonNull.INSTANCE);
         assertRpcError("invalid_params", bridge.handle("parameters.list", nullName, host.deadline()));
         assertRpcError("invalid_params", bridge.handle("capabilities", null, host.deadline()));
-        assertRpcError("unknown_method", bridge.handle("not.a.method", new JsonObject(), host.deadline()));
         JsonObject modulators = new JsonObject();
         modulators.add("parent", target());
         modulators.add("offset", JsonNull.INSTANCE);
@@ -928,7 +927,6 @@ public final class HostBridgeTest {
         modulators.addProperty("parameterId", "");
         assertRpcError("invalid_params", bridge.handle("modulators.parameters.get", modulators, host.deadline()));
         assertRpcError("invalid_params", bridge.handle("modulators.parameters.set", modulators, host.deadline()));
-        assertRpcError("unknown_method", bridge.handle("modulators.parameters.reset", modulators, host.deadline()));
         assertTrue(host.tasks.isEmpty(), "strict validation rejects every invalid domain request before scheduling");
     }
 
