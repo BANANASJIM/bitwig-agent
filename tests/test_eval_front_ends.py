@@ -229,8 +229,8 @@ def test_real_run_refuses_without_its_environment_and_inside_the_repo() -> None:
 
 
 @pytest.mark.skipif(shutil.which("bash") is None or shutil.which("jq") is None, reason="needs bash and jq")
-def test_verify_reads_state_through_the_condition_client(tmp_path: Path) -> None:
-    """A stub bitwig-agent answers from canned rows, so the judging logic runs without a host."""
+def verify_world(tmp_path: Path) -> tuple[Path, Path, dict[str, Any], dict[str, str]]:
+    """A stub bitwig-agent answers from canned rows (state dir, wav, answers, env), so verify.sh runs without a host."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     state = tmp_path / "answers"
@@ -271,14 +271,42 @@ def test_verify_reads_state_through_the_condition_client(tmp_path: Path) -> None
                 }
             ]
         },
-        "audio.analyze": {"loudness": {"integratedLufs": -14.2}},
+        "audio.analyze": {
+            "loudness": {"integratedLufs": -14.2},
+            "windows": [{"bandsDb": {"sub": -2.0, "low": -6.0, "mid": -20.0, "high": -40.0, "air": None}}],
+        },
+        "devices.catalog": {"devices": [{"name": "Compressor", "path": "/lib/Compressor.bwdevice"}]},
+        "tracks.insert": {
+            "ref": {"kind": "track", "id": "33333333-3333-3333-3333-333333333333", "name": "FE5 scratch"}
+        },
+        "devices.insert": {"ref": {"kind": "device", "index": 0, "name": "Compressor"}},
+        "tracks.delete": {"outcome": "applied"},
     }
+    # parameters.list is read for Poly Grid (T3), the Bass compressor, then the scratch compressor (fresh insert)
+    (state / "parameters.list.2").write_text(
+        json.dumps({"parameters": [{"name": "Threshold", "value": {"value": 0.3}}]})
+    )
+    (state / "parameters.list.3").write_text(
+        json.dumps({"parameters": [{"name": "Threshold", "value": {"value": 0.5}}]})
+    )
     for method, answer in answers.items():
         (state / method).write_text(json.dumps(answer))
     stub = bin_dir / "bitwig-agent"
-    stub.write_text(f'#!/usr/bin/env bash\ncat "{state}/$1"\n')
+    stub.write_text(
+        f"""#!/usr/bin/env bash
+echo "$1 $2" >> "{state}/log"
+n="{state}/$1.n"; i=$(( $(cat "$n" 2>/dev/null || echo 0) + 1 )); echo $i > "$n"
+if [[ -f "{state}/$1.$i" ]]; then cat "{state}/$1.$i"; else cat "{state}/$1"; fi
+"""
+    )
     stub.chmod(0o755)
     env = {"BWA_MAIN_TREE": str(tmp_path), "BWA_BIN_B": str(bin_dir)}
+    return state, wav, answers, env
+
+
+def test_verify_reads_state_through_the_condition_client(tmp_path: Path) -> None:
+    state, wav, answers, env = verify_world(tmp_path)
+    bass_id = "11111111-1111-1111-1111-111111111111"
     done = run_script(str(EVAL / "verify.sh"), "B", str(wav.parent), str(tmp_path / "raw"), env=env)
     assert done.returncode == 0, done.stderr
     verdict = json.loads(done.stdout)
@@ -286,13 +314,25 @@ def test_verify_reads_state_through_the_condition_client(tmp_path: Path) -> None
         ("t1", "t2", "t3", "t4", "t5"), "pass"
     )
     assert verdict["t1"]["grid"] is True
+    assert verdict["t1"]["devices"] == ["Poly Grid", "Compressor"]
+    assert verdict["t1"]["strong"] == "pass"
+    assert verdict["t1"]["goals"] == {"track": True, "sound": True, "filter": True}
+    assert verdict["t2"]["goals"] == {"notes": True}
+    assert verdict["t3"]["goals"] == {"cutoff": True, "resonance": True}
+    assert verdict["t4"]["strong"] == "pass"
+    assert verdict["t4"]["dynamicsMoved"] is True
+    assert verdict["t4"]["scratchDeleted"] is True
+    assert verdict["t4"]["goals"] == {"compressor": True, "sidechain": True, "dynamics": True}
     assert verdict["t5"]["lufs"] == -14.2
+    assert verdict["t5"]["strong"] == "pass"
+    assert 0.5 < verdict["t5"]["lowShare"] < 1
+    log = (state / "log").read_text()
+    assert '{"parent":' in log.split("devices.insert ")[1].splitlines()[0]
+    assert "tracks.delete" in log
     assert (tmp_path / "raw" / "tracks.json").is_file()
 
     (state / "devices.sidechain.get").write_text(
-        json.dumps(
-            {"components": [{"source": {"kind": "pre_fader", "trackId": bass["id"]}, "sourceTrackName": "Bass"}]}
-        )
+        json.dumps({"components": [{"source": {"kind": "pre_fader", "trackId": bass_id}, "sourceTrackName": "Bass"}]})
     )
     (state / "status").write_text(json.dumps({"projectName": "BWA Test", "instance": {"display": ":0"}}))
     refused = run_script(str(EVAL / "verify.sh"), "B", str(wav.parent), str(tmp_path / "raw2"), env=env)
@@ -308,6 +348,39 @@ def test_verify_reads_state_through_the_condition_client(tmp_path: Path) -> None
     graded = run_script(str(EVAL / "verify.sh"), "B", str(wav.parent), str(tmp_path / "raw3"), env=env)
     assert graded.returncode == 0, graded.stderr
     assert json.loads(graded.stdout)["t3"]["status"] == "review"
+
+
+def verify_again(tmp_path: Path, state: Path, env: dict[str, str], name: str) -> subprocess.CompletedProcess[str]:
+    for counter in state.glob("*.n"):
+        counter.unlink()
+    wav = tmp_path / "exports"
+    return run_script(str(EVAL / "verify.sh"), "B", str(wav), str(tmp_path / name), env=env)
+
+
+def test_verify_t4_compares_with_a_fresh_insert_and_field_names_flip(tmp_path: Path) -> None:
+    state, _wav, answers, env = verify_world(tmp_path)
+    # nothing moved from the fresh insert: the sidechain alone no longer passes the stronger check
+    (state / "parameters.list.3").write_text((state / "parameters.list.2").read_text())
+    unmoved = json.loads(verify_again(tmp_path, state, env, "raw4").stdout)
+    assert (unmoved["t4"]["status"], unmoved["t4"]["strong"], unmoved["t4"]["dynamicsMoved"]) == ("pass", "fail", False)
+    # a catalog without the device cannot give a baseline: review, not a guess
+    (state / "devices.catalog").write_text(json.dumps({"devices": []}))
+    assert json.loads(verify_again(tmp_path, state, env, "raw5").stdout)["t4"]["strong"] == "review"
+    (state / "devices.catalog").write_text(json.dumps(answers["devices.catalog"]))
+    # a render that is silent or high-band only fails the stricter T5
+    (state / "audio.analyze").write_text(
+        json.dumps({"integratedLufs": -14.2, "windows": [{"bandsDb": {"sub": -30.0, "low": -25.0, "high": -0.5}}]})
+    )
+    assert json.loads(verify_again(tmp_path, state, env, "raw7").stdout)["t5"]["strong"] == "fail"
+    (state / "audio.analyze").write_text(json.dumps({"integratedLufs": -80.0, "windows": []}))
+    assert json.loads(verify_again(tmp_path, state, env, "raw8").stdout)["t5"]["strong"] == "fail"
+    # the FE6-b rename lives in two variables
+    (state / "log").unlink()
+    flipped = env | {"BWA_F_INSERT_TO": "to", "BWA_F_LIST_PARENT": "target"}
+    assert verify_again(tmp_path, state, flipped, "raw6").returncode == 0
+    log = (state / "log").read_text()
+    assert '{"to":' in log.split("devices.insert ")[1].splitlines()[0]
+    assert '{"target":' in log.split("devices.list ")[1].splitlines()[0]
 
 
 def test_chained_help_and_call_resolve_to_the_call() -> None:
@@ -346,3 +419,204 @@ def test_segments_set_task_boundaries() -> None:
     out = metrics.analyze(events, segments={"1": 2, "2": 4})
     assert out["calls_by_task"] == {"pre": 1, "1": 2, "2": 2, "3": 0, "4": 0, "5": 0}
     assert out["task_split"] == "segments.json"
+
+
+def test_method_calls_count_chains_and_loops_once_per_command() -> None:
+    def count(command: str) -> tuple[int, bool]:
+        call = metrics.parse([use("1", "Bash", command=command), result("1", "")])[0][0]
+        return metrics.method_count(call), metrics.is_help_only(call)
+
+    assert count("bitwig-agent tracks list") == (1, False)
+    assert count("bitwig-agent context get; bitwig-agent tracks list && bitwig-agent help audio") == (2, False)
+    assert count("for m in a b c; do bitwig-agent parameters set --x=$m; done") == (1, False)
+    assert count("T=$(bitwig-agent tracks list | jq -r .x); bitwig-agent devices list --parent=$T") == (2, False)
+    assert count("bitwig-agent tracks --help; bitwig-agent devices catalog --help") == (0, True)
+    assert count("bitwig-agent-rpc describe tracks.create; bitwig-agent-rpc list") == (0, True)
+    assert count("cat .claude/skills/bitwig-agent/references/x.md | grep sidechain") == (0, True)
+    assert count("grep -rn x .claude/skills/bitwig-agent/references") == (0, True)
+    assert count("python3 -c 'print(1)'") == (0, False)
+    mcp = metrics.parse([use("1", "mcp__bitwig-agent__help", topic="x"), result("1", "h")])[0][0]
+    assert (metrics.method_count(mcp), metrics.is_help_only(mcp)) == (0, True)
+    mcp = metrics.parse([use("1", "mcp__bitwig-agent__tracks_list"), result("1", "{}")])[0][0]
+    assert (metrics.method_count(mcp), metrics.is_help_only(mcp)) == (1, False)
+
+
+def test_learning_bytes_in_a_mixed_call_exclude_method_answers() -> None:
+    answer = '{"tracks": [\n  {"name": "Drums"}\n]}\n'
+    events = [
+        use("1", "Bash", command="bitwig-agent --help; bitwig-agent tracks list"),
+        result("1", "usage: bitwig-agent\n" + answer),
+        use("2", "Bash", command="bitwig-agent tracks insert --help"),
+        result("2", "help text\n"),
+        use("3", "Bash", command="bitwig-agent tracks list"),
+        result("3", answer),
+    ]
+    out = metrics.analyze(events)
+    assert out["learning_bytes"] == len("usage: bitwig-agent\n") + len("help text\n")
+    assert out["learning_bytes_whole_call"] == len("usage: bitwig-agent\n" + answer) + len("help text\n")
+    assert (out["calls"], out["method_calls"], out["help_only_calls"]) == (3, 2, 1)
+
+
+def test_refusal_is_corrected_only_by_the_next_call_of_its_method() -> None:
+    events = [
+        use("1", "Bash", command="bitwig-agent tracks insert --type=bass"),
+        result("1", f"Exit code 2\n{BAD_ARG}", True),
+        use("2", "Bash", command="bitwig-agent tracks insert --type=instrument"),
+        result("2", "{}"),
+        use("3", "Bash", command="bitwig-agent parameters set --x=1"),
+        result("3", f"Exit code 2\n{BAD_ARG}", True),
+        use("4", "Bash", command="bitwig-agent parameters set --x=2"),
+        result("4", f"Exit code 2\n{BAD_ARG}", True),
+        use("5", "Bash", command="bitwig-agent parameters set --x=3"),
+        result("5", "{}"),
+    ]
+    out = metrics.analyze(events)
+    assert {f["index"]: f["followup_corrected"] for f in out["failures"]} == {1: True, 3: False, 4: True}
+    assert (out["refusals"], out["followup_corrected"]) == (3, 2)
+
+
+def verify_for(**tasks: dict[str, Any]) -> dict[str, Any]:
+    base: dict[str, dict[str, Any]] = {f"t{t}": {"status": "pass"} for t in range(1, 6)}
+    base["t1"] = {"status": "pass", "grid": True, "devices": ["Poly Grid"], "strong": "pass"}
+    base["t4"] = {"status": "pass", "strong": "pass"}
+    base["t5"] = {"status": "pass", "strong": "pass"}
+    return base | tasks
+
+
+def synthetic(condition: str, number: int, **spec: Any) -> Any:
+    """A run with `methods`, `refusals`, `corrected`, `task` (of the refusals), `evidence`, `override`; other keys are verify tasks."""
+    methods, refusals, corrected, task = (
+        spec.pop(k, d) for k, d in (("methods", 40), ("refusals", 2), ("corrected", True), ("task", "2"))
+    )
+    evidence, override = spec.pop("evidence", None), spec.pop("override", None)
+    verify: dict[str, dict[str, Any]] = spec
+    failures = [
+        {
+            "index": i + 1,
+            "label": "tool",
+            "task": task,
+            "method": "m",
+            "label_source": "heuristic",
+            "message": "e",
+            "followup_corrected": corrected,
+        }
+        for i in range(refusals)
+    ]
+    per_task = {"pre": 0, "1": 5, "2": 5, "3": 5, "4": 5, "5": 5}
+    per_task["pre"] = methods - 25
+    return metrics.Run(
+        condition,
+        number,
+        {},
+        {
+            "model": "m",
+            "calls": methods,
+            "method_calls": methods,
+            "help_only_calls": 2,
+            "refusals": refusals,
+            "followup_corrected": refusals if corrected else 0,
+            "failures": failures,
+            "tool_failures": refusals,
+            "agent_failures": 0,
+            "self_correction_rate": 1.0 if refusals else None,
+            "abandoned_methods": [],
+            "calls_by_task": per_task,
+            "method_calls_by_task": per_task,
+            "task_split": "markers",
+            "learning_bytes": 1,
+            "learning_bytes_whole_call": 2,
+            "total_read_bytes": 3,
+            "violations": [],
+            "evidence": {"t2.playing": True, "t5.measured": True} | (evidence or {}),
+        },
+        verify_for(**verify),
+        override or {},
+    )
+
+
+def test_lost_request_is_an_undone_subgoal_after_a_refusal() -> None:
+    notes_goals = {"status": "pass", "goals": {"notes": True}}
+    # refusal in T2, clip never played: lost
+    run = synthetic("B", 1, evidence={"t2.playing": False}, t2=notes_goals)
+    assert [entry["goal"] for entry in metrics.lost_requests(run)] == ["t2.playing"]
+    # the same sub-goal ending done is not lost
+    assert metrics.lost_requests(synthetic("B", 1, t2=notes_goals)) == []
+    # an undone sub-goal with no refusal in its task is a verify failure, not a lost request
+    quiet = synthetic("B", 1, refusals=0, evidence={"t2.playing": False}, t2=notes_goals)
+    assert metrics.lost_requests(quiet) == []
+    # T4 goals come from verify
+    t4 = {"status": "pass", "strong": "fail", "goals": {"compressor": True, "sidechain": True, "dynamics": False}}
+    assert [e["goal"] for e in metrics.lost_requests(synthetic("B", 1, task="4", t4=t4))] == ["t4.dynamics"]
+    # a task without goals (older verify) is one goal named after its status
+    failed = synthetic("B", 1, task="3", t3={"status": "fail"})
+    assert [e["goal"] for e in metrics.lost_requests(failed)] == ["t3.task"]
+    # a Grid counts only when a refused T1 call asked for one
+    asked = synthetic("B", 1, task="1", t1={"status": "pass", "grid": False, "goals": {"track": True}})
+    assert metrics.lost_requests(asked) == []
+    asked.metrics["failures"][0]["asked_grid"] = True
+    assert [e["goal"] for e in metrics.lost_requests(asked)] == ["t1.grid"]
+    # manual override both ways
+    forced = synthetic("B", 1, evidence={"t2.playing": False}, t2=notes_goals, override={"t2.playing": False})
+    assert metrics.lost_requests(forced) == []
+    forced = synthetic("B", 1, refusals=0, override={"t5.measured": True})
+    assert [(e["goal"], e["source"]) for e in metrics.lost_requests(forced)] == [("t5.measured", "override")]
+
+
+def cohort(condition: str, **each: Any) -> list[Any]:
+    return [synthetic(condition, n, **each) for n in range(1, 5)]
+
+
+def test_preregistered_verdict_on_synthetic_runs() -> None:
+    a_runs = cohort("A", methods=40, refusals=3, t1={"status": "pass", "grid": True, "strong": "pass"})
+    good = cohort("B", methods=38, refusals=2)
+    assert metrics.preregistered(a_runs + good, "B") == dict.fromkeys(
+        (
+            "runs_ge_4",
+            "stronger_verify",
+            "no_lost_requests",
+            "refusals_le_A",
+            "refusals_corrected",
+            "method_calls_le_A",
+        ),
+        True,
+    )
+    text = metrics.report(a_runs + good)
+    assert "## Verdict (a)" in text
+    assert "## Verdict (b)" in text
+    assert "| B | ok | ok | ok | ok | ok | ok | PASS |" in text
+    # each criterion fails on its own
+    assert metrics.preregistered(a_runs + good[:3], "B")["runs_ge_4"] is False
+    weak = [*good[:3], synthetic("B", 4, t4={"status": "pass", "strong": "fail"})]
+    assert metrics.preregistered(a_runs + weak, "B")["stronger_verify"] is False
+    pending = [*good[:3], synthetic("B", 4, t3={"status": "review"})]
+    assert metrics.preregistered(a_runs + pending, "B")["stronger_verify"] is None
+    lost = [*good[:3], synthetic("B", 4, evidence={"t2.playing": False})]
+    assert metrics.preregistered(a_runs + lost, "B")["no_lost_requests"] is False
+    assert metrics.preregistered(a_runs + cohort("B", refusals=4), "B")["refusals_le_A"] is False
+    assert metrics.preregistered(a_runs + cohort("B", corrected=False), "B")["refusals_corrected"] is False
+    assert metrics.preregistered(a_runs + cohort("B", methods=41), "B")["method_calls_le_A"] is False
+    # one slow run beats the median but not the maximum
+    spiky = [*cohort("B", methods=30)[:3], synthetic("B", 4, methods=45)]
+    assert metrics.preregistered(a_runs + spiky, "B")["method_calls_le_A"] is False
+
+
+def test_preregistered_method_calls_leave_out_t1_when_an_a_run_has_no_grid() -> None:
+    no_grid = {"status": "pass", "grid": False, "strong": "fail"}
+    a_runs = cohort("A", methods=30, t1=no_grid)
+    # B spends 8 more method calls than A in T1 only; with a non-Grid A that must not count against it
+    b_runs = [synthetic("B", n, methods=30) for n in range(1, 5)]
+    for run in b_runs:
+        run.metrics["method_calls_by_task"] = {**run.metrics["method_calls_by_task"], "1": 13}
+        run.metrics["method_calls"] += 8
+    assert metrics.preregistered(a_runs + b_runs, "B")["method_calls_le_A"] is True
+    all_grid = cohort("A", methods=30)
+    assert metrics.preregistered(all_grid + b_runs, "B")["method_calls_le_A"] is False
+    assert "T1 left out of the method-call comparison: yes" in metrics.report(a_runs + b_runs)
+
+
+def test_round_one_style_verify_has_no_strong_data() -> None:
+    old = synthetic("B", 1)
+    old.verify = {f"t{t}": {"status": "pass"} for t in range(1, 6)}
+    assert metrics.strong_label(old) == "n/a"
+    assert metrics.strong_passes(old) is None
+    assert metrics.lost_requests(old) == []

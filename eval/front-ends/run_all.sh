@@ -15,7 +15,7 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 conditions="A B C"
-runs=2
+runs=4
 from=1
 while [[ $# -gt 0 ]]; do
   case "$1" in

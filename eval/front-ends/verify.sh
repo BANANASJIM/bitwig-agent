@@ -7,6 +7,17 @@
 # RAW_DIR so a verdict can be rechecked by hand. Each task is pass | fail | review; review means the state was
 # read but this script cannot decide it (T3: the host exposes no default to compare the new value with).
 # Row shapes are assumed from PROTOCOL.md; confirm them on the first real run by reading RAW_DIR.
+#
+# Per task: status is the original check (kept so round-1 results stay comparable), goals the sub-goals a lost
+# request is judged on, and strong the stricter check of the pre-registered criterion (README.md):
+#   t1 strong  a Grid device on Bass (device names are recorded for every condition, A included)
+#   t4 strong  sidechain source is Drums AND a dynamics parameter differs from a fresh insert of the same device.
+#              The host exposes no parameter defaults, so the baseline is a fresh insert of that device on a
+#              scratch audio track created and deleted here (scratchDeleted says whether the delete worked).
+#   t5 strong  the render measures above -40 LUFS and at least half of its energy is below 250 Hz (audio.analyze
+#              bands, sub+low). Both dialects have the same offline analysis, nothing in the project is touched,
+#              and the start state has no other sound source (Drums has no instrument), so a silent, empty or
+#              high-band-only render fails. It cannot tell bass from other low content; that is accepted.
 set -euo pipefail
 # shellcheck source=lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -42,13 +53,13 @@ track_key() {  # empty when the track does not exist
   else jq -r --arg n "$1" '[.tracks[]? | select((.ref.name // .name) == $n)][0] | (.trackId // .id // .ref.id) // empty' <<<"$tracks"; fi
 }
 track_id() { if [[ "$dialect" == new ]]; then jq -r '.id' <<<"$1"; else printf '%s' "$1"; fi; }  # UUID of a track key
-devices_args() { if [[ "$dialect" == new ]]; then echo "{\"parent\":$1}"; else echo "{\"trackId\":\"$1\"}"; fi; }
+devices_args() { if [[ "$dialect" == new ]]; then ref_arg "$F_LIST_PARENT" "$1"; else echo "{\"trackId\":\"$1\"}"; fi; }
 device_args() {  # track key, device row JSON -> the target of a device-level read
   if [[ "$dialect" == new ]]; then jq -c '{target: .ref}' <<<"$2"
   else jq -c --arg id "$1" '{trackId: $id, deviceIndex: (.index // .deviceIndex), expectedDeviceName: .name}' <<<"$2"; fi
 }
 parameter_args() {
-  if [[ "$dialect" == new ]]; then jq -c '{parent: .ref}' <<<"$2"; else device_args "$1" "$2"; fi
+  if [[ "$dialect" == new ]]; then ref_arg "$F_LIST_PARENT" "$(jq -c .ref <<<"$2")"; else device_args "$1" "$2"; fi
 }
 
 bass="$(track_key Bass)"
@@ -57,10 +68,11 @@ devices='{"devices":[]}'
 if [[ -n "$bass" ]]; then devices="$(read_state bass-devices devices.list "$(devices_args "$bass")")"; fi
 device_rows="$(jq -c '.devices[]? | select(.name != null)' <<<"$devices")"
 
-# T1: a Bass track with a sound, and whether it is a Grid
+# T1: a Bass track with a sound, and whether it is a Grid (the verdict is put after T3, which finds the filter)
 has_grid="$(jq '[.devices[]?.name | test("grid"; "i")] | any' <<<"$devices")"
 has_device="$(jq '(.devices // []) | length > 0' <<<"$devices")"
-put t1 "$(verdict "$([[ -n "$bass" && "$has_device" == true ]] && echo true || echo false)")" "{\"bass\":$([[ -n "$bass" ]] && echo true || echo false),\"grid\":$has_grid}"
+bass_exists="$([[ -n "$bass" ]] && echo true || echo false)"
+device_names="$(jq -c '[.devices[]?.name]' <<<"$devices")"
 
 # T2: eight bars of notes in a launcher clip on Bass
 notes='null'
@@ -76,7 +88,7 @@ if [[ -n "$bass" ]]; then
 fi
 note_stats="$(jq -c '[.. | objects | select(has("beat") and has("pitch"))] | {count: length, first: (map(.beat) | min), last: (map(.beat) | max)}' <<<"$notes")"
 eight_bars="$(jq '.count >= 8 and .first < 4 and .last >= 28' <<<"$note_stats")"
-put t2 "$(verdict "$eight_bars")" "$note_stats"
+put t2 "$(verdict "$eight_bars")" "$(jq -c --argjson ok "$eight_bars" '. + {goals: {notes: $ok}}' <<<"$note_stats")"
 
 # T3: cutoff and resonance readable on the Bass chain, with a value that differs from the default when one is exposed
 candidates='[]'
@@ -101,34 +113,89 @@ t3="$(jq -c --arg cut "$CUTOFF" --arg res "$RESONANCE" '
   def unknown: any(.[]; (.default? // .defaultValue? // null) == null);
   pick($cut) as $c | pick($res) as $r
   | {cutoff: ($c | length), resonance: ($r | length), cutoffChanged: ($c | changed), resonanceChanged: ($r | changed),
+     goals: {cutoff: (($c | length) > 0 and (($c | changed) or ($c | unknown))), resonance: (($r | length) > 0 and (($r | changed) or ($r | unknown)))},
      status: (if ($c | length) == 0 or ($r | length) == 0 then "fail"
               elif ($c | changed) and ($r | changed) and (($c | unknown | not) and ($r | unknown | not)) then "pass"
               elif ($c | changed) and ($r | changed) then "review"
               elif ($c | unknown) or ($r | unknown) then "review" else "fail" end)}' <<<"$candidates")"
 put t3 "$(jq -r .status <<<"$t3")" "$(jq -c 'del(.status)' <<<"$t3")"
+filter_found="$(jq '.cutoff > 0' <<<"$t3")"
+put t1 "$(verdict "$([[ "$bass_exists" == true && "$has_device" == true ]] && echo true || echo false)")" \
+  "{\"bass\":$bass_exists,\"grid\":$has_grid,\"devices\":$device_names,\"strong\":\"$(verdict "$([[ "$bass_exists" == true && "$has_grid" == true ]] && echo true || echo false)")\",\"goals\":{\"track\":$bass_exists,\"sound\":$has_device,\"filter\":$filter_found}}"
 
-# T4: a compressor (Bitwig's Compressor+ or Dynamics) on Bass whose sidechain source is the Drums track.
+# T4: a compressor (Bitwig's Compressor+ or Dynamics) on Bass whose sidechain source is the Drums track, and a
+# dynamics parameter that is not at the device's fresh-insert value.
 # Plain Compressor has no sidechain input; Dynamics is Bitwig's compressor/expander/limiter with one.
+NUM='(.value.value? // .value? // .normalizedValue?)'
+param_values() {  # parameters.list answer -> {key: number}
+  jq -c "[.. | objects | select(($NUM | type) == \"number\") | {key: (.ref.id? // .id? // .parameterId? // .name | tostring), value: $NUM}] | from_entries" <<<"$1"
+}
+scratch_key=""  # the scratch track's key, once created
+scratch_params() {  # DEVICE_NAME -> sets $fresh to the param values of a fresh insert on the scratch track, or null (no subshell: scratch_key must persist)
+  local name="$1" path track row inserted
+  path="$(read_state catalog devices.catalog '{}' | jq -r --arg n "$name" '[.devices[]? | select(.name == $n)][0] | (.path // .file) // empty')"
+  [[ -n "$path" ]] || { fresh=null; return; }
+  if [[ -z "$scratch_key" ]]; then
+    if [[ "$dialect" == new ]]; then
+      scratch_key="$(rd new tracks.insert '{"type":"audio","name":"FE5 scratch"}' 2>/dev/null </dev/null | jq -c '.ref // empty')"
+    else
+      rd old tracks.create '{"type":"audio","position":-1,"name":"FE5 scratch"}' >/dev/null 2>&1 </dev/null || true
+      scratch_key="$(rd old tracks.list 2>/dev/null </dev/null | jq -r '[.tracks[]? | select((.ref.name // .name) == "FE5 scratch")][0] | (.trackId // .id // .ref.id) // empty')"
+    fi
+  fi
+  [[ -n "$scratch_key" ]] || { fresh=null; return; }
+  if [[ "$dialect" == new ]]; then
+    inserted="$(rd new devices.insert "$(jq -nc --arg f "$F_INSERT_TO" --argjson t "$scratch_key" --arg p "$path" '{($f): $t, kind: "file", path: $p}')" 2>/dev/null </dev/null)" || { fresh=null; return; }
+    row="$(jq -c --arg n "$name" '{ref: .ref, name: $n}' <<<"$inserted")"
+  else
+    rd old devices.insert "$(jq -nc --arg t "$scratch_key" --arg p "$path" '{trackId: $t, expectedDeviceCount: 0, kind: "file", path: $p}')" >/dev/null 2>&1 </dev/null || { fresh=null; return; }
+    row="$(jq -nc --arg n "$name" '{index: 0, name: $n}')"
+  fi
+  fresh="$(param_values "$(read_state "scratch-$slug" parameters.list "$(parameter_args "$scratch_key" "$row")")")"
+}
+
+compressor_found=false
 sidechain_ok=false
+moved=false
+moved_known=true
 if [[ -n "$drums" ]]; then
   drums_id="$(track_id "$drums")"
   while read -r device; do
     [[ -n "$device" ]] || continue
     jq -e '.name | test("compressor|dynamics"; "i")' <<<"$device" >/dev/null || continue
+    compressor_found=true
+    name="$(jq -r .name <<<"$device")"
     slug="$(jq -r '.name | gsub("[^A-Za-z0-9]"; "_")' <<<"$device")"
     sc="$(read_state "sidechain-$slug" devices.sidechain.get "$(device_args "$bass" "$device")")"
     if jq -e --arg id "$drums_id" '[.. | strings] | any(. == $id or . == "Drums")' <<<"$sc" >/dev/null; then sidechain_ok=true; fi
+    mine="$(param_values "$(read_state "dynamics-$slug" parameters.list "$(parameter_args "$bass" "$device")")")"
+    scratch_params "$name"
+    if [[ "$fresh" == null ]]; then moved_known=false
+    elif jq -e --argjson f "$fresh" '[to_entries[] | select(($f[.key] // null) != null and ((.value - $f[.key]) | fabs) > 0.000001)] | length > 0' <<<"$mine" >/dev/null; then moved=true; fi
   done <<<"$device_rows"
 fi
-put t4 "$(verdict "$sidechain_ok")" "{\"drums\":$([[ -n "$drums" ]] && echo true || echo false)}"
+scratch_deleted=null
+if [[ -n "$scratch_key" ]]; then
+  if [[ "$dialect" == new ]]; then target="$(jq -nc --argjson t "$scratch_key" '{target: $t}')"; else target="$(jq -nc --arg t "$scratch_key" '{trackId: $t}')"; fi
+  if rd "$dialect" tracks.delete "$target" >"$raw/scratch-delete.json" 2>"$raw/scratch-delete.err" </dev/null; then scratch_deleted=true; else scratch_deleted=false; fi
+fi
+t4_strong=fail
+if [[ "$sidechain_ok" == true && "$moved" == true ]]; then t4_strong=pass
+elif [[ "$sidechain_ok" == true && "$moved_known" == false ]]; then t4_strong=review; fi
+put t4 "$(verdict "$sidechain_ok")" "{\"drums\":$([[ -n "$drums" ]] && echo true || echo false),\"strong\":\"$t4_strong\",\"dynamicsMoved\":$([[ "$moved_known" == true ]] && echo "$moved" || echo null),\"scratchDeleted\":$scratch_deleted,\"goals\":{\"compressor\":$compressor_found,\"sidechain\":$sidechain_ok,\"dynamics\":$moved}}"
 
-# T5: a WAV in the export directory whose integrated loudness measures
+# T5: a WAV in the export directory whose integrated loudness measures; strong adds the low-band check
 wav="$(find "$export_dir" -maxdepth 2 -name '*.wav' -type f -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -n 1 | cut -d' ' -f2-)"
 lufs=null
+low_share=null
 if [[ -n "$wav" ]]; then
   analysis="$(read_state loudness audio.analyze "$(jq -nc --arg p "$wav" '{path: $p, mode: "loudness"}')")"
   lufs="$(jq -c '[.. | objects | to_entries[] | select(.key | test("integrated|lufs"; "i")) | .value | numbers][0] // null' <<<"$analysis")"
+  bands="$(read_state bands audio.analyze "$(jq -nc --arg p "$wav" '{path: $p, mode: "bands"}')")"
+  low_share="$(jq -c '[.. | objects | select(has("bandsDb")) | .bandsDb | ((if .sub == null then 0 else pow(10; .sub / 10) end) + (if .low == null then 0 else pow(10; .low / 10) end))] | if length == 0 then null else add / length end' <<<"$bands")"
 fi
-put t5 "$(verdict "$(jq '. != null and . > -70' <<<"$lufs")")" "{\"file\":$(jq -Rn --arg w "$wav" '$w // null'),\"lufs\":$lufs}"
+measured="$(jq '. != null and . > -70' <<<"$lufs")"
+t5_strong="$(verdict "$(jq -n --argjson l "$lufs" --argjson s "$low_share" '$l != null and $l > -40 and $s != null and $s >= 0.5')")"
+put t5 "$(verdict "$measured")" "{\"file\":$(jq -Rn --arg w "$wav" '$w // null'),\"lufs\":$lufs,\"lowShare\":$low_share,\"strong\":\"$t5_strong\",\"goals\":{\"export\":$([[ -n "$wav" ]] && echo true || echo false)}}"
 
 jq -c --arg cond "$cond" '{condition: $cond} + .' <<<"$results"

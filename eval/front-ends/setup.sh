@@ -41,10 +41,10 @@ fi
 
 if [[ "$dialect" == new ]]; then
   drums="$(write new tracks.insert '{"type":"instrument","name":"Drums"}' | jq -c .ref)"
-  slot="$(rd new launcher.list "{\"parent\":$drums}" | jq -c '.slots[0].ref // empty')"
+  slot="$(rd new launcher.list "$(ref_arg "$F_LIST_PARENT" "$drums")" | jq -c '.slots[0].ref // empty')"
   if [[ -z "$slot" ]]; then
     write new scenes.insert '{"count":1}' >/dev/null
-    slot="$(rd new launcher.list "{\"parent\":$drums}" | jq -c '.slots[0].ref // empty')"
+    slot="$(rd new launcher.list "$(ref_arg "$F_LIST_PARENT" "$drums")" | jq -c '.slots[0].ref // empty')"
   fi
   [[ -n "$slot" ]] || die "no launcher slot on the Drums track"
   write new clips.insert "$(jq -nc --argjson to "$slot" --argjson notes "$NOTES" '{to:$to,name:"Beat",loop:{lengthBeats:4},notes:$notes}')" >/dev/null

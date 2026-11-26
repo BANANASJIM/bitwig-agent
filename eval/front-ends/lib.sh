@@ -36,6 +36,17 @@ cond_extension() { if [[ "$1" == A ]]; then echo 0.4; else echo current; fi; }
 # The client used by setup.sh and verify.sh, in the dialect of the condition's extension.
 cond_dialect() { if [[ "$1" == A ]]; then echo old; else echo new; fi; }
 
+# Argument names of the B/C (current) dialect that the FE6-b field renames change. They live only here: flip these
+# two values (and nothing else) when FE6-b lands.
+#   F_LIST_PARENT  the owner argument of arranger/chains/devices/launcher/modulators/parameters .list  (parent -> target)
+#   F_INSERT_TO    the destination argument of devices.insert / modulators.insert                      (parent -> to)
+# presets.search device -> deviceName is not used by this harness.
+F_LIST_PARENT="${BWA_F_LIST_PARENT:-parent}"
+F_INSERT_TO="${BWA_F_INSERT_TO:-parent}"
+
+# ref_arg FIELD REF_JSON: the one-key argument object {FIELD: REF}.
+ref_arg() { jq -nc --arg f "$1" --argjson r "$2" '{($f): $r}'; }
+
 # rd DIALECT METHOD JSON: one call, stdout unwrapped to the result object. Never retries.
 rd() {
   local dialect="$1" method="$2" args="${3:-}"

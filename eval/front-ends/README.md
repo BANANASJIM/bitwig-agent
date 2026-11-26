@@ -16,7 +16,7 @@ export BWA_MAIN_TREE=...       # current main, `pixi install --locked` done
 export BWA_V04_TREE=...        # checkout of 37157f8, `pixi install --locked` done
 export BWA_RESTART_SCRIPT=...  # restarts the test instance on its pristine project
 eval/front-ends/run_all.sh --dry-run          # print the plan, touch nothing
-eval/front-ends/run_all.sh [--conditions "A B C"] [--runs 2]
+eval/front-ends/run_all.sh [--conditions "A B C"] [--runs 4]
 ```
 
 Per run: restart, `setup.sh` (silent audio, one `Drums` track with a one-bar clip), `claude -p` with the
@@ -24,6 +24,15 @@ prompt from `tasks.md`, `metrics.py` and `verify.sh`. `metrics.py --report $BWA_
 tables and applies the criteria. Failed calls are labelled `tool` or `agent` by heuristic; put
 `{"<call index>": "tool"|"agent"}` in `<run>/labels.json` and rerun `metrics.py <run>/run.jsonl --out
 <run>/metrics.json` to override. `pixi run surface` prints the static sizes (no Bitwig).
+
+Overrides, all optional files in `<run>`: `labels.json` (failure cause), `segments.json` (task boundaries),
+`verdicts.json` (a human verdict for a `review`), `lost.json` `{"t2.playing": false|true}` (force a sub-goal to
+not-lost|lost). `verify.sh` writes per task `status` (the original check), `goals` and, for T1, T4 and T5,
+`strong`; for T4 it inserts the same device on a scratch audio track and deletes it afterwards.
+
+The B/C dialect argument names that the FE6-b renames change live in `lib.sh` only: `F_LIST_PARENT` (`.list`
+owner argument, `parent` now) and `F_INSERT_TO` (`devices.insert` destination, `parent` now). Flip those two
+values, or export `BWA_F_LIST_PARENT` / `BWA_F_INSERT_TO`; no other line depends on them.
 
 ## Pre-registered criterion (rerun)
 
