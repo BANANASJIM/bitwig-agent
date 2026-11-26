@@ -56,7 +56,10 @@ Definitions:
   file and a loudness measurement. A refusal followed by the sub-goal ending done is not lost.
 - **Stronger verify**: T1 a Grid device on the Bass track; T2 and T3 as before (T3 `review` needs a human
   verdict); T4 the sidechain source is `Drums` and at least one dynamics parameter differs from a fresh insert
-  of the same device; T5 the render is not silent and is low-band dominated (see `verify.sh`).
+  of the same device; T5 the agent's master file exists and measures, and verify's own export of the Bass track alone over the same range
+  (start 0, length of the agent's file) measures above -40 LUFS, which proves the arranger has bass in that range
+  (a launcher-only bass renders silent). A dialect that cannot render a single track falls back to a band check for
+  that dialect only (at least half of the energy below 250 Hz); the report says which was used.
 
 Criterion, for each of B and C against A:
 
