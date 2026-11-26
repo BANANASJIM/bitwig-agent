@@ -22,6 +22,8 @@ SYNONYMS = {
     "instanceIds": ("moduleIds",),
     "outputPath": ("outPath",),
     "path": ("outPath",),
+    "parent": ("target", "to"),
+    "device": ("deviceName",),
 }
 
 

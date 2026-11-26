@@ -689,7 +689,7 @@ public final class NoteModuleTest {
 
     private static JsonObject listParams(LauncherFake f) {
         JsonObject p = new JsonObject();
-        p.add("parent", f.track());
+        p.add("target", f.track());
         return p;
     }
 

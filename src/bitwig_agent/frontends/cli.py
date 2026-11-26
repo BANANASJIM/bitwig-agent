@@ -171,9 +171,16 @@ def resources() -> dict[str, int]:
     return counts
 
 
+def method_index() -> list[str]:
+    """Every exposed method under its resource: the command words and the required fields, from the registry."""
+    lines: list[str] = []
+    for resource, count in resources().items():
+        lines.append(f"  {resource} ({count} {'method' if count == 1 else 'methods'})")
+        lines += [f"    {views.usage(name)}" for name in views.names() if name.split(".", 1)[0] == resource]
+    return lines
+
+
 def overview() -> str:
-    counts = resources()
-    width = max(map(len, counts))
     return "\n".join(
         [
             f"bitwig-agent {views.version()}: control Bitwig Studio from a shell",
@@ -186,12 +193,13 @@ def overview() -> str:
             "Loop:",
             *textwrap.wrap(views.help("loop")["text"], 100, initial_indent="  ", subsequent_indent="  "),
             "",
-            "Resources:",
-            *(f"  {name:<{width}}  {count} {'method' if count == 1 else 'methods'}" for name, count in counts.items()),
+            "Methods (required fields; <verb> --help lists the rest):",
+            *method_index(),
             "",
             "Input: --field=value; a string field is taken literally, any other field as JSON.",
             "  A non-string value may be @file or - (stdin). ARGS is one JSON object: inline, @file or -.",
             "  Field names are the protocol's (--dryRun, --timeoutMs). Flags and ARGS merge; a repeat is an error.",
+            "  A ref field also takes --<kind>=REF (--track, --clip, --device ...) when REF's own kind matches.",
             "Output: stdout is the result as JSON (indented on a terminal, one line in a pipe).",
             '  stderr is only an error: {"code","reason","message","next"?}. No colour, no progress.',
             "  Reads that return a record list: --format=jsonl|csv|tsv [--fields=a,b.c] prints only the records,",
@@ -298,11 +306,25 @@ def parse_options(method: str, rest: list[str], inputs: Inputs) -> Parsed:
         else:
             name, equals, value = token[2:].partition("=")
             if name not in flags:
-                raise ValueError(unknown_flag(method, name))
+                subject = views.subject(method)
+                bound = kind_ref(Flag(name, "object", bool(equals), value), tokens, inputs) if subject else None
+                if bound is None:
+                    raise ValueError(unknown_flag(method, name))
+                store(parsed, True, str(subject), bound)
+                continue
             bound = bind(Flag(name, flags[name], bool(equals), value), tokens, inputs)
             store(parsed, name in types, name, bound)
     merge_operand(parsed.arguments, operands, inputs)
     return parsed
+
+
+def kind_ref(flag: Flag, tokens: list[str], inputs: Inputs) -> dict[str, Any] | None:
+    """The ref of `--<kind>=REF` when REF's own kind is <kind>; None for any other value, which stays an unknown flag."""
+    try:
+        value = bind(flag, tokens, inputs)
+    except ValueError:
+        return None
+    return value if isinstance(value, dict) and value.get("kind") == flag.name else None
 
 
 def store(parsed: Parsed, is_field: bool, name: str, bound: Any) -> None:

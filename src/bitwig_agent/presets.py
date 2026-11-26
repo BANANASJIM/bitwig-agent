@@ -160,7 +160,7 @@ def _contains(value: Any, needle: str) -> bool:
 def search(args: dict[str, Any], roots: list[tuple[str, Path]] | None = None) -> dict[str, Any]:
     entries, searched = scan(roots if roots is not None else default_roots())
     words = [_norm(w) for w in args.get("query", "").split() if _norm(w)]
-    device = _norm(args["device"]) if args.get("device") else None
+    device = _norm(args["deviceName"]) if args.get("deviceName") else None
     category = _norm(args["category"]) if args.get("category") else None
     kind = args.get("deviceType")
     hits = []

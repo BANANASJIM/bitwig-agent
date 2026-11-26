@@ -460,7 +460,7 @@ public final class ModulatorEditor implements ParameterResolver.ModuleOwners {
         if (only != null && rows.size() == 0) s.modulator(only);
         s.guard();
         JsonObject result = new JsonObject();
-        result.add("parent", s.deviceRef);
+        result.add("target", s.deviceRef);
         result.addProperty("count", s.members.size());
         result.add("modulators", rows);
         JsonObject window = new JsonObject();

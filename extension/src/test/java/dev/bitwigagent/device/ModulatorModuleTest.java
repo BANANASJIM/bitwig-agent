@@ -28,7 +28,7 @@ public final class ModulatorModuleTest {
     void listCarriesRowsWithRefsAndStringPanels() {
         Fixture f = new Fixture();
         JsonObject result = f.read("modulators.list", f.list());
-        assertEquals(f.ref, result.get("parent"));
+        assertEquals(f.ref, result.get("target"));
         assertEquals(2, result.get("count").getAsInt());
         assertTrue(result.get("complete").getAsBoolean());
         assertFalse(result.get("nativeMutation").getAsBoolean());
@@ -118,13 +118,13 @@ public final class ModulatorModuleTest {
         f.addChain();
         JsonObject chainDevice = Refs.device(f.chain, 0, "Polysynth");
         JsonObject list = new JsonObject();
-        list.add("parent", chainDevice);
+        list.add("target", chainDevice);
         assertRpcError("unsupported_scope", f.start("modulators.list", list));
         JsonObject get = new JsonObject();
         get.add("target", Refs.modulator(chainDevice, ModulatorEditorTest.RANDOM.toString(), "Random"));
         assertRpcError("unsupported_scope", f.start("modulators.get", get));
         JsonObject insert = new JsonObject();
-        insert.add("parent", chainDevice);
+        insert.add("to", chainDevice);
         insert.addProperty("typeName", "Random");
         assertRpcError("unsupported_scope", f.start(f.edits, "modulators.insert", insert));
         assertTrue(f.adapter.tasks.isEmpty() && f.model.queue.isEmpty(), "nothing reached either native queue");
@@ -149,9 +149,9 @@ public final class ModulatorModuleTest {
         f.devices.child("itemCount").emit(2);
         f.device.child("position").emit(1);
         JsonObject p = new JsonObject();
-        p.add("parent", Refs.device(Refs.track(HostFixture.A, "Track 0"), 1, "Tool"));
+        p.add("target", Refs.device(Refs.track(HostFixture.A, "Track 0"), 1, "Tool"));
         JsonObject result = f.read("modulators.list", p);
-        assertEquals(1, result.getAsJsonObject("parent").get("index").getAsInt());
+        assertEquals(1, result.getAsJsonObject("target").get("index").getAsInt());
         assertSame(f.host.services.sources.roots[0][0], f.adapter.source);
         JsonObject outside = f.list();
         assertRpcError("outside_window", f.start("modulators.list", outside));
@@ -518,7 +518,7 @@ public final class ModulatorModuleTest {
     void insertGoesThroughTheEditModuleAndReturnsTheNewRow() {
         Fixture f = new Fixture();
         JsonObject p = new JsonObject();
-        p.add("parent", f.ref);
+        p.add("to", f.ref);
         p.addProperty("typeName", "Random");
         HostOperation op = f.start(f.edits, "modulators.insert", p);
         f.model.run();
@@ -582,7 +582,7 @@ public final class ModulatorModuleTest {
     void insertTakesExactlyOneOfTypeIdAndTypeName() {
         Fixture f = new Fixture();
         JsonObject neither = new JsonObject();
-        neither.add("parent", f.ref);
+        neither.add("to", f.ref);
         JsonObject both = neither.deepCopy();
         both.addProperty("typeName", "Random");
         both.addProperty("typeId", ModulatorEditorTest.RANDOM_TYPE.toString());
@@ -604,7 +604,7 @@ public final class ModulatorModuleTest {
         JsonObject legacyParent = HostFixture.json(
                 "{\"trackId\":\"" + HostFixture.A + "\",\"deviceIndex\":0,\"expectedDeviceName\":\"Tool\"}");
         JsonObject legacyList = new JsonObject();
-        legacyList.add("parent", legacyParent);
+        legacyList.add("target", legacyParent);
         assertInvalidParams(() -> HostBridge.checkSchema(HostFixture.SPECS, "modulators.list", legacyList));
         JsonObject legacyDelete = new JsonObject();
         legacyDelete.add("parent", legacyParent);
@@ -612,7 +612,7 @@ public final class ModulatorModuleTest {
         legacyDelete.addProperty("expectedCount", 2);
         assertInvalidParams(() -> HostBridge.checkSchema(HostFixture.SPECS, "modulators.delete", legacyDelete));
         JsonObject legacyInsert = new JsonObject();
-        legacyInsert.add("parent", f.ref);
+        legacyInsert.add("to", f.ref);
         legacyInsert.addProperty("typeName", "Random");
         legacyInsert.addProperty("expectedCount", 2);
         assertInvalidParams(() -> HostBridge.checkSchema(HostFixture.SPECS, "modulators.insert", legacyInsert));
@@ -622,7 +622,7 @@ public final class ModulatorModuleTest {
         legacyMap.addProperty("amount", 0.5);
         assertInvalidParams(() -> HostBridge.checkSchema(HostFixture.SPECS, "modulators.map", legacyMap));
         JsonObject ref = new JsonObject();
-        ref.add("parent", f.ref);
+        ref.add("target", f.ref);
         HostBridge.checkSchema(HostFixture.SPECS, "modulators.list", ref);
         JsonObject get = new JsonObject();
         get.add("target", f.random);
@@ -708,7 +708,7 @@ public final class ModulatorModuleTest {
 
         JsonObject list() {
             JsonObject p = new JsonObject();
-            p.add("parent", ref);
+            p.add("target", ref);
             return p;
         }
 

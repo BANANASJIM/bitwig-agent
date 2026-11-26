@@ -114,14 +114,14 @@ public final class DeviceChainModule implements HostModule {
     @Override
     public void dispatch(HostOperation op, String method, JsonObject p) {
         if (method.equals("chains.list")) {
-            nested.list(op, p.getAsJsonObject("parent"));
+            nested.list(op, p.getAsJsonObject("target"));
             return;
         }
         if (mutation != null && !mutation.result.isDone())
             throw Errors.notApplied(Reason.BUSY, "Another device chain edit is awaiting observations.");
         mutation = op;
         boolean inChain = method.equals("devices.insert")
-                ? "chain".equals(Refs.kind(p.getAsJsonObject("parent")))
+                ? "chain".equals(Refs.kind(insertion(p).getAsJsonObject("parent")))
                 : NativeChains.nested(p.getAsJsonObject("target"));
         switch (method) {
             case "devices.insert":
@@ -276,9 +276,15 @@ public final class DeviceChainModule implements HostModule {
 
     // ---------------------------------------------------------------- insert
 
+    /** The {@code to} of devices.insert: {@code {parent, position?}}, shaped like a devices.move destination. */
+    static JsonObject insertion(JsonObject p) {
+        return p.getAsJsonObject("to");
+    }
+
     private void insert(HostOperation op, JsonObject p) {
-        Parent parent = parentOf(p.getAsJsonObject("parent"));
-        JsonElement position = p.get("position");
+        JsonObject to = insertion(p);
+        Parent parent = parentOf(to.getAsJsonObject("parent"));
+        JsonElement position = to.get("position");
         int index = sources.insertionIndex(parent.ref(), position);
         State state = parent.capture("The chain changed before dispatch.");
         InsertionPoint point = insertionPoint(parent, position);

@@ -29,8 +29,10 @@ RECOVERY = (
 REFS = (
     "A ref is a JSON object with a kind that names one host object: track, scene, slot, clip, device, chain, "
     "parameter, remotePage, send, sidechain, modulator, gridModule or marker. Take refs from read (or write) results "
-    "and pass them back unchanged; never build one, except a Grid parameter: {kind: parameter, owner: <a gridModule "
-    "ref as read>, id: <the parameter key in its exported spec>}. A ref carries the fields that find the object "
+    "and pass them back unchanged: that is the safe way, since a ref is checked against what the host finds. A ref "
+    "you build by hand (from a help example, or a slot or parameter ref assembled from known ids) works exactly when "
+    "its identity fields are correct, and is refused as stale otherwise; a Grid parameter is {kind: parameter, "
+    "owner: <a gridModule ref as read>, id: <the parameter key in its exported spec>}. A ref carries the fields that find the object "
     "(locate) and the ones the host re-checks against what it finds there (compared). A ref nests its ancestors "
     "(a device holds its track or chain, a parameter its owner) and each ancestor is compared on identity: "
     "a scene, device, remotePage, send or marker by its position and name (a marker also by beat), a clip by where "

@@ -35,7 +35,7 @@ public final class DeviceListModule implements HostModule {
 
     @Override
     public void dispatch(HostOperation operation, String method, JsonObject params) {
-        JsonObject parent = params.getAsJsonObject("parent");
+        JsonObject parent = params.getAsJsonObject("target");
         if ("chain".equals(Refs.kind(parent))) listChain(operation, parent);
         else operation.result.complete(listTrack(parent));
     }
@@ -54,7 +54,7 @@ public final class DeviceListModule implements HostModule {
                     device.deviceType().get()));
         }
         JsonObject result = new JsonObject();
-        result.add("parent", trackRef);
+        result.add("target", trackRef);
         result.add("devices", items);
         result.add(
                 "window",
@@ -76,7 +76,7 @@ public final class DeviceListModule implements HostModule {
                 items.add(row);
             }
             JsonObject result = new JsonObject();
-            result.add("parent", chain.ref);
+            result.add("target", chain.ref);
             result.add("devices", items);
             result.add("window", nativeWindow(chain.devices.size()));
             result.addProperty("scope", "chain");

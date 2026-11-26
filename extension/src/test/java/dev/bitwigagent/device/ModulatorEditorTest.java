@@ -575,7 +575,7 @@ public final class ModulatorEditorTest {
         f.source(1).mappings.add(new Mapping(f.level, 0.1, "linear", true));
         f.source(1).mappings.add(new Mapping(f.farAway, 0.2, "linear", true));
         JsonObject all = e.read();
-        assertEquals(e.device, all.get("parent"));
+        assertEquals(e.device, all.get("target"));
         assertEquals(2, all.get("count").getAsInt());
         assertTrue(all.get("complete").getAsBoolean());
         assertEquals(0, all.getAsJsonArray("unsupported").size());

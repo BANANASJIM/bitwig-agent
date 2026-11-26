@@ -115,7 +115,7 @@ public final class ModulatorEditModule implements HostModule {
         final JsonObject modulatorRef =
                 method.equals("modulators.insert") ? null : p.getAsJsonObject(mapping ? "source" : "target");
         final DeviceSources.Source device = sources.device(
-                modulatorRef == null ? p.getAsJsonObject("parent") : modulatorRef.getAsJsonObject("device"), false);
+                modulatorRef == null ? p.getAsJsonObject("to") : modulatorRef.getAsJsonObject("device"), false);
         final JsonObject deviceRef = device.ref();
         final DeviceSources.RootReadTicket target = sources.rootRead(device);
         final UUID modulatorId = modulatorRef == null

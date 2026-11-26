@@ -205,7 +205,7 @@ async def test_recipe_does_not_report_authored_when_clip_readback_is_wrong(
                 device = {"kind": "device", "track": track, "index": 0, "name": "Test preset"}
                 return {
                     "status": "observed",
-                    "parent": track,
+                    "target": track,
                     "window": {"complete": True},
                     "devices": [{"ref": device, "name": "Test preset", "type": "instrument"}] if inserted else [],
                 }

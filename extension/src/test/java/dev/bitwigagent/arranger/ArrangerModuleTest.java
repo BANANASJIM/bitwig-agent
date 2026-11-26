@@ -196,7 +196,7 @@ public final class ArrangerModuleTest {
     void listIsReadOnlyShapedAsRefsAndNeedsNoStoppedTransport() {
         Fixture x = new Fixture("Audio");
         x.play(true);
-        JsonObject result = x.call("arranger.list", params("parent", x.f.track()));
+        JsonObject result = x.call("arranger.list", params("target", x.f.track()));
         assertTrue(!result.has("outcome") && x.lane.lists == 1 && x.lane.writes == 0, "list does not write");
         assertFalse(result.has("trackId") || result.has("lane"), "the lane identity is the parent ref, not a field");
         JsonObject row = result.getAsJsonArray("clips").get(0).getAsJsonObject();
@@ -209,14 +209,14 @@ public final class ArrangerModuleTest {
     void listWithoutANativeBindingIsAHostMismatch() {
         Fixture x = new Fixture("Instrument");
         x.f.modules.put("arranger.list", x.f.services.arranger(null));
-        assertRpcError("host_mismatch", x.start("arranger.list", params("parent", x.f.track())));
+        assertRpcError("host_mismatch", x.start("arranger.list", params("target", x.f.track())));
     }
 
     @Test
     void listRefusesAnUnknownTrack() {
         Fixture x = new Fixture("Instrument");
         JsonObject gone = Refs.track("22222222-2222-2222-2222-222222222222", "Track");
-        assertRpcError("target_not_found", x.start("arranger.list", params("parent", gone)));
+        assertRpcError("target_not_found", x.start("arranger.list", params("target", gone)));
         assertEquals(0, x.lane.lists);
     }
 
@@ -314,7 +314,7 @@ public final class ArrangerModuleTest {
         assertEquals(0, x.lane.calls, "the native adapter queues its work");
         List<Holds.View> holds = x.f.services.holds.list();
         assertTrue(holds.size() == 1 && !holds.get(0).ackable, "a running native operation is an in-flight hold");
-        JsonObject read = params("parent", x.f.track());
+        JsonObject read = params("target", x.f.track());
         assertRpcError("busy", () -> x.list.dispatch(x.later(), "arranger.list", read));
         JsonObject second = x.insert(8, 4);
         assertRpcError("busy", () -> x.f.clipModule.dispatch(x.later(), "clips.insert", second));
@@ -337,7 +337,7 @@ public final class ArrangerModuleTest {
                 "the refusal says what to inspect and what to ack");
         HostOperation edit = x.start("clips.delete", params("target", arrangerClip(x.f.track(), 8, "Verse")));
         assertRpcError("unresolved", edit);
-        JsonObject read = x.call("arranger.list", params("parent", x.f.track()));
+        JsonObject read = x.call("arranger.list", params("target", x.f.track()));
         assertNotNull(read, "reads stay available");
         List<Holds.View> holds = x.f.services.holds.list();
         assertTrue(
@@ -376,7 +376,7 @@ public final class ArrangerModuleTest {
     @Test
     void aTrackChangeWhileAListIsQueuedIsTargetChanged() {
         Fixture x = new Fixture("Instrument");
-        HostOperation op = x.start("arranger.list", params("parent", x.f.track()));
+        HostOperation op = x.start("arranger.list", params("target", x.f.track()));
         x.lane.beforeRun = () -> x.f.observeTrackId("22222222-2222-2222-2222-222222222222");
         x.drain(op);
         assertRpcError("target_changed", op);

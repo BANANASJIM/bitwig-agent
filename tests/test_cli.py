@@ -15,11 +15,12 @@ from bitwig_agent.core import views
 from bitwig_agent.frontends import cli
 from bitwig_agent.frontends.cli import main
 from bitwig_agent.protocol import TOOLS, invalid_params_message, validate_call
-from bitwig_agent.protocol.base import REASONS, TRACK
+from bitwig_agent.protocol.base import REASONS, TRACK, StatusArgs, ToolSpec
 from bitwig_agent.protocol.clips import NOTE_WINDOW
 from bitwig_agent.protocol.grid import DEVICE
 from bitwig_agent.protocol.grid import TARGET as GRID
-from bitwig_agent.protocol.launcher import SLOT_REF, TRACK_REF
+from bitwig_agent.protocol.launcher import CLIP_REF, SLOT_REF, TRACK_REF
+from bitwig_agent.protocol.refs import TrackRef
 
 TARGET_FLAG = "--target=" + json.dumps(TRACK_REF)
 
@@ -407,7 +408,7 @@ async def test_ref_methods_generated_help_and_parse_work_offline(monkeypatch, me
     assert schema == views.method(method)
     args = schema["examples"][0]
     assert parse_arguments(method, flags(method, args)) == (args, 5000)
-    field = "target" if method == "modulators.get" else "parent"
+    field = "target"
     assert field in schema["inputSchema"]["required"]
     assert "trackId" not in schema["inputSchema"]["properties"]
     listing = (await cli.execute(["modulators", "--help"])).stdout
@@ -835,8 +836,13 @@ async def test_help_layers_are_plain_text_on_stdout_and_exit_zero(monkeypatch):
         assert "Exit codes:" in out.stdout
         assert "\x1b" not in out.stdout
     overview = (await cli.execute(["--help"])).stdout
-    assert len(overview.encode()) < 3000  # 2860 B measured with the loop text; a regression guard
+    assert (
+        len(overview.encode()) < 7000
+    )  # 6173 B shipped, 6748 B with the hidden methods this fixture exposes (was 2860): loop text plus a usage line per method
     assert all(f"  {name} " in overview for name in {n.split(".")[0] for n in TOOLS})
+    for name in views.names():  # one generated line per exposed method, from the registry
+        assert f"\n    {views.usage(name)}\n" in overview, name
+    assert "\n    clips launch --target=CLIP\n" in overview
     resource = (await cli.execute(["tracks", "--help"])).stdout
     assert "\n  list " in resource
     assert "\n  sends set " in resource
@@ -1098,11 +1104,11 @@ async def test_a_repeated_row_flag_is_an_error(flag):
     ],
 )
 async def test_partial_is_decided_by_the_window_alone_when_there_is_one(host, monkeypatch, result, warns):
-    argv = [*["modulators", "list"], *flags("modulators.list", {"parent": DEVICE_REF}), "--format=jsonl"]
+    argv = [*["modulators", "list"], *flags("modulators.list", {"target": DEVICE_REF}), "--format=jsonl"]
     out = await stdout_of(argv, host, monkeypatch, result)
     assert out.code == 0
     assert (json.loads(out.stderr)["warning"] == "partial") if warns else out.stderr == ""
-    plain = [*["modulators", "list"], *flags("modulators.list", {"parent": DEVICE_REF})]
+    plain = [*["modulators", "list"], *flags("modulators.list", {"target": DEVICE_REF})]
     assert (await stdout_of(plain, host, monkeypatch, result)).stderr == ""
 
 
@@ -1140,3 +1146,81 @@ async def test_a_method_without_fields_names_no_empty_accepted_list():
     assert "Accepted:" not in message
     assert ".." not in message
     assert message.endswith("Also accepted: --timeoutMs, --format, --fields (did you mean --format?)")
+
+
+def args_of(method, rest):
+    return cli.parse_options(method, rest, cli.Inputs(lambda: "")).arguments
+
+
+@pytest.mark.parametrize(
+    ("method", "flag", "ref", "field"),
+    [
+        ("tracks.get", "track", TRACK_REF, "target"),
+        ("clips.launch", "clip", CLIP_REF, "target"),
+        ("devices.get", "device", DEVICE_REF, "target"),
+        ("devices.list", "track", TRACK_REF, "target"),
+        ("clips.import", "slot", SLOT_REF, "to"),
+        ("modulators.insert", "device", DEVICE_REF, "to"),
+    ],
+)
+def test_a_kind_flag_names_the_single_ref_subject(method, flag, ref, field):
+    assert views.subject(method) == field
+    assert args_of(method, [f"--{flag}={json.dumps(ref)}"]) == {field: ref}
+    assert args_of(method, [f"--{flag}", json.dumps(ref)]) == {field: ref}
+
+
+def test_a_real_field_of_that_name_always_wins(monkeypatch):
+    class Model(StatusArgs):
+        target: TrackRef
+        track: str
+
+    monkeypatch.setitem(TOOLS, "fake.get", ToolSpec(Model, "A fake method.", True))
+    assert views.subject("fake.get") == "target"
+    both = ["--track=literal", f"--target={json.dumps(TRACK_REF)}"]
+    assert args_of("fake.get", both) == {"track": "literal", "target": TRACK_REF}
+
+
+@pytest.mark.parametrize(
+    ("method", "flag", "value"),
+    [
+        ("clips.launch", "clip", TRACK_REF),
+        ("clips.launch", "clip", '"not a ref"'),
+        ("clips.launch", "clip", "not json"),
+        ("modulators.map", "modulator", MODULATOR_REF),
+        ("tracks.list", "track", TRACK_REF),
+    ],
+)
+def test_a_kind_flag_that_does_not_match_is_the_unknown_argument_error(method, flag, value):
+    text = value if isinstance(value, str) else json.dumps(value)
+    with pytest.raises(ValueError, match=rf"Unknown argument for {method}") as error:
+        args_of(method, [f"--{flag}={text}"])
+    if views.subject(method):
+        assert f"Accepted: {views.subject(method)}" in str(error.value)
+
+
+def test_a_kind_flag_and_the_field_together_are_a_duplicate():
+    with pytest.raises(ValueError, match="Duplicate argument: --target"):
+        args_of("tracks.get", [f"--track={json.dumps(TRACK_REF)}", f"--target={json.dumps(TRACK_REF)}"])
+
+
+async def test_unknown_method_suggests_the_same_verb_under_another_resource():
+    for argv in (["launcher", "launch"], ["launcher.launch"]):
+        out = await cli.execute(argv)
+        message = json.loads(out.stderr)["message"]
+        assert "clips.launch" in message
+        assert "launcher.list" not in message
+
+
+async def test_catalog_rows_print_as_records_and_filters_reach_the_host(host, monkeypatch):
+    result = {
+        "scope": "installed_bitwig_factory_devices",
+        "devices": [{"name": "Delay+", "kind": "file", "path": "/x/Delay+.bwdevice", "category": "Delay"}],
+    }
+    out = await stdout_of(
+        ["devices", "catalog", "--query=delay", "--category=Delay", "--format=tsv", "--fields=name,path"],
+        host,
+        monkeypatch,
+        result,
+    )
+    assert out.stdout.splitlines() == ["name\tpath", "Delay+\t/x/Delay+.bwdevice"]
+    assert host.requests[-1]["params"] == {"query": "delay", "category": "Delay"}

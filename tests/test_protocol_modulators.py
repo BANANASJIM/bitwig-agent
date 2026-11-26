@@ -26,7 +26,7 @@ MODULATOR = {"kind": "modulator", "device": DEVICE, "id": UUID, "name": "LFO"}
 )
 def test_the_parent_device_ref_is_strict(changes):
     with pytest.raises(ValidationError):
-        validate_call("modulators.list", {"parent": {**DEVICE, **changes}})
+        validate_call("modulators.list", {"target": {**DEVICE, **changes}})
 
 
 @pytest.mark.parametrize(
@@ -48,7 +48,7 @@ def test_the_modulator_ref_is_strict(changes):
 @pytest.mark.parametrize("parent", [MODULATOR, TRACK_REF, {"trackId": TRACK, "deviceIndex": 0}])
 def test_list_takes_only_a_device_ref(parent):
     with pytest.raises(ValidationError):
-        validate_call("modulators.list", {"parent": parent})
+        validate_call("modulators.list", {"target": parent})
 
 
 @pytest.mark.parametrize(
@@ -61,15 +61,15 @@ def test_list_takes_only_a_device_ref(parent):
 def test_modulator_pagination_requires_bounded_integer_tokens(field, values):
     for value in values:
         with pytest.raises(ValidationError):
-            validate_call("modulators.list", {"parent": DEVICE, field: value})
+            validate_call("modulators.list", {"target": DEVICE, field: value})
 
 
 def test_list_defaults_are_local():
-    model: Any = TOOLS["modulators.list"].model.model_validate({"parent": DEVICE})
+    model: Any = TOOLS["modulators.list"].model.model_validate({"target": DEVICE})
     assert (model.offset, model.limit) == (0, 64)
-    assert validate_call("modulators.list", {"parent": DEVICE}) == ({"parent": DEVICE}, 5000)
+    assert validate_call("modulators.list", {"target": DEVICE}) == ({"target": DEVICE}, 5000)
     for offset, limit in [(0, 1), (100000, 128)]:
-        args = {"parent": DEVICE, "offset": offset, "limit": limit}
+        args = {"target": DEVICE, "offset": offset, "limit": limit}
         assert validate_call("modulators.list", args)[0] == args
 
 

@@ -14,7 +14,7 @@ ParameterValue = RawValue | Display | Label
 
 
 class ParametersListArgs(StatusArgs):
-    parent: DeviceRef
+    target: DeviceRef
 
 
 class ParameterExpect(Expect):
@@ -62,7 +62,7 @@ MODULATOR_PARAMETER_REF = {
     "id": "POLARITY",
 }
 
-PARAMETERS_LIST_DESCRIPTION = "List the direct parameters of one device (a root device or a device inside a chain) without changing selection: each row has the parameter ref, its name and value {value, display?} (value is normalized 0..1, display is the host's own text when it is observed). parent is a device ref from devices.list."
+PARAMETERS_LIST_DESCRIPTION = "List the direct parameters of one device (a root device or a device inside a chain) without changing selection: each row has the parameter ref, its name and value {value, display?} (value is normalized 0..1, display is the host's own text when it is observed). target is a device ref from devices.list."
 PARAMETERS_SET_DESCRIPTION = 'Set one parameter: target is a parameter ref from parameters.list, devices.remote.get or modulators.list/get; value is the bare value the read returned, or for a normalized parameter {display: "800 Hz"} (a numeric display the host shows, or a ratio "1:6"/"6:1", both meaning 6; found by bisection on its own text and only while the transport is stopped; a text display or an enum is unsupported_unit, write its value), or for a modulator control {display} (float) or {label} (enum). expect {value} compares the current value first (stale if it differs). A Remote Control is written on its own page without touching the GUI page. Grid parameters take grid.apply and track volume/pan tracks.set. Result outcome applied or already_matched with the parameter ref; never retry an unknown outcome.'
 
 
@@ -71,7 +71,7 @@ SPECS: dict[str, ToolSpec] = {
         ParametersListArgs,
         PARAMETERS_LIST_DESCRIPTION,
         True,
-        examples=({"parent": PARAMETER_REF["owner"]},),
+        examples=({"target": PARAMETER_REF["owner"]},),
         records="parameters",
     ),
     "parameters.set": ToolSpec(

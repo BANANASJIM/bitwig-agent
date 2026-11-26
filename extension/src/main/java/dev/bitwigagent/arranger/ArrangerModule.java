@@ -144,8 +144,8 @@ public final class ArrangerModule implements HostModule {
     @Override
     public void dispatch(HostOperation op, String method, JsonObject p) {
         scheduler.check(op);
-        JsonObject parent = p.getAsJsonObject("parent");
-        int index = trackRefs.resolve(parent, false);
+        JsonObject target = p.getAsJsonObject("target");
+        int index = trackRefs.resolve(target, false);
         JsonObject trackRef = trackRefs.ref(index);
         run(
                 op,

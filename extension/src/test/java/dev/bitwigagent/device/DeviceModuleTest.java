@@ -82,6 +82,53 @@ public final class DeviceModuleTest {
     }
 
     @Test
+    void catalogFiltersNarrowByNameOrCategoryAndKeepTheEnvelope() {
+        JsonObject all = new JsonObject();
+        all.addProperty("scope", "installed_bitwig_factory_devices");
+        JsonArray rows = new JsonArray();
+        for (String[] row :
+                new String[][] {{"Poly Grid", "The Grid"}, {"Delay+", "Delay"}, {"Hat", "Drum"}, {"Mystery", null}}) {
+            JsonObject item = new JsonObject();
+            item.addProperty("name", row[0]);
+            if (row[1] != null) item.addProperty("category", row[1]);
+            rows.add(item);
+        }
+        all.add("devices", rows);
+        assertTrue(DeviceModule.filtered(all, new JsonObject()) == all, "no filter returns the cached catalog");
+        JsonObject byName = DeviceModule.filtered(all, params("query", "POLY"));
+        assertEquals(1, byName.getAsJsonArray("devices").size());
+        assertEquals("installed_bitwig_factory_devices", byName.get("scope").getAsString());
+        assertEquals(
+                1,
+                DeviceModule.filtered(all, params("query", "grid"))
+                        .getAsJsonArray("devices")
+                        .size(),
+                "category");
+        assertEquals(
+                1,
+                DeviceModule.filtered(all, params("category", "DRUM"))
+                        .getAsJsonArray("devices")
+                        .size());
+        assertEquals(
+                0,
+                DeviceModule.filtered(all, params("category", "dru"))
+                        .getAsJsonArray("devices")
+                        .size(),
+                "exact");
+        assertEquals(
+                1,
+                DeviceModule.filtered(all, params("query", "delay", "category", "delay"))
+                        .getAsJsonArray("devices")
+                        .size());
+        assertEquals(
+                0,
+                DeviceModule.filtered(all, params("query", "hat", "category", "delay"))
+                        .getAsJsonArray("devices")
+                        .size());
+        assertEquals(4, all.getAsJsonArray("devices").size(), "the cached list is not modified");
+    }
+
+    @Test
     void strictShapesRejectBeforeScheduling() {
         DeviceFixture f = DeviceFixture.twins();
         DeviceModule module = f.device();

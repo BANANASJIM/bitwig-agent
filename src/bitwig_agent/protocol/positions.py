@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import Discriminator, Tag
+from pydantic import Discriminator, Field, Tag
 
 from bitwig_agent.protocol.base import StrictModel, omitted
 from bitwig_agent.protocol.refs import ChainRef, DeviceRef, TrackRef, tag
@@ -38,6 +38,15 @@ DeviceParent = Annotated[Annotated[TrackRef, Tag("track")] | Annotated[ChainRef,
 class TrackDestination(StrictModel):
     parent: TrackRef = omitted(description="The group track to move into; omitted keeps the current parent.")
     position: TrackPosition
+
+
+class DeviceInsertion(StrictModel):
+    """Where a new device goes: the container and a position in it; the position defaults to "end"."""
+
+    parent: DeviceParent = Field(description="The track or chain to insert into.")
+    position: DevicePosition = omitted(
+        description='"start", "end" (default) or {before: deviceRef} / {after: deviceRef} of a device in this parent.'
+    )
 
 
 class DeviceDestination(StrictModel):

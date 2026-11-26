@@ -37,7 +37,7 @@ An old MCP configuration now starts the CLI instead of the server and the client
 | `bounce.inPlace` | `tracks.bounce` | renamed; `trackIds` is `targets`; gained `inPlace` |
 | `markers.rename` | `markers.set` | renamed |
 | `devices.layers.list` | `chains.list` | renamed |
-| `devices.layers.insert` | `devices.insert` (`parent` is a chain) | merged |
+| `devices.layers.insert` | `devices.insert` (`to.parent` is a chain) | merged |
 | `devices.remote.deletePage` | `devices.remote.delete` | renamed |
 | `devices.remote.page` | none | removed; Remote Controls pages are addressed by their ref |
 | `devices.remote.set`, `parameters.layer.set`, `modulators.parameters.set` | `parameters.set` | merged |
@@ -68,13 +68,16 @@ One concept has one name. Objects are addressed by refs that a read returned (`d
 
 | 0.4 | 0.5 |
 |---|---|
-| `trackId`, `deviceIndex`, `expectedDeviceName` (devices, parameters, Grid) | `target` (a device ref); lists take `parent` |
+| `trackId`, `deviceIndex`, `expectedDeviceName` (devices, parameters, Grid) | `target` (a device ref); the lists (`devices`, `chains`, `parameters`, `modulators`, `launcher`, `arranger`) take their subject as `target` too |
 | `trackId` on tracks, notes, launcher, automation | `target` (a track or clip ref); `trackIds` is `targets` |
 | `slotIndex` on `notes.read`, `notes.edit` | `target` (a clip ref) |
 | `markerIndex`, `expectedName`, `expectedBeat` (markers) | `target` (a marker ref) |
-| `modulatorId`, `parent`, `expectedCount`, `expectedAmount` (modulators) | `target` / `parent` refs; `expect` and `source` on `modulators.map` / `unmap`; `expectedCount` is gone from `modulators.insert` |
+| `modulatorId`, `parent`, `expectedCount`, `expectedAmount` (modulators) | `target` refs (`to` on `modulators.insert`); `expect` and `source` on `modulators.map` / `unmap`; `expectedCount` is gone from `modulators.insert` |
 | `parameterId`, `contextToken` on `parameters.set` | `target` (a parameter ref), optional `expect`; tokens are gone |
 | `toIndex` on `devices.move` | `to: {parent?, position}` |
+| `parent`, `position` on `devices.insert` | `to: {parent, position?}`, the same shape as the `devices.move` destination |
+| `device` on `presets.search` | `deviceName` |
+| `devices.catalog` takes nothing | optional `query` and `category`; a record list (`--format`, `--fields`) |
 | `expectedCount`, `expectedHash` on `automation.points.set` | `expect: {pointsHash}`; the read returns `lane.pointsHash` |
 | `volumeNormalized`, `volumeDb`, `volumeDisplay`, `panNormalized`, `panPercent`, `panDisplay` on `tracks.set` | `volume`, `pan`: a bare value or `{display}` |
 | `sendIndex`, `sendName`, `expectedSendName`, `valueNormalized`, `display` on `tracks.sends.set` | `target` (a send ref), `value`, optional `expect` |

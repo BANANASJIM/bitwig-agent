@@ -22,14 +22,17 @@ public final class DeviceChainModuleTest {
     private static final String NATIVE = "11111111-2222-4333-8444-555555555555";
 
     private static JsonObject insert(JsonObject parent, String kind, String id) {
-        return params("parent", parent, "kind", kind, "id", id);
+        return params("to", params("parent", parent), "kind", kind, "id", id);
     }
 
     private static JsonObject insertAt(JsonObject parent, Object position) {
         JsonObject p = insert(parent, "bitwig", NATIVE);
-        p.add(
-                "position",
-                position instanceof JsonElement ? (JsonElement) position : new JsonPrimitive((String) position));
+        p.getAsJsonObject("to")
+                .add(
+                        "position",
+                        position instanceof JsonElement
+                                ? (JsonElement) position
+                                : new JsonPrimitive((String) position));
         return p;
     }
 
@@ -42,7 +45,7 @@ public final class DeviceChainModuleTest {
     }
 
     private static JsonObject file(JsonObject parent, String path) {
-        return params("parent", parent, "kind", "file", "path", path);
+        return params("to", params("parent", parent), "kind", "file", "path", path);
     }
 
     private static JsonObject delete(JsonObject ref) {
@@ -108,7 +111,7 @@ public final class DeviceChainModuleTest {
         for (JsonObject p : bad) assertRpcError("invalid_params", f.submit(module, "devices.insert", p));
         assertRpcError("invalid_params", f.submit(module, "devices.delete", delete(f.trackRef)));
         assertRpcError("invalid_params", f.submit(module, "devices.move", params("target", f.twin(0))));
-        assertRpcError("invalid_params", f.submit(module, "chains.list", params("parent", f.trackRef)));
+        assertRpcError("invalid_params", f.submit(module, "chains.list", params("target", f.trackRef)));
         assertTrue(f.host.tasks.isEmpty() && f.top.insertions == 0 && f.top.deletions == 0, "nothing was scheduled");
         assertInvalidParams(() -> DeviceChainModule.validateInsertion(insert(f.trackRef, "shell", "echo hi")));
         assertInvalidParams(() -> DeviceChainModule.validateInsertion(params("kind", "bitwig")));
@@ -439,14 +442,12 @@ public final class DeviceChainModuleTest {
                 f.chains(),
                 "devices.insert",
                 params(
-                        "parent",
-                        rack.chainRef(0),
+                        "to",
+                        params("parent", rack.chainRef(0), "position", after(rack.deviceRef(0, 1))),
                         "kind",
                         "file",
                         "path",
-                        TestPaths.absolute("/presets/Wide Delay.bwpreset"),
-                        "position",
-                        after(rack.deviceRef(0, 1))));
+                        TestPaths.absolute("/presets/Wide Delay.bwpreset")));
         assertEquals(Refs.device(rack.chainRef(0), 2, "Wide Delay"), file.getAsJsonObject("ref"));
     }
 

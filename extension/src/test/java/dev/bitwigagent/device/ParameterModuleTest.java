@@ -169,7 +169,7 @@ public final class ParameterModuleTest {
 
     private static JsonObject list(JsonObject parent) {
         JsonObject p = new JsonObject();
-        p.add("parent", parent);
+        p.add("target", parent);
         return p;
     }
 
@@ -178,7 +178,7 @@ public final class ParameterModuleTest {
         Fixture f = new Fixture();
         f.eqParameters.displays.clear();
         JsonObject result = f.run("parameters.list", list(eq));
-        assertEquals(eq, result.get("parent"));
+        assertEquals(eq, result.get("target"));
         JsonArray rows = result.getAsJsonArray("parameters");
         assertEquals(3, rows.size());
         JsonObject gain = rows.get(0).getAsJsonObject();

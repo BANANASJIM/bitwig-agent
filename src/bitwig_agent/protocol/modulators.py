@@ -13,7 +13,7 @@ ModulationAmount = Annotated[float, Field(ge=-1, le=1)]
 
 
 class ModulatorsListArgs(StatusArgs):
-    parent: DeviceRef = Field(description="The root device whose modulators to read.")
+    target: DeviceRef = Field(description="The root device whose modulators to read.")
     offset: int = Field(default=0, ge=0, le=100000)
     limit: int = Field(default=64, ge=1, le=128)
 
@@ -23,7 +23,7 @@ class ModulatorsGetArgs(StatusArgs):
 
 
 class ModulatorsInsertArgs(StatusArgs):
-    parent: DeviceRef = Field(description="The root device to add a modulator to; it is appended after the others.")
+    to: DeviceRef = Field(description="The root device to add a modulator to; it is appended after the others.")
     typeName: str = omitted(
         min_length=1,
         max_length=128,
@@ -123,10 +123,10 @@ MODULATOR_PARAMETER_REF = {
     "id": "from-modulators.list",
 }
 
-MODULATORS_LIST_DESCRIPTION = "Read the modulators of one root device (the Modulators section of a device) in a single call, without selection: per modulator its ref, typeId, name, x/y, parameters (parameter ref and value {value, display, kind, minimum, maximum, options?}), read-only string-panel rows, and outputs with their mappings (target parameter ref, amount, transfer, enabled). offset 0..100000 and limit 1..128 (default 64) page the modulators. complete=false lists unsupported controls; contentsAvailable=false means the modulator was never opened. Discover parent with devices.list."
+MODULATORS_LIST_DESCRIPTION = "Read the modulators of one root device (the Modulators section of a device) in a single call, without selection: per modulator its ref, typeId, name, x/y, parameters (parameter ref and value {value, display, kind, minimum, maximum, options?}), read-only string-panel rows, and outputs with their mappings (target parameter ref, amount, transfer, enabled). offset 0..100000 and limit 1..128 (default 64) page the modulators. complete=false lists unsupported controls; contentsAvailable=false means the modulator was never opened. Discover target with devices.list."
 MODULATORS_GET_DESCRIPTION = "Read one modulator, in the same row shape as modulators.list: target is a modulator ref from modulators.list or modulators.insert."
 MODULATORS_DESCRIBE_DESCRIPTION = "Bitwig's own in-app help for device modulators, read offline from the local install (client-side; no host call). With type, one modulator: description, category, keywords, per-control help (docKey, title, description) and the shared help; without it, every type with name, category and one-line description (query ranks them by name, category, keywords and description, e.g. 'random', 'envelope'). Live kinds, ranges and values are not in these files: read them with modulators.list after inserting."
-MODULATORS_INSERT_DESCRIPTION = "Add one device modulator (typeName from modulators.describe, e.g. Random, Steps, Beat LFO, ADSR) after the existing ones, via Bitwig's own modulator-browser insertion. Returns the new row with its ref after verifying membership and type. Needs a stopped, nonrecording, nonautomation transport. Never retry an unknown outcome: read modulators.list."
+MODULATORS_INSERT_DESCRIPTION = "Add one device modulator to the device `to` (typeName from modulators.describe, e.g. Random, Steps, Beat LFO, ADSR) after the existing ones, via Bitwig's own modulator-browser insertion. Returns the new row with its ref after verifying membership and type. Needs a stopped, nonrecording, nonautomation transport. Never retry an unknown outcome: read modulators.list."
 MODULATORS_DELETE_DESCRIPTION = "Delete one device modulator (and its mappings) with Bitwig's native undoable delete: target is a modulator ref. Membership is verified afterwards. Stopped transport required; never retry an unknown outcome."
 MODULATORS_MAP_DESCRIPTION = "Set a modulation mapping from a modulator output to a control on the same device, whether or not one exists: source is a modulator ref, target a parameter ref of a Grid module or of another modulator (from grid.export refs or modulators.list), amount -1..1 (not clamped). An omitted transfer or enabled keeps an existing mapping's value (a new mapping gets linear, enabled). outputId may be omitted for single-output modulators. expect {amount} compares the current mapping first. Uses Bitwig's undoable modulation add; verified by exact mapping readback. Stopped transport required; never retry an unknown outcome."
 MODULATORS_UNMAP_DESCRIPTION = "Remove one modulation mapping (Bitwig's undoable Clear modulation): source is a modulator ref, target the mapped parameter ref. expect {amount} compares the current mapping first. Verified by readback. Stopped transport required."
@@ -137,7 +137,7 @@ SPECS: dict[str, ToolSpec] = {
         ModulatorsListArgs,
         MODULATORS_LIST_DESCRIPTION,
         True,
-        examples=({"parent": DEVICE_REF, "offset": 0, "limit": 64},),
+        examples=({"target": DEVICE_REF, "offset": 0, "limit": 64},),
         records="modulators",
         summary="Read every modulator of one root device: ref, typeId, name, parameters {ref, value {value, display, kind, minimum, maximum, options?}}, string panels and outputs with mappings (target ref, amount, transfer, enabled). offset/limit page; complete=false lists unsupported controls.",
     ),
@@ -156,8 +156,8 @@ SPECS: dict[str, ToolSpec] = {
         MODULATORS_INSERT_DESCRIPTION,
         False,
         examples=(
-            {"parent": DEVICE_REF, "typeName": "Random"},
-            {"parent": DEVICE_REF, "typeId": "bf29a7b0-91dc-4851-8a94-c63f358f3cda"},
+            {"to": DEVICE_REF, "typeName": "Random"},
+            {"to": DEVICE_REF, "typeId": "bf29a7b0-91dc-4851-8a94-c63f358f3cda"},
         ),
     ),
     "modulators.delete": ToolSpec(

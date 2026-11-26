@@ -94,7 +94,10 @@ def test_query_filters_rank_and_page(library):
     assert names(presets.search({"query": "warm"}, library)) == ["Warm Pad Study", "Warm Room"]
     assert names(presets.search({"query": "WARM-pad"}, library)) == ["Warm Pad Study"]
     assert names(presets.search({"query": "slow wide"}, library)) == ["Warm Pad Study"]  # comment words count
-    assert names(presets.search({"device": "convolution"}, library)) == ["Big Hall", "Warm Room"]  # metadata or folder
+    assert names(presets.search({"deviceName": "convolution"}, library)) == [
+        "Big Hall",
+        "Warm Room",
+    ]  # metadata or folder
     assert names(presets.search({"deviceType": "audio-effect"}, library)) == ["Big Hall"]
     assert names(presets.search({"category": "pad"}, library)) == ["Warm Pad Study"]
     assert names(presets.search({"category": "drums"}, library)) == ["Kick Heavy"]  # folder when no metadata

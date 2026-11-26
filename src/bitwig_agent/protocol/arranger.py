@@ -6,7 +6,7 @@ from bitwig_agent.protocol.refs import TrackRef
 
 
 class ArrangerListArgs(StatusArgs):
-    parent: TrackRef
+    target: TrackRef
 
 
 ARRANGER_LIST_DESCRIPTION = (
@@ -20,6 +20,6 @@ ARRANGER_LIST_DESCRIPTION = (
 
 SPECS: dict[str, ToolSpec] = {
     "arranger.list": ToolSpec(
-        ArrangerListArgs, ARRANGER_LIST_DESCRIPTION, True, examples=({"parent": TRACK_REF},), records="clips"
+        ArrangerListArgs, ARRANGER_LIST_DESCRIPTION, True, examples=({"target": TRACK_REF},), records="clips"
     ),
 }

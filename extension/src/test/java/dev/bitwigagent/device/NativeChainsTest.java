@@ -67,11 +67,11 @@ public final class NativeChainsTest {
         JsonObject found = x.run(tool, walk -> name(walk.device(tool, true).name));
         assertEquals("Tool", found.get("name").getAsString());
         HostFixture.REF_SCHEMA.apply(tool);
-        JsonObject listed = x.call(x.f.list(), "devices.list", params("parent", x.inner));
+        JsonObject listed = x.call(x.f.list(), "devices.list", params("target", x.inner));
         assertEquals(
                 tool, listed.getAsJsonArray("devices").get(1).getAsJsonObject().get("ref"));
-        JsonObject params = x.call(x.f.parameters(), "parameters.list", params("parent", tool));
-        assertEquals(tool, params.getAsJsonObject("parent"));
+        JsonObject params = x.call(x.f.parameters(), "parameters.list", params("target", tool));
+        assertEquals(tool, params.getAsJsonObject("target"));
         x.split.name = "Splitter";
         RpcException moved =
                 assertRpcError("target_changed", x.start(tool, walk -> name(walk.device(tool, false).name)));
@@ -113,14 +113,12 @@ public final class NativeChainsTest {
                         x.f.chains(),
                         "devices.insert",
                         params(
-                                "parent",
-                                x.rack.chainRef(0),
+                                "to",
+                                params("parent", x.rack.chainRef(0), "position", params("before", elsewhere)),
                                 "kind",
                                 "bitwig",
                                 "id",
-                                "11111111-2222-4333-8444-555555555555",
-                                "position",
-                                params("before", elsewhere)))));
+                                "11111111-2222-4333-8444-555555555555"))));
     }
 
     @Test
@@ -141,7 +139,7 @@ public final class NativeChainsTest {
         JsonObject inserted = x.call(
                 x.f.chains(),
                 "devices.insert",
-                params("parent", x.rack.chainRef(1), "kind", "clap", "id", "org.example.fx"));
+                params("to", params("parent", x.rack.chainRef(1)), "kind", "clap", "id", "org.example.fx"));
         assertEquals("unknown", inserted.get("outcome").getAsString());
         assertEquals("readback_mismatch", inserted.get("reason").getAsString());
         assertTrue(inserted.get("inserted").isJsonNull());
@@ -172,7 +170,7 @@ public final class NativeChainsTest {
         JsonObject deleted = x.call(x.f.chains(), "devices.delete", params("target", x.rack.deviceRef(1, 0)));
         assertEquals("applied", deleted.get("outcome").getAsString(), "a pad keeps its chain once emptied");
         assertEquals(0, deleted.get("afterCount").getAsInt());
-        JsonObject listed = x.call(x.f.chains(), "chains.list", params("parent", x.rack.ref()));
+        JsonObject listed = x.call(x.f.chains(), "chains.list", params("target", x.rack.ref()));
         assertEquals(
                 0,
                 listed.getAsJsonArray("chains")
@@ -186,7 +184,7 @@ public final class NativeChainsTest {
     void aBrokenBindingIsNativeUnavailableBeforeDispatchAndUnknownAfter() {
         Fixture x = new Fixture();
         x.f.natives.broken = new IllegalStateException("descriptor drift");
-        HostOperation read = x.f.submit(x.f.list(), "devices.list", params("parent", x.rack.chainRef(0)));
+        HostOperation read = x.f.submit(x.f.list(), "devices.list", params("target", x.rack.chainRef(0)));
         assertRpcError("native_unavailable", x.f.finishOrError(read));
         x.f.natives.broken = null;
         HostOperation op = new HostOperation(Long.MAX_VALUE);

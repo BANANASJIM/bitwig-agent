@@ -111,7 +111,7 @@ public final class ParameterModule implements HostModule, ParameterResolver.Dire
 
     @Override
     public void dispatch(HostOperation request, String method, JsonObject params) {
-        if (method.equals("parameters.list")) list(request, params.getAsJsonObject("parent"));
+        if (method.equals("parameters.list")) list(request, params.getAsJsonObject("target"));
         else set(request, params);
     }
 
@@ -189,7 +189,7 @@ public final class ParameterModule implements HostModule, ParameterResolver.Dire
             rows.add(item);
         }
         JsonObject result = new JsonObject();
-        result.add("parent", deviceRef);
+        result.add("target", deviceRef);
         result.add("parameters", rows);
         result.addProperty("scope", "host_exposed_direct_parameters");
         return result;
@@ -405,7 +405,7 @@ public final class ParameterModule implements HostModule, ParameterResolver.Dire
                 rows.add(item);
             }
             JsonObject result = new JsonObject();
-            result.add("parent", device.ref);
+            result.add("target", device.ref);
             result.add("parameters", rows);
             result.addProperty("scope", "host_exposed_direct_parameters");
             return result;
