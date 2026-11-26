@@ -43,9 +43,30 @@ bitwig-agent-rpc = "bitwig_agent.cli:main"
 bitwig-agent-install = "bitwig_agent.install:main"
 
 [dependency-groups]
-dev = ["pytest>=8.3,<9"]
+dev = [
+    "mypy>=2.4.1",
+    "pytest>=8.3,<9",
+    "ruff>=0.17.6",
+]
 native-music = ["numpy>=2,<3", "scipy>=1.15,<2", "soundfile>=0.13,<1"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+extend-exclude = ["build"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "UP", "SIM", "C4", "RUF", "PL", "C90", "PERF", "PT"]
+ignore = ["E501"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 12
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = ["src/bitwig_agent"]

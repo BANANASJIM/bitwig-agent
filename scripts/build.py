@@ -5,10 +5,10 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
-import tempfile
 import tomllib
-import urllib.request
 import zipfile
+
+from tooling import download_verified
 
 ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "build"
@@ -18,24 +18,7 @@ GSON_URL = f"https://repo.maven.apache.org/maven2/com/google/code/gson/gson/{GSO
 
 
 def gson_jar():
-    target = BUILD / "deps" / f"gson-{GSON_VERSION}.jar"
-    target.parent.mkdir(parents=True, exist_ok=True)
-    if target.exists():
-        if hashlib.sha256(target.read_bytes()).hexdigest() != GSON_SHA256:
-            raise RuntimeError(f"Dependency checksum mismatch: {target}; remove it before rebuilding")
-        return target
-    with urllib.request.urlopen(GSON_URL, timeout=30) as response:
-        data = response.read(1024 * 1024 + 1)
-    if hashlib.sha256(data).hexdigest() != GSON_SHA256:
-        raise RuntimeError("Downloaded Gson checksum mismatch")
-    with tempfile.NamedTemporaryFile(dir=target.parent, delete=False) as output:
-        temporary = Path(output.name)
-        output.write(data)
-    try:
-        temporary.replace(target)
-    finally:
-        temporary.unlink(missing_ok=True)
-    return target
+    return download_verified(GSON_URL, GSON_SHA256, BUILD / "deps" / f"gson-{GSON_VERSION}.jar", 1024 * 1024)
 
 
 def classes_digest(classes):

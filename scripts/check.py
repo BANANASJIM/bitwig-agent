@@ -6,7 +6,7 @@ From an existing development environment:
   BITWIG_API_JAR=/path/to/installed/bitwig.jar python scripts/check.py
   python scripts/check.py --layer native --allow-native --native-config /path/to/run.json
 
-Default layers: offline Python, Java simulated-host, Java/MCP fixture. Missing
+Default layers: lint, offline Python, Java simulated-host, Java/MCP fixture. Missing
 requested prerequisites fail, never skip-to-green. Native is an opt-in read-only
 preflight, NOT music/UI/persistence E2E acceptance. See smoke-native.py --help.
 """
@@ -20,8 +20,9 @@ import sys
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
-LAYERS = ("offline", "java", "fixture", "native")
+LAYERS = ("lint", "offline", "java", "fixture", "native")
 DESCRIPTIONS = {
+    "lint": "Static gates: ruff, mypy, Java format, duplicate detection; no API jar or native host",
     "offline": "Python unit/adapter fixtures; no JVM or native host",
     "java": "Java transport and simulated-host tests; installed API jar required",
     "fixture": "Real MCP/Python/Java protocol + registry fixture; NOT native editing",
@@ -31,7 +32,7 @@ DESCRIPTIONS = {
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--layer", choices=LAYERS, action="append", help="repeat to select; default offline, java, fixture")
+    parser.add_argument("--layer", choices=LAYERS, action="append", help="repeat to select; default lint, offline, java, fixture")
     parser.add_argument("--allow-native", action="store_true", help="explicit permission for read-only native queries")
     parser.add_argument("--native-config", type=Path, help="explicit fixture/PID/window/display/artifacts JSON")
     parser.add_argument("--report", type=Path, help="write machine-readable layer outcomes here")
@@ -41,7 +42,7 @@ def main() -> int:
     child_env = dict(os.environ)
     if child_env.get("BITWIG_API_JAR"):
         child_env["BITWIG_API_JAR"] = str(Path(child_env["BITWIG_API_JAR"]).resolve())
-    selected = set(args.layer or ("offline", "java", "fixture"))
+    selected = set(args.layer or ("lint", "offline", "java", "fixture"))
     if (args.allow_native or args.native_config) and "native" not in selected:
         parser.error("native options require --layer native; no native run is implicit")
     outcomes = []
@@ -59,6 +60,7 @@ def main() -> int:
             result.update(status="blocked", reason="Native requires --allow-native and an existing --native-config")
         else:
             commands = {
+                "lint": [sys.executable, str(ROOT / "scripts/lint.py")],
                 "offline": [sys.executable, "-m", "pytest", "-q"],
                 "java": [sys.executable, str(ROOT / "scripts/test-java.py")],
                 "fixture": [sys.executable, str(ROOT / "scripts/smoke-mcp-java.py")],
@@ -68,7 +70,7 @@ def main() -> int:
             result["command"] = command
             try:
                 completed = subprocess.run(command, cwd=ROOT, env=child_env, check=False,
-                                           timeout={"offline": 420, "java": 900, "fixture": 240, "native": 180}[layer])
+                                           timeout={"lint": 600, "offline": 420, "java": 900, "fixture": 240, "native": 180}[layer])
                 result.update(status="passed" if completed.returncode == 0 else "failed", returncode=completed.returncode)
             except (OSError, subprocess.TimeoutExpired) as exc:
                 result.update(status="failed", reason=str(exc))
