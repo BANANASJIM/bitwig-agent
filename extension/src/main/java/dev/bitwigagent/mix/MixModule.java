@@ -246,7 +246,7 @@ public final class MixModule implements HostModule {
                         }
                         solve.original = result.original;
                         changes.addProperty(solve.key, result.normalized);
-                        target.solved.add(solve.key);
+                        if (result.wrote()) target.solved.add(solve.key);
                         solveNext(op, target, changes, solves, index + 1);
                     })
                     .start();
@@ -348,9 +348,10 @@ public final class MixModule implements HostModule {
                 }
                 long before = target.state.sequence[i];
                 guard(op, target);
-                // No callback has ever reported this field: the getter is the only evidence, and an equal write raises
-                // none.
-                if (before == 0 && matchesField(i, raw(target.state, i), changes.get(key))) target.unchanged.add(key);
+                // No callback has reported this field on the current binding (never, or not since a rebind: unchanged
+                // values do not replay): the getter is the only evidence, and an equal write raises none.
+                if (!target.state.fresh(i) && matchesField(i, raw(target.state, i), changes.get(key)))
+                    target.unchanged.add(key);
                 writes.put(key, before);
                 op.markDispatched();
                 JsonElement next = changes.get(key);
@@ -557,7 +558,7 @@ public final class MixModule implements HostModule {
                         }
                         requested.put("value", new JsonPrimitive(result.normalized));
                         writes.put("value", -1L);
-                        solvedValue = true;
+                        solvedValue = result.wrote();
                         writeFields();
                     })
                     .start();
@@ -566,9 +567,13 @@ public final class MixModule implements HostModule {
         void writeFields() {
             try {
                 boolean level = p.has("value") && solve == null && write("value", p.get("value"), false);
-                // Last: a level write can auto-enable the send on a later flush, so the metadata is stale and the
-                // explicit enabled write is dispatched regardless of what it currently shows.
-                if (p.has("enabled")) write("enabled", p.get("enabled"), level || solvedValue);
+                // Last: a level write can auto-enable the send on a later flush, so the metadata may be stale and an
+                // explicit disable is dispatched regardless of what it currently shows. A level write never turns a
+                // send off, so an enable that the metadata already shows is satisfied.
+                if (p.has("enabled")) {
+                    boolean on = p.get("enabled").getAsBoolean();
+                    write("enabled", p.get("enabled"), !on && (level || solvedValue));
+                }
             } catch (RpcException error) {
                 if (!op.dispatched()) throw error;
                 finish(error.reason);

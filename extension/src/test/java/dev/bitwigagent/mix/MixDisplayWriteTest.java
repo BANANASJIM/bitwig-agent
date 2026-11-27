@@ -242,6 +242,24 @@ public final class MixDisplayWriteTest {
     }
 
     @Test
+    void equalDisplayValueIsAlreadyMatched() {
+        MixModule[] m = new MixModule[1];
+        HostFixture f = fixture(m);
+        call(f, m[0], "tracks.set", params("{\"volume\":{\"display\":\"-6 dB\"}}"));
+        FakeHost value = f.tracks[0].child("volume").child("value");
+        int writes = value.writes;
+        JsonObject again = call(f, m[0], "tracks.set", params("{\"volume\":{\"display\":\"-6 dB\"}}"));
+        assertEquals("already_matched", again.get("outcome").getAsString(), again.toString());
+        assertEquals(
+                0,
+                again.getAsJsonObject("displayWrite")
+                        .getAsJsonObject("volume")
+                        .get("probes")
+                        .getAsInt());
+        assertEquals(writes, value.writes, "nothing written");
+    }
+
+    @Test
     void volumeDisplay() {
         MixModule[] m = new MixModule[1];
         HostFixture f = fixture(m);
@@ -437,6 +455,26 @@ public final class MixDisplayWriteTest {
                                 .getAsString()
                                 .equals("already_matched"),
                 "enabled write dispatched and verified, not skipped against stale metadata: " + result);
+    }
+
+    @Test
+    void displayLevelWithEnableOnDisabledSend() {
+        MixModule[] m = new MixModule[1];
+        HostFixture f = fixture(m);
+        FakeHost send = f.tracks[0].child("sendBank").item(0);
+        FakeHost enabled = send.child("isEnabled");
+        enabled.emit(false);
+        // The solver's first audible probe turns the send on; enabling it again raises no callback.
+        enabled.notifyWrites = false;
+        Runnable show = send.child("value").afterWrite;
+        send.child("value").afterWrite = () -> {
+            show.run();
+            if (!Boolean.TRUE.equals(enabled.data)) enabled.emit(true);
+        };
+        JsonObject result =
+                call(f, m[0], "tracks.sends.set", send("{\"value\":{\"display\":\"-9 dB\"},\"enabled\":true}"));
+        assertEquals("applied", result.get("outcome").getAsString(), result.toString());
+        assertTrue(Boolean.TRUE.equals(enabled.data), "send ends enabled");
     }
 
     @Test

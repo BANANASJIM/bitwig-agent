@@ -7,12 +7,18 @@ from typing import Any
 
 from bitwig_agent import configured_insert, modulator_docs, presets
 from bitwig_agent.audio import pipewire
+from bitwig_agent.core import batch
 from bitwig_agent.diagnostics import diagnostics
 from bitwig_agent.grid import docs as grid_docs
 from bitwig_agent.grid.apply import apply as grid_apply
 from bitwig_agent.grid.export import export as grid_export
 from bitwig_agent.grid.probe import probe as grid_probe
 from bitwig_agent.grid.render import render as grid_render
+
+
+async def batch_calls(client: Any, args: dict[str, Any], timeout_ms: int) -> dict[str, Any]:
+    # looked up per call: batch runs each call through invoke, which imports this module
+    return await batch.handle(client, args, timeout_ms)
 
 
 async def audio_route(client: Any, args: dict[str, Any], timeout_ms: int) -> dict[str, Any]:
@@ -36,6 +42,7 @@ async def presets_search(client: Any, args: dict[str, Any], timeout_ms: int) -> 
 
 
 HANDLERS = {
+    "batch": batch_calls,
     "devices.insert": configured_insert.devices_insert,
     "modulators.insert": configured_insert.modulators_insert,
     "modulators.describe": modulators_describe,

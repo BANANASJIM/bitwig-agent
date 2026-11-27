@@ -51,6 +51,11 @@ public final class DisplaySolver {
         public double normalized = Double.NaN, original = Double.NaN;
         int probes;
 
+        /** Whether the solver wrote anything: a display that already matched is solved with no probe. */
+        public boolean wrote() {
+            return probes > 0;
+        }
+
         public JsonObject json(String requested, double target) {
             JsonObject out = new JsonObject();
             out.addProperty("requested", requested);

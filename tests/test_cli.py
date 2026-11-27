@@ -12,6 +12,7 @@ from fakes import execute_cli as execute
 from pydantic import ValidationError
 
 from bitwig_agent.core import views
+from bitwig_agent.core.invoke import Result
 from bitwig_agent.frontends import cli
 from bitwig_agent.frontends.cli import main
 from bitwig_agent.protocol import TOOLS, invalid_params_message, validate_call
@@ -838,10 +839,10 @@ async def test_help_layers_are_plain_text_on_stdout_and_exit_zero(monkeypatch):
     overview = (await cli.execute(["--help"])).stdout
     assert (
         len(overview.encode()) < 7000
-    )  # 6173 B shipped, 6748 B with the hidden methods this fixture exposes (was 2860): loop text plus a usage line per method
+    )  # 6378 B shipped, 6953 B with the hidden methods this fixture exposes (was 2860): loop text plus a usage line per method
     assert all(f"  {name} " in overview for name in {n.split(".")[0] for n in TOOLS})
-    for name in views.names():  # one generated line per exposed method, from the registry
-        assert f"\n    {views.usage(name)}\n" in overview, name
+    for name in views.names():  # one generated line per exposed method, from the registry; batch reads JSON Lines
+        assert f"\n    {cli.BATCH_USAGE if name == 'batch' else views.usage(name)}\n" in overview, name
     assert "\n    clips launch --target=CLIP\n" in overview
     resource = (await cli.execute(["tracks", "--help"])).stdout
     assert "\n  list " in resource
@@ -944,7 +945,12 @@ async def test_batch_stops_at_the_first_error_and_names_the_line(host, monkeypat
         ('{"method":"status","extra":1}\n', "line 1: expected"),
         ("\n \n", "no calls"),
         ('{"method":"nope"}\n', "line 1: Unknown method"),
-        ('{"method":"status"}\n{"method":"transport.set","params":{"tempo":19}}\n', "line 2: "),
+        (
+            '{"method":"transport.set","params":{"playing":false}}\n{"method":"transport.set","params":{"tempo":19}}\n',
+            "line 2: ",
+        ),
+        ('{"method":"transport.set","params":{"playing":false}}\n\n{"method":"status"}\n', "line 3: status is a read"),
+        ('{"method":"ack","params":{"id":"x"}}\n', "line 1: ack cannot be batched"),
     ],
 )
 async def test_batch_validates_every_line_before_sending_any(host, monkeypatch, stdin, fragment):
@@ -1271,3 +1277,28 @@ async def test_arranger_list_without_target_reads_every_track(host, monkeypatch)
     )
     assert out.stdout.splitlines() == ["name\tbar\tref.track.name", "Intro\t1\tLead"]
     assert host.requests[-1]["params"] == {}
+
+
+async def test_batch_refuses_more_lines_than_one_batch_takes(host, monkeypatch):
+    monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
+    stdin = lines_of(*({"method": "transport.set", "params": {"playing": False}},) * 1025)
+    out = await cli.execute(["batch"], stdin=lambda: stdin)
+    assert (out.code, out.stdout) == (2, "")
+    assert "calls" in json.loads(out.stderr)["message"]
+    assert host.connections == 0
+
+
+def test_ctrl_c_in_a_batch_names_the_call_in_flight_and_counts_only_calls_that_ran():
+    progress = cli.Progress(emit=lambda line: None)
+    rows = cli.BatchRows([1, 2, 3], ["tracks.set", "transport.set", "transport.set"], progress)
+    rows.start(0)
+    assert progress.inflight == "tracks.set"
+    rows.put(Result({"outcome": "applied", "verification": "api_readback"}))
+    rows.start(1)
+    unknown = json.loads(cli.interrupted(progress).stdout)
+    assert (unknown["method"], unknown["next"]) == ("transport.set", "transport.get")
+    assert "1 call(s) finished" in unknown["message"]
+    rows.put(Result({"outcome": "not_applied", "reason": "limit_reached"}))
+    rows.put(Result({"outcome": "not_applied", "reason": "not_reached"}))
+    assert (progress.inflight, progress.completed) == (None, 2)
+    assert "no write was in flight" in json.loads(cli.interrupted(progress).stderr)["message"]

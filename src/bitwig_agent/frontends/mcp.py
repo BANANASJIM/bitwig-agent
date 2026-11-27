@@ -23,7 +23,7 @@ from mcp.types import (
     ToolAnnotations,
 )
 
-from bitwig_agent.core import views
+from bitwig_agent.core import batch, views
 from bitwig_agent.core.invoke import Envelope, Error, ask_help, invoke, refuse_timeout
 from bitwig_agent.core.serialize import dumps
 
@@ -67,6 +67,8 @@ async def call_tool(ctx: ServerRequestContext, params: CallToolRequestParams) ->
         return envelope_result(ask_help(arguments))
     if "timeoutMs" in arguments and views.exists(params.name):
         return envelope_result(refuse_timeout(params.name))
+    if params.name == "batch" and (refused := batch.refuse_call_timeouts(arguments)) is not None:
+        return envelope_result(refused)
     envelope = await invoke(params.name, arguments)
     if isinstance(envelope, Error) and envelope.error["code"] == "unknown_method":
         raise MCPError(INVALID_PARAMS, envelope.error["message"])
