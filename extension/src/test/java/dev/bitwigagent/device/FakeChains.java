@@ -15,6 +15,11 @@ public final class FakeChains implements NativeChains.Access {
         List<Chain> chains;
         final Map<String, Param> params = new LinkedHashMap<>();
         final Param enabled = new Param("On/Off", 1);
+        NativeChains.Container container = NativeChains.Container.NONE;
+        /** A Selector's active chain index; null on any other device. */
+        Integer active;
+
+        final Map<Integer, Chain> pads = new HashMap<>();
 
         Node(String name, String type) {
             this.name = name;
@@ -30,7 +35,28 @@ public final class FakeChains implements NativeChains.Access {
         /** Makes this a layer device: its chains, empty until added. */
         Node layered() {
             if (chains == null) chains = new ArrayList<>();
+            if (container == NativeChains.Container.NONE) container = NativeChains.Container.CHAINS;
             return this;
+        }
+
+        /** Makes this a Selector whose active chain is {@code index}. */
+        Node selector(int index) {
+            layered();
+            active = index;
+            return this;
+        }
+
+        /** Makes this a Drum Machine: chains only on pads. */
+        Node drum() {
+            layered();
+            container = NativeChains.Container.PADS;
+            return this;
+        }
+
+        Chain pad(int pitch, String id, Node... devices) {
+            Chain chain = chain(id, "Pad " + pitch, devices);
+            pads.put(pitch, chain);
+            return chain;
         }
 
         Chain chain(String id, String name, Node... devices) {
@@ -47,6 +73,8 @@ public final class FakeChains implements NativeChains.Access {
         String name;
         final int index;
         final List<Node> devices = new ArrayList<>();
+        final Param volume = new Param("Volume", .7), pan = new Param("Pan", .5), mute = new Param("Mute", 0);
+        boolean solo, mixer = true;
 
         Chain(UUID id, String name, int index) {
             this.id = id;
@@ -82,6 +110,16 @@ public final class FakeChains implements NativeChains.Access {
     Runnable onEdit = () -> {};
     /** A failure of the binding itself, raised by the next chain listing. */
     RuntimeException broken;
+    /** A failure of the later layer binding (mixers, Selectors, new chains), raised by each of its calls. */
+    RuntimeException layersBroken;
+    /** Solo and Selector writes the host accepts but never carries out. */
+    boolean ignoreSwitches;
+    /** A host whose solo unsolos the other chains of the same device. */
+    boolean exclusiveSolo;
+    /** New chains the host accepts but never creates. */
+    boolean ignoreNewChains;
+
+    int newChains;
 
     Node selected;
     int executions;
@@ -253,5 +291,77 @@ public final class FakeChains implements NativeChains.Access {
     @Override
     public void select(Object device) {
         selected = (Node) device;
+    }
+
+    private void layers() {
+        if (layersBroken != null) throw layersBroken;
+    }
+
+    @Override
+    public NativeChains.Mixer mixer(Object chain) {
+        layers();
+        Chain c = (Chain) chain;
+        return c.mixer ? new NativeChains.Mixer(c.volume, c.pan, c.mute, c.solo) : null;
+    }
+
+    @Override
+    public void solo(Object chain, boolean on) {
+        layers();
+        if (ignoreSwitches) return;
+        if (exclusiveSolo && on)
+            for (Node root : roots.values())
+                if (root.chains != null && root.chains.contains(chain))
+                    root.chains.forEach(other -> other.solo = false);
+        ((Chain) chain).solo = on;
+    }
+
+    @Override
+    public Integer activeChain(Object device) {
+        layers();
+        return ((Node) device).active;
+    }
+
+    @Override
+    public void activeChain(Object device, int index) {
+        layers();
+        if (!ignoreSwitches) ((Node) device).active = index;
+    }
+
+    @Override
+    public NativeChains.Container container(Object device) {
+        layers();
+        return ((Node) device).container;
+    }
+
+    @Override
+    public void addChain(Object device) {
+        layers();
+        Node node = (Node) device;
+        Runnable add = () -> {
+            if (ignoreNewChains) return;
+            newChains++;
+            node.chain(UUID.randomUUID().toString(), "Layer " + (node.chains.size() + 1));
+            onEdit.run();
+        };
+        if (insertDelay == 0) add.run();
+        else {
+            pending.add(add);
+            pendingPolls = insertDelay;
+        }
+    }
+
+    @Override
+    public Object padChain(Object device, int pitch) {
+        layers();
+        return ((Node) device).pads.get(pitch);
+    }
+
+    @Override
+    public void createPadChain(Object device, int pitch) {
+        layers();
+        if (ignoreNewChains) return;
+        newChains++;
+        ((Node) device).pad(pitch, UUID.randomUUID().toString());
+        onEdit.run();
     }
 }

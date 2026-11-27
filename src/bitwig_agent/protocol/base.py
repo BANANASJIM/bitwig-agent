@@ -4,9 +4,9 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import PurePath, PurePosixPath, PureWindowsPath
-from typing import Annotated, Any, Self, get_args
+from typing import Annotated, Any, Literal, Self, get_args
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, model_validator
 from pydantic.config import JsonDict
 
 from bitwig_agent.protocol.annotations import Annotations
@@ -169,6 +169,16 @@ Uuid = Annotated[str, Field(pattern=r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]
 
 
 UnitValue = Annotated[float, Field(ge=0, le=1)]
+
+
+def only_true(value: object) -> object:
+    if value is not True:
+        raise ValueError("must be true")
+    return value
+
+
+OnlyTrue = Annotated[Literal[True], BeforeValidator(only_true)]
+"""A switch that only turns something on: true, never 1."""
 UTF16_BYTES_PER_UNIT = 2
 MAX_STRING_UNITS = 1024
 MAX_BEAT = 4194304

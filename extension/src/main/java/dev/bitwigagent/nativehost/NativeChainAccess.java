@@ -21,6 +21,14 @@ import java.util.*;
  * {@code deleteObject}: a {@code insertion.deviceChain} with a file payload ({@code GRZ.doInsertFile}) or a device
  * payload without the copy modifier ({@code GRZ.doInsertDevices} for a move), and the document's delete transaction
  * ({@code BitwigStudioHost.doDeleteObjects}). Each is one Undo step.
+ *
+ * <p>Layer mixers, Selectors and new chains ({@link Layers}) use keys added after the 6.1.4 and 6.1.7 entries
+ * shipped, so they are bound on first use and their absence fails only the methods that need them. They are the
+ * calls Bitwig's own controller proxies make on the same objects: {@code AbstractChannelProxy} reads a channel's
+ * mixer ({@code document.channel.mixer}) for volume, pan and mute (direct parameters) and solo, {@code SoloProxy}
+ * sets solo, and {@code ChainSelectorProxy} reads and sets a Selector's active chain index on the device's chains
+ * ({@code device.chainSelector}). A new chain is the native "Add Nested Device Chain" and "Create empty chain"
+ * operations, each in its own document transaction.
  */
 public final class NativeChainAccess implements NativeChains.Access {
     /**
@@ -44,6 +52,7 @@ public final class NativeChainAccess implements NativeChains.Access {
     private final Method vst2, vst3, clap, vst2Plugins, vst3Plugins, clapPlugins, pluginFile;
     private final Constructor<?> point, filePayload, file;
     private final Object copy, noModifiers, copyModifier;
+    private Layers layers;
 
     public NativeChainAccess(NativeHost.Access a) throws ReflectiveOperationException {
         this.a = a;
@@ -294,6 +303,131 @@ public final class NativeChainAccess implements NativeChains.Access {
         if (owner == null)
             throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "The device has no track whose selection can change.");
         a.invoke(select, a.invoke(selection, a.invoke(deviceSelection, owner)), device);
+    }
+
+    @Override
+    public NativeChains.Mixer mixer(Object chain) {
+        Layers l = layers();
+        Object mixer = a.invoke(l.mixer, chain);
+        if (mixer == null) return null;
+        return new NativeChains.Mixer(
+                a.invoke(l.volume, mixer),
+                a.invoke(l.pan, mixer),
+                a.invoke(l.mute, mixer),
+                Boolean.TRUE.equals(a.invoke(l.solo, mixer)));
+    }
+
+    @Override
+    public void solo(Object chain, boolean on) {
+        Layers l = layers();
+        a.invoke(l.setSolo, a.invoke(l.mixer, chain), on);
+    }
+
+    @Override
+    public Integer activeChain(Object device) {
+        Layers l = layers();
+        Object index = selectorIndex(l, device);
+        return index == null ? null : (Integer) a.invoke(l.get, index);
+    }
+
+    @Override
+    public void activeChain(Object device, int index) {
+        Layers l = layers();
+        a.invoke(l.set, selectorIndex(l, device), index);
+    }
+
+    private Object selectorIndex(Layers l, Object device) {
+        Object chains = a.invoke(chainsOf, device);
+        if (!l.selector.isInstance(chains)) return null;
+        return a.invoke(l.index, a.invoke(l.selection, chains));
+    }
+
+    @Override
+    public NativeChains.Container container(Object device) {
+        Layers l = layers();
+        Object chains = a.invoke(chainsOf, device);
+        if (l.chainContainer.isInstance(chains)) return NativeChains.Container.CHAINS;
+        return l.drumChains.isInstance(chains) ? NativeChains.Container.PADS : NativeChains.Container.NONE;
+    }
+
+    @Override
+    public void addChain(Object device) {
+        a.invoke(layers().addChain, a.invoke(chainsOf, device));
+    }
+
+    @Override
+    public Object padChain(Object device, int pitch) {
+        Layers l = layers();
+        return a.invoke(l.padChain, pad(l, device, pitch));
+    }
+
+    @Override
+    public void createPadChain(Object device, int pitch) {
+        Layers l = layers();
+        a.invoke(l.createPadChain, pad(l, device, pitch));
+    }
+
+    private Object pad(Layers l, Object device, int pitch) {
+        return a.invoke(l.padByKey, a.invoke(chainsOf, device), pitch);
+    }
+
+    /** The {@link Layers} binding, resolved on the first call that needs it. */
+    private Layers layers() {
+        if (layers == null) {
+            try {
+                layers = new Layers();
+            } catch (ReflectiveOperationException | LinkageError error) {
+                throw Errors.notApplied(
+                        Reason.NATIVE_UNAVAILABLE, "Native layer binding unavailable: " + NativeHost.diagnostic(error));
+            }
+        }
+        return layers;
+    }
+
+    /** Exact descriptors for layer mixers, Selectors and new chains. */
+    private final class Layers {
+        final Class<?> selector, chainContainer, drumChains;
+        final Method mixer, volume, pan, mute, solo, setSolo, selection, index, get, set;
+        final Method addChain, padByKey, padChain, createPadChain;
+
+        Layers() throws ReflectiveOperationException {
+            Class<?> mixerType = a.type("channel.mixer"), target = a.type("parameter.target");
+            mixer = a.exactMethod("document.channel.mixer", mixerType, false);
+            volume = parameter("channel.mixer.volume", "channel.volume", target);
+            pan = parameter("channel.mixer.pan", "channel.pan", target);
+            mute = parameter("channel.mixer.mute", "channel.mute", target);
+            solo = a.exactMethod("channel.mixer.solo", boolean.class, false);
+            setSolo = a.exactMethod("channel.mixer.setSolo", void.class, false, boolean.class);
+            // A Selector's chains are the device's inner chains; the selection is its active-chain parameter.
+            selector = a.type("device.chainSelector");
+            Class<?> selectionType = a.type("parameter.chainSelector"), valueType = a.type("model.valueProperty");
+            Class<?> integer = a.type("model.integerValue");
+            if (!target.isAssignableFrom(selectionType) || !integer.isAssignableFrom(valueType))
+                throw new NoSuchMethodException("Inspected Selector index ancestry differs.");
+            selection = a.exactMethod("device.chainSelector.parameter", selectionType, false);
+            index = a.exactMethod("parameter.chainSelector.index", valueType, false);
+            get = a.exactMethod("model.integerValue.get", int.class, false);
+            set = a.exactMethod("model.integerValue.set", void.class, false, int.class);
+            Class<?> chainSet = a.type("device.chainSet");
+            chainContainer = a.type("device.chainContainer");
+            drumChains = a.type("device.drumChains");
+            Class<?> pad = a.type("device.drumPad"), slot = a.type("device.padSlot");
+            if (!chainSet.isAssignableFrom(chainContainer)
+                    || !chainSet.isAssignableFrom(drumChains)
+                    || !slot.isAssignableFrom(pad))
+                throw new NoSuchMethodException("Inspected chain container ancestry differs.");
+            addChain = a.exactMethod("device.chainContainer.addChain", void.class, false);
+            padByKey = a.exactMethod("device.drumChains.padByKey", pad, false, int.class);
+            padChain = a.exactMethod("device.padSlot.chain", a.type("chain.channel"), false);
+            createPadChain = a.exactMethod("device.padSlot.createEmptyChain", void.class, false);
+        }
+
+        private Method parameter(String key, String type, Class<?> target) throws ReflectiveOperationException {
+            Class<?> returns = a.type(type);
+            if (!target.isAssignableFrom(returns))
+                throw new NoSuchMethodException("Inspected " + type + " is not a parameter.target.");
+            return a.exactMethod(key, returns, false);
+        }
     }
 
     private static List<Object> copy(Object list) {
