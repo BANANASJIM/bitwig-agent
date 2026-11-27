@@ -30,5 +30,6 @@ Run a single layer with `pixi run python scripts/check.py --layer lint`. Other t
 | Exact methods, limits, outcomes | [PROTOCOL.md](PROTOCOL.md) |
 | What each check proves | [VERIFICATION.md](VERIFICATION.md) |
 | Packaging and releases | [docs/packaging.md](docs/packaging.md) |
+| Contributing a name table for a new platform or Bitwig version | [docs/name-tables.md](docs/name-tables.md) |
 
 Add a rule here only after it prevented, or would have prevented, a real failure; anything a tool can check belongs in the tool.

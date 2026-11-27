@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/BANANASJIM/bitwig-agent/security/policy
+    about: Report vulnerabilities privately as described in SECURITY.md, not in a public issue.
+  - name: Usage and protocol documentation
+    url: https://github.com/BANANASJIM/bitwig-agent/blob/main/docs/README.md
+    about: Installation, usage, protocol and verification guides.

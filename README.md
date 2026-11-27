@@ -107,7 +107,7 @@ Each release gates private access to the exact host JARs it maps; `bitwig-agent 
 
 ### Platform support
 
-Features built on Bitwig's public Controller API are supported on Linux, Windows and macOS. Private features behind the native gate (Grid, modulators, routing and sidechains, layer chains, native note writes and the other version-gated methods) are maintained and natively tested on Linux only. Bitwig obfuscates each platform's `bitwig.jar` separately, so each platform needs its own name table; Windows and macOS private support depends on [community contributions](https://github.com/BANANASJIM/bitwig-agent/blob/main/CONTRIBUTING.md#contributing-a-platform-name-table). On Windows or macOS today, public features work and private features report the native gate as unavailable (see `status detail=full`).
+Features built on Bitwig's public Controller API are supported on Linux, Windows and macOS. Private features behind the native gate (Grid, modulators, routing and sidechains, layer chains, native note writes and the other version-gated methods) are maintained and natively tested on Linux only. Bitwig obfuscates each platform's `bitwig.jar` separately, so each platform needs its own name table; Windows and macOS private support depends on [community contributions](https://github.com/BANANASJIM/bitwig-agent/blob/main/docs/name-tables.md). On Windows or macOS today, public features work and private features report the native gate as unavailable (see `status detail=full`).
 
 ## Documentation
 
@@ -123,9 +123,20 @@ Features built on Bitwig's public Controller API are supported on Linux, Windows
 
 [Full documentation index](https://github.com/BANANASJIM/bitwig-agent/blob/main/docs/README.md)
 
+## Help wanted: name tables
+
+Private features need a name table for each platform's and version's `bitwig.jar`. Linux tables are maintained here; Windows and macOS tables are open for contributors with that platform and a licensed Bitwig.
+
+| Bitwig | Linux | Windows | macOS |
+|---|---|---|---|
+| 6.1.4 | public + private | public; private welcome | public; private welcome |
+| 6.1.7 | public + private | public; private welcome | public; private welcome |
+
+"Public" is the Controller API, which works everywhere; "private" is the version-gated native features. The [name table guide](https://github.com/BANANASJIM/bitwig-agent/blob/main/docs/name-tables.md) gives the steps, what to submit and a [prompt for your coding agent](https://github.com/BANANASJIM/bitwig-agent/blob/main/docs/name-tables.md#start-with-your-coding-agent). Contributions never include Bitwig's own files.
+
 ## Contributing
 
-Issues and pull requests are welcome. Report bugs, missing workflows or Bitwig versions you need in [Issues](https://github.com/BANANASJIM/bitwig-agent/issues); see [Contributing](https://github.com/BANANASJIM/bitwig-agent/blob/main/CONTRIBUTING.md) for checks to run before opening a PR.
+Issues and pull requests are welcome. Report bugs, missing workflows or Bitwig versions you need in [Issues](https://github.com/BANANASJIM/bitwig-agent/issues); see [Contributing](https://github.com/BANANASJIM/bitwig-agent/blob/main/CONTRIBUTING.md) for checks to run before opening a PR. Changes per version are in the [changelog](https://github.com/BANANASJIM/bitwig-agent/blob/main/CHANGELOG.md).
 
 ## License
 
