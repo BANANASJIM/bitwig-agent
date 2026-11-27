@@ -25,6 +25,7 @@ def test_fresh_build_then_idempotent_reapply_writes_nothing():
     host.shift = 1  # native reflow: every insert lands one column right, forcing moves
     result = apply_grid(host, SPEC)
     assert result["outcome"] == "applied"
+    assert result["verification"] == "native_readback"
     assert result["applied"] == {
         "inserted": 5,
         "renamed": 5,
@@ -51,6 +52,7 @@ def test_fresh_build_then_idempotent_reapply_writes_nothing():
     host.calls.clear()
     again = apply_grid(host, SPEC)
     assert again["outcome"] == "already_matched"
+    assert "verification" not in again
     assert host.writes() == []
     assert again["applied"] == dict.fromkeys(again["applied"], 0)
     assert again["alreadyMatched"] == {"modules": 5, "positions": 5, "params": 5, "connections": 3}

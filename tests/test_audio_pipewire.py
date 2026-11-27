@@ -210,6 +210,7 @@ def test_capture_from_start_orders_transport_and_reports_levels(tmp_path, monkey
     assert "bwtest.monitor" not in spawned[0]
     assert "@DEFAULT_MONITOR@" not in spawned[0]
     assert result["source"]["ports"] == ["Bitwig Studio:out1", "Bitwig Studio:out2"]
+    assert result["verification"] == "file_readback"
     assert bridge.calls == [
         ("status", {}),
         ("context.get", {}),

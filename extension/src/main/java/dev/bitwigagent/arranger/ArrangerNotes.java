@@ -89,7 +89,7 @@ public final class ArrangerNotes {
         out.addProperty("channel", channel);
         out.add("unverifiedNotes", missing);
         out.addProperty("invalidRows", invalid);
-        Verification.NATIVE_READBACK.put(out);
+        out.addProperty("verification", Verification.NATIVE_READBACK.wire());
         return new Readback(out, invalid, invalid == 0 && verified == notes.size() && count == notes.size());
     }
 

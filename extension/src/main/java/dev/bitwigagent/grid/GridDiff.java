@@ -34,6 +34,12 @@ final class GridDiff {
         entry.addProperty("message", error.getMessage());
     }
 
+    /** A batch entry takes its outcome and the verification that came with it from the single write's result. */
+    static void copyOutcome(JsonObject entry, JsonObject one) {
+        entry.add("outcome", one.get("outcome"));
+        if (one.has("verification")) entry.add("verification", one.get("verification"));
+    }
+
     static void notApplied(JsonObject entry, Reason reason) {
         entry.addProperty("outcome", Outcome.NOT_APPLIED.wire());
         entry.addProperty("reason", reason.wire());

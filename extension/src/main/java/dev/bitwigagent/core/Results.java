@@ -2,6 +2,9 @@ package dev.bitwigagent.core;
 
 import com.google.gson.*;
 import dev.bitwigagent.host.ProjectState;
+import java.util.HashSet;
+import java.util.Objects;
+import java.util.Set;
 
 /** Result fragments shared by every domain. */
 public final class Results {
@@ -17,21 +20,100 @@ public final class Results {
         return result;
     }
 
-    /** A write result: {outcome}. */
-    public static JsonObject outcome(Outcome outcome) {
+    /** A write result: {outcome, verification exactly when applied}. */
+    public static JsonObject outcome(Outcome outcome, Verification how) {
         JsonObject result = new JsonObject();
-        result.addProperty("outcome", outcome.wire());
+        stamp(result, outcome, how);
         return result;
     }
 
+    /** The one applied result with nothing to verify against Bitwig: {@code ack} records that a hold was inspected. */
+    public static JsonObject released() {
+        JsonObject result = new JsonObject();
+        result.addProperty("outcome", Outcome.APPLIED.wire());
+        return result;
+    }
+
+    /** A write result whose outcome is statically not applied. */
+    public static JsonObject outcome(Outcome outcome) {
+        return outcome(outcome, null);
+    }
+
+    /** Sets {@code outcome} on a result built elsewhere; an applied one (and a native no-op) says how it was confirmed. */
+    public static void stamp(JsonObject result, Outcome outcome, Verification how) {
+        result.addProperty("outcome", outcome.wire());
+        if (outcome == Outcome.APPLIED) Objects.requireNonNull(how, "an applied result needs a verification");
+        if (how != null && (outcome == Outcome.APPLIED || outcome == Outcome.ALREADY_MATCHED)) how.put(result);
+    }
+
+    /** The worst outcome of {@code entries}, with the verification they share (the leaf rule). */
+    public static JsonObject ofEntries(Iterable<JsonElement> entries) {
+        JsonObject result = new JsonObject();
+        stamp(result, worst(entries), entries);
+        return result;
+    }
+
+    /**
+     * Sets {@code outcome} on a result whose entries carry the confirmations. The leaf rule: when an applied result's
+     * entries all name one verification it repeats it; entries that differ keep their own.
+     */
+    public static void stamp(JsonObject result, Outcome outcome, Iterable<JsonElement> entries) {
+        result.addProperty("outcome", outcome.wire());
+        if (outcome != Outcome.APPLIED) return;
+        Set<String> seen = new HashSet<>();
+        for (JsonElement entry : entries) {
+            JsonObject e = entry.getAsJsonObject();
+            if (e.has("verification")) seen.add(e.get("verification").getAsString());
+        }
+        if (seen.size() == 1) result.addProperty("verification", seen.iterator().next());
+    }
+
+    /**
+     * The leaf rule: every applied object that has no outcome-bearing child says how it was confirmed; {@code ack}'s
+     * release is the one exception. Asserted on every result a host operation completes (tests run with assertions).
+     */
+    public static boolean leafRuleHolds(JsonElement node) {
+        if (node.isJsonArray()) {
+            for (JsonElement child : node.getAsJsonArray()) if (!leafRuleHolds(child)) return false;
+            return true;
+        }
+        if (!node.isJsonObject()) return true;
+        JsonObject object = node.getAsJsonObject();
+        boolean childOutcome = false;
+        for (JsonElement child : object.asMap().values()) {
+            if (!leafRuleHolds(child)) return false;
+            childOutcome |= hasOutcome(child);
+        }
+        boolean applied = object.has("outcome") && outcomeOf(object) == Outcome.APPLIED;
+        return !applied || childOutcome || object.has("verification") || object.has("released");
+    }
+
+    private static boolean hasOutcome(JsonElement node) {
+        if (node.isJsonArray()) {
+            for (JsonElement child : node.getAsJsonArray()) if (hasOutcome(child)) return true;
+            return false;
+        }
+        if (!node.isJsonObject()) return false;
+        JsonObject object = node.getAsJsonObject();
+        if (object.has("outcome")) return true;
+        for (JsonElement child : object.asMap().values()) if (hasOutcome(child)) return true;
+        return false;
+    }
+
     /** One field or entry: {requested, observed (only when it differs), outcome, reason?}. */
-    public static JsonObject field(JsonElement requested, JsonElement observed, Outcome outcome, Reason reason) {
+    public static JsonObject field(
+            JsonElement requested, JsonElement observed, Outcome outcome, Reason reason, Verification how) {
         JsonObject field = new JsonObject();
         field.add("requested", requested == null ? JsonNull.INSTANCE : requested);
         if (observed != null && !observed.equals(requested)) field.add("observed", observed);
-        field.addProperty("outcome", outcome.wire());
+        stamp(field, outcome, how);
         if (reason != null) field.addProperty("reason", reason.wire());
         return field;
+    }
+
+    /** A field whose outcome is statically not applied. */
+    public static JsonObject field(JsonElement requested, JsonElement observed, Outcome outcome, Reason reason) {
+        return field(requested, observed, outcome, reason, null);
     }
 
     /**

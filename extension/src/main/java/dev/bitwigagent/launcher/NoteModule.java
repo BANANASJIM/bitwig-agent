@@ -9,6 +9,7 @@ import dev.bitwigagent.core.Outcome;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.Scheduler;
+import dev.bitwigagent.core.Verification;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -307,7 +308,7 @@ public final class NoteModule implements HostModule {
                 }
                 windows.add(entry);
             }
-            out.addProperty("outcome", worst.wire());
+            Results.stamp(out, worst, windows);
             if (reason != null) out.addProperty("reason", reason);
             JsonObject summary = new JsonObject();
             summary.addProperty("requested", requested);
@@ -434,12 +435,12 @@ public final class NoteModule implements HostModule {
             if (full) item.addProperty("step", w.start + e.x);
             else item.addProperty("beat", (w.start + e.x) * w.size);
             item.addProperty("pitch", e.pitch);
-            item.addProperty("outcome", outcome.wire());
+            Results.stamp(item, outcome, Verification.API_READBACK);
             if (reason != null) item.addProperty("reason", reason.wire());
             item.add("observed", NoteGrid.observedJson(state.clip.getStep(w.channel, e.x, e.pitch), w, e.x, e.pitch));
             results.add(item);
         }
-        out.addProperty("outcome", worst.wire());
+        Results.stamp(out, worst, Verification.API_READBACK);
         if (firstReason != null) out.addProperty("reason", firstReason.wire());
         JsonObject summary = new JsonObject();
         summary.addProperty("requested", changes.size());

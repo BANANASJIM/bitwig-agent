@@ -328,8 +328,7 @@ public final class TrackLifecycleModule implements HostModule {
         info.addProperty("selectionSideEffect", "native_operation_selects_the_new_group");
         int slot = window.trackSlot(found);
         if (!p.has("name")) {
-            JsonObject result = Results.outcome(Outcome.APPLIED);
-            Verification.API_READBACK.put(result);
+            JsonObject result = Results.outcome(Outcome.APPLIED, Verification.API_READBACK);
             result.add("ref", trackRefs.ref(slot));
             result.add("group", info);
             op.result.complete(result);
@@ -351,10 +350,11 @@ public final class TrackLifecycleModule implements HostModule {
                             new JsonPrimitive(name),
                             observed == null ? JsonNull.INSTANCE : new JsonPrimitive(observed),
                             named ? Outcome.APPLIED : Outcome.UNKNOWN,
-                            reason);
-                    JsonObject result = Results.outcome(named ? Outcome.APPLIED : Outcome.UNKNOWN);
+                            reason,
+                            Verification.API_READBACK);
+                    JsonObject result =
+                            Results.outcome(named ? Outcome.APPLIED : Outcome.UNKNOWN, Verification.API_READBACK);
                     if (reason != null) result.addProperty("reason", reason.wire());
-                    else Verification.API_READBACK.put(result);
                     if (current) result.add("ref", trackRefs.ref(window.trackSlot(found)));
                     JsonObject fields = new JsonObject();
                     fields.add("name", field);
@@ -412,7 +412,7 @@ public final class TrackLifecycleModule implements HostModule {
     private void awaitDeletion(HostOperation op, String id, JsonObject deleted, Creation before) {
         scheduler.poll(op, scheduler.observeUntil(op), () -> deletedFrom(capture(), before, id), gone -> {
             Creation after = capture();
-            JsonObject result = Results.outcome(gone ? Outcome.APPLIED : Outcome.UNKNOWN);
+            JsonObject result = Results.outcome(gone ? Outcome.APPLIED : Outcome.UNKNOWN, Verification.API_READBACK);
             if (!gone) result.addProperty("reason", Reason.NOT_OBSERVED.wire());
             result.add("deleted", deleted);
             result.addProperty("trackCountBefore", before.total);

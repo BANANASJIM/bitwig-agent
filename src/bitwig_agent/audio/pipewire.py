@@ -23,7 +23,7 @@ from typing import Any
 
 from bitwig_agent.audio import analysis
 from bitwig_agent.errors import BridgeError, HostChanged, bridge_error, changed_before, unknown_result
-from bitwig_agent.protocol.base import SUCCEEDED
+from bitwig_agent.protocol.base import SUCCEEDED, Verification
 
 NODE = "Bitwig Studio"
 SINK = "bwtest"
@@ -514,6 +514,7 @@ async def _record(
         )
     return {
         "outcome": "applied",
+        "verification": Verification.FILE_READBACK,
         "path": path,
         "requestedSeconds": seconds,
         "elapsedSeconds": round(elapsed, 3),

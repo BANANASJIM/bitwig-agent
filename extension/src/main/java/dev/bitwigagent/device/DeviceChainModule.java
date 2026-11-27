@@ -435,10 +435,9 @@ public final class DeviceChainModule implements HostModule {
     private void finishEdit(HostOperation op, Edit edit, DeviceChainEdit.Observation outcome) {
         DeviceChainEdit.View view = edit.view;
         DeviceChainEdit.Plan plan = edit.plan;
-        JsonObject result = outcome.ok ? Results.outcome(Outcome.APPLIED) : Results.outcome(Outcome.UNKNOWN);
+        JsonObject result = Results.outcome(outcome.ok ? Outcome.APPLIED : Outcome.UNKNOWN, Verification.API_READBACK);
         if (!outcome.ok)
             result.addProperty("reason", (outcome.pending ? Reason.NOT_OBSERVED : Reason.READBACK_MISMATCH).wire());
-        if (outcome.ok) Verification.API_READBACK.put(result);
         result.addProperty("beforeCount", plan.before.count);
         result.addProperty("afterCount", view.count());
         result.add("before", DeviceChainEdit.before(plan.before));

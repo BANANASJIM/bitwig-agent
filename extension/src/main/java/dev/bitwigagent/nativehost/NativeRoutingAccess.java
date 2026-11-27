@@ -6,6 +6,7 @@ import dev.bitwigagent.core.HostLimits;
 import dev.bitwigagent.core.Outcome;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Refs;
+import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.RpcException;
 import dev.bitwigagent.core.Verification;
 import dev.bitwigagent.host.DeviceSources;
@@ -718,10 +719,11 @@ public final class NativeRoutingAccess implements RoutingModule.Access {
                     .getAsString()
                     .equals(Outcome.UNKNOWN.wire());
         out.add("fields", fields);
-        out.addProperty(
-                "outcome", (unknown ? Outcome.UNKNOWN : any ? Outcome.APPLIED : Outcome.ALREADY_MATCHED).wire());
+        Results.stamp(
+                out,
+                unknown ? Outcome.UNKNOWN : any ? Outcome.APPLIED : Outcome.ALREADY_MATCHED,
+                Verification.NATIVE_READBACK);
         if (unknown) out.addProperty("reason", Reason.READBACK_MISMATCH.wire());
-        if (any) Verification.NATIVE_READBACK.put(out);
         out.addProperty("nativeUndo", any);
         out.addProperty("undoGroupingVerified", false);
         a.provenance(out);

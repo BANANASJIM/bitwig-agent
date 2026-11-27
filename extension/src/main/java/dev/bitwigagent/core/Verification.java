@@ -13,7 +13,8 @@ public enum Verification {
         return name().toLowerCase(Locale.ROOT);
     }
 
-    public void put(JsonObject result) {
+    /** Only {@link Results} writes the key, so an applied result cannot be built without one. */
+    void put(JsonObject result) {
         result.addProperty("verification", wire());
     }
 }

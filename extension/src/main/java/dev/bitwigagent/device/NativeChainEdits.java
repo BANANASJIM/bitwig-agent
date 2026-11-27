@@ -236,12 +236,9 @@ final class NativeChainEdits {
      */
     private static JsonObject conclusion(
             NativeChains.Walk walk, Outcome ok, boolean changed, JsonArray before, List<Object> after) {
-        JsonObject result = Results.outcome(ok != null ? ok : Outcome.UNKNOWN);
+        JsonObject result = Results.outcome(ok != null ? ok : Outcome.UNKNOWN, Verification.NATIVE_READBACK);
         if (ok == null) result.addProperty("reason", (changed ? Reason.READBACK_MISMATCH : Reason.NOT_OBSERVED).wire());
-        else {
-            Verification.NATIVE_READBACK.put(result);
-            walk.a.provenance(result);
-        }
+        else walk.a.provenance(result);
         result.addProperty("beforeCount", before.size());
         result.addProperty("afterCount", after.size());
         result.add("before", before);

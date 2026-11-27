@@ -12,6 +12,7 @@ import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.RpcException;
 import dev.bitwigagent.core.Scheduler;
+import dev.bitwigagent.core.Verification;
 import dev.bitwigagent.host.LauncherStructureLock;
 import dev.bitwigagent.host.SelectionLease;
 import dev.bitwigagent.host.TrackWindow;
@@ -349,8 +350,8 @@ public final class LauncherState implements RenderModule.LauncherContent {
 
     // ---- results ----
 
-    static JsonObject written(Outcome outcome) {
-        return Results.outcome(outcome);
+    static JsonObject written(Outcome outcome, Verification how) {
+        return Results.outcome(outcome, how);
     }
 
     /** An unknown result whose slot stays held until the agent inspects it and acks the hold. */
@@ -419,7 +420,8 @@ public final class LauncherState implements RenderModule.LauncherContent {
 
     private void finishPlayback(
             HostOperation op, Target target, Slot slot, JsonObject ref, boolean observed, boolean queued) {
-        JsonObject out = written(observed ? Outcome.APPLIED : queued ? Outcome.SENT : Outcome.UNKNOWN);
+        JsonObject out = written(
+                observed ? Outcome.APPLIED : queued ? Outcome.SENT : Outcome.UNKNOWN, Verification.API_READBACK);
         out.add("ref", ref);
         if (!observed && !queued) out.addProperty("reason", Reason.NOT_OBSERVED.wire());
         out.addProperty(

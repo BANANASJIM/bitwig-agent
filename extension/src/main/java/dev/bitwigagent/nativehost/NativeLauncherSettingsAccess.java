@@ -5,6 +5,7 @@ import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.Outcome;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Results;
+import dev.bitwigagent.core.Verification;
 import dev.bitwigagent.launcher.LauncherSettingsModule;
 import java.lang.reflect.Method;
 import java.util.*;
@@ -105,7 +106,8 @@ public final class NativeLauncherSettingsAccess implements LauncherSettingsModul
                             e.getValue(),
                             after.get(e.getKey()),
                             already ? Outcome.ALREADY_MATCHED : Outcome.APPLIED,
-                            null));
+                            null,
+                            Verification.NATIVE_READBACK));
         }
         after.addProperty("name", (String) a.invoke(launcher.name, value));
         after.add("fields", fields);

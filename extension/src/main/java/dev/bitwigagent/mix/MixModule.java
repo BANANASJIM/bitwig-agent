@@ -778,7 +778,11 @@ public final class MixModule implements HostModule {
                     Outcome.UNKNOWN,
                     before != -1 && sequence <= before ? Reason.NOT_OBSERVED : Reason.READBACK_MISMATCH);
         return Results.field(
-                requested, observed, before == -1 && !solved ? Outcome.ALREADY_MATCHED : Outcome.APPLIED, null);
+                requested,
+                observed,
+                before == -1 && !solved ? Outcome.ALREADY_MATCHED : Outcome.APPLIED,
+                null,
+                Verification.API_READBACK);
     }
 
     /** The result's outcome is its worst field's; {@code reason} (a failure that stopped the writes) outranks the fields'. */
@@ -792,9 +796,8 @@ public final class MixModule implements HostModule {
                 why = field.get("reason").getAsString();
             worst = worst.worst(outcome);
         }
-        result.addProperty("outcome", worst.wire());
+        Results.stamp(result, worst, fields.asMap().values());
         if (!worst.succeeded()) result.addProperty("reason", reason != null ? reason.wire() : why);
-        if (worst == Outcome.APPLIED) Verification.API_READBACK.put(result);
     }
 
     /** Compact identity row for context.get (null fields when unobserved); never selects. */

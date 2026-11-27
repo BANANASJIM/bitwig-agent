@@ -121,7 +121,8 @@ public final class GridConnectionWriter {
                 // Native repair may leave another source after a dispatched write: fail closed.
                 boolean matches = Objects.equals(request.source, actual.sourceEndpoint);
                 JsonObject result = Results.outcome(
-                        !matches ? Outcome.UNKNOWN : changed ? Outcome.APPLIED : Outcome.ALREADY_MATCHED);
+                        !matches ? Outcome.UNKNOWN : changed ? Outcome.APPLIED : Outcome.ALREADY_MATCHED,
+                        Verification.NATIVE_READBACK);
                 if (!matches) result.addProperty("reason", Reason.READBACK_MISMATCH.wire());
                 result.addProperty("targetModuleId", request.target.moduleId.toString());
                 result.addProperty("targetPortKey", request.target.portKey);
@@ -133,7 +134,6 @@ public final class GridConnectionWriter {
                 result.addProperty("mutationDispatched", changed);
                 result.addProperty("nativeMutation", changed);
                 result.addProperty("nativeUndo", changed);
-                Verification.NATIVE_READBACK.put(result);
                 result.addProperty(
                         "nativeUndoScope",
                         changed ? "native_operation_not_verified_grouping_or_commit" : "no_native_operation");
@@ -280,7 +280,7 @@ public final class GridConnectionWriter {
         }
         /** False when native repair left another source: observed, but later entries may depend on it. */
         private boolean record(JsonObject item, JsonObject one) {
-            for (String key : new String[] {"outcome", "reason", "previousSource", "actualSource"})
+            for (String key : new String[] {"outcome", "verification", "reason", "previousSource", "actualSource"})
                 if (one.has(key)) item.add(key, one.get(key));
             lastGraph = one.getAsJsonObject("graph");
             if (one.get("mutationDispatched").getAsBoolean()) written++;
@@ -312,13 +312,12 @@ public final class GridConnectionWriter {
 
         private void finish() {
             try {
-                JsonObject result = Results.outcome(Results.worst(items));
+                JsonObject result = Results.ofEntries(items);
                 result.addProperty("written", written);
                 result.add("connections", items);
                 result.addProperty("mutationDispatched", written > 0 || stale);
                 result.addProperty("nativeMutation", written > 0 || stale);
                 result.addProperty("nativeUndo", written > 0 || stale);
-                Verification.NATIVE_READBACK.put(result);
                 // After a failed dispatch the last observed graph is not the current one: no diff is offered.
                 if (lastGraph != null && !stale) {
                     result.add("graph", lastGraph);

@@ -135,7 +135,8 @@ public final class DeviceModule implements HostModule {
         JsonElement asked = new JsonPrimitive(wanted);
         chains.run(op, target, walk -> {
             NativeChains.Device device = walk.device(target, true);
-            if (on(walk, device) == wanted) return result(device.ref, asked, wanted, Outcome.ALREADY_MATCHED, null);
+            if (on(walk, device) == wanted)
+                return result(device.ref, asked, wanted, Outcome.ALREADY_MATCHED, null, Verification.NATIVE_READBACK);
             Object onOff = walk.a.enabled(device.device);
             if (!walk.a.writable(onOff))
                 throw Errors.notApplied(Reason.INVALID_TARGET, "The host does not let this device be bypassed.");
@@ -143,8 +144,14 @@ public final class DeviceModule implements HostModule {
             walk.a.write(onOff, wanted ? 1 : 0);
             boolean observed = on(walk, device);
             return observed == wanted
-                    ? result(device.ref, asked, wanted, Outcome.APPLIED, null)
-                    : result(device.ref, asked, observed, Outcome.UNKNOWN, Reason.READBACK_MISMATCH);
+                    ? result(device.ref, asked, wanted, Outcome.APPLIED, null, Verification.NATIVE_READBACK)
+                    : result(
+                            device.ref,
+                            asked,
+                            observed,
+                            Outcome.UNKNOWN,
+                            Reason.READBACK_MISMATCH,
+                            Verification.NATIVE_READBACK);
         });
     }
 
@@ -156,7 +163,8 @@ public final class DeviceModule implements HostModule {
     private void setEnabled(HostOperation op, DeviceSources.Source device, boolean wanted) {
         JsonElement asked = new JsonPrimitive(wanted);
         if (device.device.isEnabled().get() == wanted) {
-            op.result.complete(result(device.ref(), asked, wanted, Outcome.ALREADY_MATCHED, null));
+            op.result.complete(
+                    result(device.ref(), asked, wanted, Outcome.ALREADY_MATCHED, null, Verification.API_READBACK));
             return;
         }
         Enabled state = enabled.get(device);
@@ -172,19 +180,25 @@ public final class DeviceModule implements HostModule {
                 () -> {
                     snapshot.require(op);
                     if (state.sequence <= sequence || device.device.isEnabled().get() != wanted) return null;
-                    return () -> op.result.complete(result(device.ref(), asked, wanted, Outcome.APPLIED, null));
+                    return () -> op.result.complete(
+                            result(device.ref(), asked, wanted, Outcome.APPLIED, null, Verification.API_READBACK));
                 },
                 () -> op.result.complete(result(
-                        device.ref(), asked, device.device.isEnabled().get(), Outcome.UNKNOWN, Reason.NOT_OBSERVED)));
+                        device.ref(),
+                        asked,
+                        device.device.isEnabled().get(),
+                        Outcome.UNKNOWN,
+                        Reason.NOT_OBSERVED,
+                        Verification.API_READBACK)));
     }
 
     private static JsonObject result(
-            JsonObject ref, JsonElement requested, boolean observed, Outcome outcome, Reason reason) {
-        JsonObject result = Results.outcome(outcome);
+            JsonObject ref, JsonElement requested, boolean observed, Outcome outcome, Reason reason, Verification how) {
+        JsonObject result = Results.outcome(outcome, how);
         if (reason != null) result.addProperty("reason", reason.wire());
         result.add("ref", ref);
         JsonObject fields = new JsonObject();
-        fields.add("enabled", Results.field(requested, new JsonPrimitive(observed), outcome, reason));
+        fields.add("enabled", Results.field(requested, new JsonPrimitive(observed), outcome, reason, how));
         result.add("fields", fields);
         return result;
     }
@@ -236,7 +250,7 @@ public final class DeviceModule implements HostModule {
         JsonObject result = new JsonObject();
         result.addProperty("scope", "installed_bitwig_factory_devices");
         result.addProperty("completePluginCatalog", false);
-        Verification.FILE_READBACK.put(result);
+        result.addProperty("verification", Verification.FILE_READBACK.wire());
         result.addProperty("bitwigIdAvailable", false);
         JsonArray devices = new JsonArray();
         result.add("devices", devices);
