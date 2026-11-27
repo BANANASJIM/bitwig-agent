@@ -37,6 +37,9 @@ public final class ModulatorEditor implements ParameterResolver.ModuleOwners {
     public interface Access {
         void documentThread();
 
+        /** The result's nativeVersion and nativeJarSha256. */
+        void provenance(JsonObject out);
+
         void execute(Runnable task);
         /** Native root device behind the public proxy, owning track corroborated; guard re-checks the same objects. */
         Object device(DeviceSources.Source source, Runnable check);
@@ -966,7 +969,7 @@ public final class ModulatorEditor implements ParameterResolver.ModuleOwners {
         return result;
     }
 
-    private static void written(JsonObject result, boolean changed, String undoScope) {
+    private void written(JsonObject result, boolean changed, String undoScope) {
         written(
                 result,
                 changed,
@@ -974,10 +977,13 @@ public final class ModulatorEditor implements ParameterResolver.ModuleOwners {
                 "observed_stopped_nonrecording_nonautomation_not_native_transport_atomicity");
     }
 
-    private static void written(JsonObject result, boolean changed, String undoScope, String safetyScope) {
+    private void written(JsonObject result, boolean changed, String undoScope, String safetyScope) {
         result.addProperty("mutationDispatched", changed);
         result.addProperty("outcome", (changed ? Outcome.APPLIED : Outcome.ALREADY_MATCHED).wire());
-        if (changed) Verification.NATIVE_READBACK.put(result);
+        if (changed) {
+            Verification.NATIVE_READBACK.put(result);
+            a.provenance(result);
+        }
         result.addProperty("nativeMutation", changed);
         result.addProperty("nativeUndo", changed);
         result.addProperty("nativeUndoScope", changed ? undoScope : "no_native_operation");

@@ -110,12 +110,7 @@ public final class TrackLifecycleModuleTest {
         f.next();
         JsonObject result = op.result.join();
         assertTrue(id(result).equals(HostFixture.C), "new unique UUID selected by difference");
-        assertTrue(
-                result.getAsJsonObject("insertion")
-                        .get("verification")
-                        .getAsString()
-                        .equals("api_readback"),
-                "creation evidence declared");
+        assertTrue(result.get("verification").getAsString().equals("api_readback"), "creation evidence declared");
         assertTrue(
                 f.tracks[2].child("name").writes == 1
                         && f.tracks[2].child("name").data.equals("Created"),
@@ -872,7 +867,7 @@ public final class TrackLifecycleModuleTest {
                 "the new group is identified and named");
         JsonObject info = result.getAsJsonObject("group");
         assertTrue(
-                info.get("verification").getAsString().equals("api_readback")
+                result.get("verification").getAsString().equals("api_readback")
                         && info.getAsJsonArray("children").size() == 2
                         && info.get("parent").isJsonNull(),
                 "group evidence lists children and parent");

@@ -1,5 +1,6 @@
 package dev.bitwigagent.device;
 
+import com.google.gson.JsonObject;
 import dev.bitwigagent.host.DeviceSources;
 import java.util.*;
 import java.util.function.DoubleFunction;
@@ -241,6 +242,12 @@ public final class FakeChains implements NativeChains.Access {
         devices.remove(from);
         devices.add(index > from ? index - 1 : index, (Node) device);
         onEdit.run();
+    }
+
+    @Override
+    public void provenance(JsonObject out) {
+        out.addProperty("nativeVersion", "simulated");
+        out.addProperty("nativeJarSha256", "simulated");
     }
 
     @Override

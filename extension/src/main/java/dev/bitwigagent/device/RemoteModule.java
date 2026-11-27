@@ -385,7 +385,7 @@ public final class RemoteModule implements HostModule, ParameterResolver.RemoteP
                     double seen = control.value().get();
                     op.result.complete(Errors.withInspect(
                             observed
-                                    ? result(ref, asked, seen, Outcome.APPLIED, null)
+                                    ? applied(result(ref, asked, seen, Outcome.APPLIED, null))
                                     : result(
                                             ref,
                                             asked,
@@ -394,6 +394,11 @@ public final class RemoteModule implements HostModule, ParameterResolver.RemoteP
                                             fresh ? Reason.READBACK_MISMATCH : Reason.NOT_OBSERVED),
                             op.inspect));
                 });
+    }
+
+    private static JsonObject applied(JsonObject result) {
+        Verification.API_READBACK.put(result);
+        return result;
     }
 
     private static JsonObject result(

@@ -321,7 +321,6 @@ public final class TrackLifecycleModule implements HostModule {
             HostOperation op, JsonObject p, List<String> ids, String parent, JsonObject nativeInfo, String found) {
         holds.release(GROUP);
         JsonObject info = nativeInfo.deepCopy();
-        Verification.API_READBACK.put(info);
         JsonArray children = new JsonArray();
         for (String id : ids) children.add(trackRefs.ref(window.trackSlot(id)));
         info.add("children", children);
@@ -330,6 +329,7 @@ public final class TrackLifecycleModule implements HostModule {
         int slot = window.trackSlot(found);
         if (!p.has("name")) {
             JsonObject result = Results.outcome(Outcome.APPLIED);
+            Verification.API_READBACK.put(result);
             result.add("ref", trackRefs.ref(slot));
             result.add("group", info);
             op.result.complete(result);
@@ -354,6 +354,7 @@ public final class TrackLifecycleModule implements HostModule {
                             reason);
                     JsonObject result = Results.outcome(named ? Outcome.APPLIED : Outcome.UNKNOWN);
                     if (reason != null) result.addProperty("reason", reason.wire());
+                    else Verification.API_READBACK.put(result);
                     if (current) result.add("ref", trackRefs.ref(window.trackSlot(found)));
                     JsonObject fields = new JsonObject();
                     fields.add("name", field);
@@ -477,7 +478,6 @@ public final class TrackLifecycleModule implements HostModule {
             HostOperation op, JsonObject p, Creation before, String id, Track track, String type, int requested) {
         holds.release(INSERTION);
         JsonObject info = new JsonObject();
-        Verification.API_READBACK.put(info);
         info.addProperty("identityScope", "observed_addition_not_factory_return_identity");
         info.addProperty("requestedPosition", requested);
         info.addProperty("observedPosition", track.position().get());

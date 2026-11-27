@@ -409,6 +409,7 @@ public final class DeviceChainModuleTest {
         assertEquals(Refs.device(rack.chainRef(1), 1, "Inserted"), lone.getAsJsonObject("ref"));
         HostFixture.REF_SCHEMA.apply(lone.getAsJsonObject("ref"));
         assertEquals("native_readback", lone.get("verification").getAsString());
+        assertEquals("simulated", lone.get("nativeVersion").getAsString());
         assertEquals(2, lone.get("afterCount").getAsInt());
         assertFalse(lone.get("requestedIdentifierVerified").getAsBoolean());
         assertEquals(List.of("Chorus", "Inserted"), rack.names(1));

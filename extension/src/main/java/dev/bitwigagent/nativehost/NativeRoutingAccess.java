@@ -2,6 +2,7 @@ package dev.bitwigagent.nativehost;
 
 import com.google.gson.*;
 import dev.bitwigagent.core.Errors;
+import dev.bitwigagent.core.HostLimits;
 import dev.bitwigagent.core.Outcome;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Refs;
@@ -518,7 +519,8 @@ public final class NativeRoutingAccess implements RoutingModule.Access {
         if (unresolved != null && unresolved.size() > 0) out.add("unresolvedTracks", unresolved);
         out.addProperty(
                 "coverage",
-                "tracks_of_the_16_track_bank_only; hardware_and_device_output_entries_read_as_other_and_not_settable");
+                "tracks_of_the_" + HostLimits.TRACKS
+                        + "_track_window_only; hardware_and_device_output_entries_read_as_other_and_not_settable");
         a.provenance(out);
         out.addProperty("selectionSideEffect", "none");
         return out;

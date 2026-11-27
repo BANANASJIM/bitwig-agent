@@ -192,6 +192,12 @@ public final class ModulatorEditorTest {
         public void documentThread() {}
 
         @Override
+        public void provenance(JsonObject out) {
+            out.addProperty("nativeVersion", "simulated");
+            out.addProperty("nativeJarSha256", "simulated");
+        }
+
+        @Override
         public void execute(Runnable task) {
             queue.add(task);
         }
@@ -685,6 +691,8 @@ public final class ModulatorEditorTest {
         assertEquals("linear", made.transfer);
         assertTrue(made.enabled);
         assertEquals("applied", o.value.get("outcome").getAsString());
+        assertEquals("native_readback", o.value.get("verification").getAsString());
+        assertEquals("simulated", o.value.get("nativeJarSha256").getAsString());
         assertEquals(
                 Refs.parameter(Refs.gridModule(e.device, MODULE.toString(), "Env"), "DECAY", "Decay"),
                 o.value.get("ref"));

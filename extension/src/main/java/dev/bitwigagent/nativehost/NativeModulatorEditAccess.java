@@ -182,6 +182,11 @@ public final class NativeModulatorEditAccess implements ModulatorEditor.Access {
     }
 
     @Override
+    public void provenance(JsonObject out) {
+        bindings.provenance(out);
+    }
+
+    @Override
     public void execute(Runnable task) {
         bindings.execute(task);
     }

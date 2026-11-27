@@ -17,6 +17,7 @@ import dev.bitwigagent.core.RpcException;
 import dev.bitwigagent.core.Scheduler;
 import dev.bitwigagent.core.ValueInput;
 import dev.bitwigagent.core.ValueMatch;
+import dev.bitwigagent.core.Verification;
 import dev.bitwigagent.host.EnumOptions;
 import dev.bitwigagent.host.ProjectState;
 import dev.bitwigagent.host.TransportSafety;
@@ -330,6 +331,7 @@ public final class TransportModule implements HostModule {
         }
         result.addProperty("outcome", worst.wire());
         if (!worst.succeeded()) result.addProperty("reason", (reason != null ? reason : worstReason).wire());
+        if (worst == Outcome.APPLIED) Verification.API_READBACK.put(result);
         result.add("fields", fields);
         if (request.silentEngine)
             Results.addWarning(
@@ -420,7 +422,8 @@ public final class TransportModule implements HostModule {
     private void observe(String key, SettableEnumValue source) {
         Sample value = sample(key);
         enums.put(key, source);
-        source.addValueObserver((EnumValueChangedCallback) v -> value.set(new JsonPrimitive((String) v)));
+        source.addValueObserver(
+                (EnumValueChangedCallback) v -> value.set(new JsonPrimitive(EnumOptions.listed(source, (String) v))));
     }
 
     private static ValueMatch rule(String key) {

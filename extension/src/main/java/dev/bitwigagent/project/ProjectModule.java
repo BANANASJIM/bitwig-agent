@@ -354,8 +354,10 @@ public final class ProjectModule implements HostModule, JobsModule.Source {
             return;
         }
         JsonObject result;
-        if (done && saveObserved(current.plan)) result = Results.outcome(Outcome.APPLIED);
-        else {
+        if (done && saveObserved(current.plan)) {
+            result = Results.outcome(Outcome.APPLIED);
+            Verification.FILE_READBACK.put(result);
+        } else {
             result = JobsModule.deadline(
                     current.id,
                     done

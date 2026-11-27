@@ -645,7 +645,7 @@ public final class ClipModule implements HostModule {
         next[0] = () -> {
             String key = keys.poll();
             if (key == null) {
-                finishSet(op, fields, order, last[0].get("ref"), null);
+                finishSet(op, fields, order, last[0].get("ref"), null, nativeEvidence(last[0]));
                 return;
             }
             JsonObject args = new JsonObject();
@@ -662,7 +662,7 @@ public final class ClipModule implements HostModule {
                                 Results.outcomeOf(result),
                                 null));
                 if (Results.outcomeOf(result).succeeded()) next[0].run();
-                else finishSet(op, fields, order, result.get("ref"), null);
+                else finishSet(op, fields, order, result.get("ref"), null, nativeEvidence(result));
             });
         };
         next[0].run();
@@ -689,10 +689,16 @@ public final class ClipModule implements HostModule {
             SafetyObservation safety = nextAction || launch ? transportSafety.stopped(op) : null;
             checkExpect(op, target, p.has("expect") ? p.getAsJsonObject("expect") : null, () -> {
                 JsonObject fields = new JsonObject(), changes = new JsonObject();
+                JsonObject[] settingsEvidence = new JsonObject[1];
                 for (String key : NEXT_ACTION) if (p.has(key)) changes.add(key, p.get(key));
                 List<String> order = setOrder(p);
-                Runnable finish =
-                        () -> finishSet(op, fields, order, state.clipRef(target), launch ? launchOptions() : null);
+                Runnable finish = () -> finishSet(
+                        op,
+                        fields,
+                        order,
+                        state.clipRef(target),
+                        launch ? launchOptions() : null,
+                        cursor ? apiEvidence() : settingsEvidence[0]);
                 Runnable runCursor = () -> {
                     if (!cursor) finish.run();
                     else
@@ -710,6 +716,7 @@ public final class ClipModule implements HostModule {
                 }
                 settings.run(op, target, changes, true, result -> {
                     JsonObject done = result.getAsJsonObject("fields");
+                    settingsEvidence[0] = nativeEvidence(result);
                     merge(fields, done);
                     if (succeeded(done)) runCursor.run();
                     else finish.run();
@@ -753,6 +760,20 @@ public final class ClipModule implements HostModule {
         for (Map.Entry<String, JsonElement> e : group.entrySet()) into.add(e.getKey(), e.getValue());
     }
 
+    private static JsonObject nativeEvidence(JsonObject nativeResult) {
+        JsonObject evidence = new JsonObject();
+        Verification.NATIVE_READBACK.put(evidence);
+        evidence.add("nativeVersion", nativeResult.get("nativeVersion"));
+        evidence.add("nativeJarSha256", nativeResult.get("nativeJarSha256"));
+        return evidence;
+    }
+
+    private static JsonObject apiEvidence() {
+        JsonObject evidence = new JsonObject();
+        Verification.API_READBACK.put(evidence);
+        return evidence;
+    }
+
     private static boolean succeeded(JsonObject group) {
         return Results.worst(group.asMap().values()).succeeded();
     }
@@ -766,7 +787,12 @@ public final class ClipModule implements HostModule {
 
     /** The result of a set: the worst outcome of every field, the fields the run never reached, the clip's new ref. */
     private void finishSet(
-            HostOperation op, JsonObject fields, List<String> order, JsonElement ref, JsonObject options) {
+            HostOperation op,
+            JsonObject fields,
+            List<String> order,
+            JsonElement ref,
+            JsonObject options,
+            JsonObject evidence) {
         for (String key : order)
             if (!fields.has(key)) {
                 JsonObject skipped = Results.outcome(Outcome.NOT_APPLIED);
@@ -783,6 +809,7 @@ public final class ClipModule implements HostModule {
                     break;
                 }
             }
+        if (outcome == Outcome.APPLIED) merge(out, evidence);
         out.add("ref", ref);
         out.add("fields", fields);
         if (options != null) out.add("options", options);

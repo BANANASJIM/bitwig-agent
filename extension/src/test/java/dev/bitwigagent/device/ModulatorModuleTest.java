@@ -385,6 +385,8 @@ public final class ModulatorModuleTest {
         HostOperation op = f.finish(f.start(f.parameters, "parameters.set", setRate(f, "0.75", null)));
         JsonObject result = op.result.join();
         assertEquals("applied", result.get("outcome").getAsString());
+        assertEquals("native_readback", result.get("verification").getAsString());
+        assertTrue(result.has("nativeVersion") && result.has("nativeJarSha256"));
         assertEquals(Refs.parameter(f.random, "RATE", "Rate"), result.get("ref"));
         HostFixture.REF_SCHEMA.apply(result.getAsJsonObject("ref"));
         assertEquals(

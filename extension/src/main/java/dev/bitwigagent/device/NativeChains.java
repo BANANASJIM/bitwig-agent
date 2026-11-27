@@ -85,6 +85,9 @@ public final class NativeChains {
         void move(Object device, Object chain, int index);
 
         void select(Object device);
+
+        /** The result's nativeVersion and nativeJarSha256. */
+        void provenance(JsonObject out);
     }
 
     private final Scheduler scheduler;

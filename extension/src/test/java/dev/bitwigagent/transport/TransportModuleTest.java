@@ -129,6 +129,7 @@ public final class TransportModuleTest {
         assertTrue(!op.result.isDone(), "mismatched callback does not verify");
         tempo.emit(130.0);
         f.next();
+        assertEquals("api_readback", op.result.join().get("verification").getAsString());
         assertTrue(
                 op.result
                         .join()
@@ -519,24 +520,22 @@ public final class TransportModuleTest {
     }
 
     @Test
-    void observedValueWinsWhenGetDisagrees() {
-        // Bitwig 6.1.4: the observer reported a stored project value ('bar') while EnumValue.get() returned a listed
+    void aReportedIdOutsideTheOptionsReadsAsTheListedId() {
+        // Bitwig 6.1.4: the observer reported a stored project id ('bar') while EnumValue.get() returned the listed
         // one.
         HostFixture f = new HostFixture();
         TransportModule module = f.services.transportModule();
         FakeHost node = f.transport.child("defaultLaunchQuantization");
-        node.emit("bar");
         node.on("get", args -> "1");
+        node.emit("bar");
         JsonObject read = f.call(module, "transport.get", new JsonObject());
+        JsonObject unit = read.getAsJsonObject("defaultLaunchQuantization");
         assertTrue(
-                value(read, "defaultLaunchQuantization").equals("bar")
-                        && read.getAsJsonArray("observedOutsideOptions")
-                                .get(0)
-                                .getAsString()
-                                .equals("defaultLaunchQuantization"),
-                "flag follows the reported (observed) value, not get()");
-        JsonObject result =
-                f.call(module, "transport.set", HostFixture.json("{\"defaultLaunchQuantization\":\"bar\"}"));
+                unit.get("value").getAsString().equals("1")
+                        && unit.getAsJsonArray("options").contains(unit.get("value"))
+                        && read.getAsJsonArray("observedOutsideOptions").size() == 0,
+                "the read value is one of its own options");
+        JsonObject result = f.call(module, "transport.set", HostFixture.json("{\"defaultLaunchQuantization\":\"1\"}"));
         assertTrue(
                 result.getAsJsonObject("fields")
                                 .getAsJsonObject("defaultLaunchQuantization")
@@ -544,7 +543,7 @@ public final class TransportModuleTest {
                                 .getAsString()
                                 .equals("already_matched")
                         && node.writes == 0,
-                "the reported value can be written back even when get() disagrees");
+                "the read value writes back as already_matched");
     }
 
     @Test

@@ -1,5 +1,6 @@
 package dev.bitwigagent.nativehost;
 
+import com.google.gson.JsonObject;
 import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.device.NativeChains;
@@ -280,6 +281,11 @@ public final class NativeChainAccess implements NativeChains.Access {
         Object moving = a.invoke(devicesPayload, null, new ArrayList<>(List.of(device)));
         if (!Boolean.TRUE.equals(a.invoke(insertAt, at, moving, noModifiers, null)))
             throw Errors.notApplied(Reason.HOST_REFUSED, "The host refused the move.");
+    }
+
+    @Override
+    public void provenance(JsonObject out) {
+        a.provenance(out);
     }
 
     @Override
