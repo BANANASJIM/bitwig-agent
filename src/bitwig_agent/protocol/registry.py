@@ -26,6 +26,7 @@ from bitwig_agent.protocol import (
     tracks,
     transport,
 )
+from bitwig_agent.protocol.annotations import resolve
 from bitwig_agent.protocol.base import ToolSpec
 
 _DOMAINS = (
@@ -141,6 +142,12 @@ def with_inspect(specs: dict[str, ToolSpec], table: dict[str, str]) -> dict[str,
     return out
 
 
+def changes_content(name: str, spec: ToolSpec) -> bool:
+    """Whether a call can change the project's content (a read that only selects, like notes.get, does not)."""
+    hints = resolve(name, spec.annotations)
+    return hints.destructive or not hints.idempotent
+
+
 def _collect() -> dict[str, ToolSpec]:
     specs: dict[str, ToolSpec] = {}
     for domain in _DOMAINS:
@@ -148,9 +155,9 @@ def _collect() -> dict[str, ToolSpec]:
         if duplicated:
             raise ValueError(f"Tools declared twice: {sorted(duplicated)}")
         specs.update(domain.SPECS)
-    writes = [name for name, spec in specs.items() if spec.records and not spec.read_only]
+    writes = [name for name, spec in specs.items() if (spec.records or spec.views) and changes_content(name, spec)]
     if writes:
-        raise ValueError(f"Only reads declare a record list: {writes}")
+        raise ValueError(f"Only reads declare a record list or a text view: {writes}")
     return with_inspect(specs, INSPECT)
 
 

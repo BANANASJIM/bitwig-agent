@@ -538,7 +538,8 @@ NOTES_GET_DESCRIPTION = (
     "read the rest by range; on the public path also past the loop end or out of time, with incompleteReason), exact "
     "and notes. exact=true: read natively (Bitwig 6.1.4/6.1.7), no selection, onsets "
     "exact. exact=false: the public note grid, read on the 1/128-beat write grid (onsetResolution 0.0078125), one "
-    "onset per cell, the clip selected (a failure after that is unknown)."
+    "onset per cell, the clip selected (a failure after that is unknown). format=grid returns the same notes as a "
+    "read-only pitch x step text view with off-grid onsets listed exactly; it is never input: write with notes.set."
 )
 NOTES_SET_DESCRIPTION = (
     "Write the notes of one launcher clip. Without range: each listed note is written in place (identity: channel, "
@@ -655,6 +656,8 @@ SPECS: dict[str, ToolSpec] = {
         False,
         examples=({"target": CLIP_REF}, {"target": CLIP_REF, "range": {"start": 0, "end": 4, "pitches": [36, 42]}}),
         annotations=STEER,
+        records="notes",
+        views=("grid",),
         summary="Read every note of a launcher clip, all channels, as records {beat, pitch, velocity, duration, channel?} that notes.set takes; range limits the output. exact=false means the public note grid (onsets snapped, clip selected).",
     ),
     "notes.set": ToolSpec(

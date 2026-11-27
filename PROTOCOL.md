@@ -110,6 +110,8 @@ The closed reason list, each reason with its code, is `REASONS` in [`src/bitwig_
 
 **Frontends.** MCP sets `isError` and the CLI exits 1 for an error and for a result whose `outcome` is present and outside {`applied`, `already_matched`, `sent`}.
 
+**Result shaping: `format` and `fields`.** The client shapes a read's result; the extension never sees either. The CLI takes `--format` and `--fields=a,b.c`, MCP the arguments `format` and `fields` (an array of names) on every tool that declares them in its schema. `format` is `json` (default: the result object), and for a read that declares a record list (`tracks.list` → `tracks`, `notes.get` → `notes`, `arranger.list` → `clips`, …) `jsonl`, `csv` or `tsv`: only the records, as text. `fields` keeps only the named record fields (dotted paths reach nested ones), in JSON too. A read may also declare a named **text view**: `notes.get` `grid` and `arranger.list` `timeline`. A text view is rendered from the same result by a pure function, is read-only and is never input: write with the JSON records and the write methods. Anything a view cannot place exactly (an onset off the shown step, a clip edge inside a cell) is listed under `off-grid` with its exact values. Over MCP a text format comes back as text content without structured content; warnings (`unknown_field`, `partial`) follow as extra text items (the CLI prints them on stderr). A format the method does not declare, or `fields` with a text view, is `invalid_params` before anything is sent; a result that carries an `outcome` (a failure after a read selected something) is returned unchanged as JSON.
+
 ## Core discovery and direct parameters
 
 Parameter objects accept exactly the listed keys; extra keys and explicit nulls are rejected. Unless a narrower bound is documented, strings must be nonempty and at most4096 UTF-16 code units. `trackId` is a UUID reported by the current track bank, not a name. Root `deviceIndex` is an integer0–15; general paging is not implemented. The separate one-layer API below does not reinterpret flat device indices. MCP/CLI `timeoutMs` is removed from method params and sent in the transport envelope.
@@ -307,6 +309,21 @@ A note is one record, the same in `notes.get`, `notes.set` and `clips.insert`: `
 
 **`notes.get`** returns `{ref, loop:{start, length}, range?, count, complete, incompleteReason?, exact, onsetResolution?, notes}`: every note of every channel, sorted by beat, then pitch, then channel. `range:{start, end, pitches?:[low, high]}` only limits the output to notes whose onset lies in `[start, end)` and whose pitch lies in `[low, high]`; `"all"` (or no range) is the whole clip, notes outside the loop and play range included. `count` is the number of notes in the range; `complete:false` means the response cap cut the list (at most 131072 notes fit, `maxMessageBytes / 128`): read the rest by range.
 
+**`notes.get format=grid`** renders the result as a read-only pitch x step grid (client-side; the host call is the plain read):
+
+```
+"drums A"  beats 0-4  step 1/16
+cells: X velocity >=110 · x 60-109 · o <60 · - held · . empty
+pitch   1 . . . 2 . . . 3 . . . 4 . . .
+42 F#1  x . o . x . o . x . o . x . o .
+38 D1   . . . . x . . . . . . . x . o .
+36 C1   X . . . . . . x . . X . . . . .
+off-grid: none
+read-only: each mark is one notes.get record {beat, pitch, velocity, duration, channel}; write with notes.set records (notes.get without format returns them), never with this text
+```
+
+The window is the echoed `range {start, end}`, else the loop; columns start at the whole beat at or before it and the header numbers beats from 1 (beat 0 is column `1`). The step is the coarsest of 1/16, 1/16T, 1/32, 1/32T, 1/64 (a quarter, sixth, eighth, twelfth or sixteenth of a beat) that every onset in the window lies on, to 1/1048576 beat; when none fits, 1/16, and every onset off it is listed under `off-grid` as `pitch@beat vVELOCITY dDURATION [chN]` instead of being drawn. A row is one pitch (Bitwig names, C3 = 60), highest first; when any note has a channel other than 0 every row also names its channel. A cell holds one character, space-separated: `X`/`x`/`o` an onset by velocity, `-` a cell the previous note still sounds in, `.` empty. Notes outside the window are listed under `outside`; fields beyond the note itself (expression or operators) under `operators`, grouped by pitch. More than 64 columns wrap into blocks of whole beats; a window over 1024 columns at 1/16 (256 beats) is refused: give `range`. `complete:false` and `exact:false` each add a line.
+
 **`notes.set`** writes by the range rule:
 
 - **Without `range`** each listed note is written in place: inserted when no note has its (channel, pitch, beat), else the given fields updated. Nothing is removed. `velocity` and `duration` may be omitted for an existing note (its value stays); a new note needs both.
@@ -365,10 +382,28 @@ The public controller API has no arranger-clip enumeration or creation. `Control
 
 | Method | Parameters / operation |
 |---|---|
-| `arranger.list` | `target` (track ref) optional; read-only. Without `target` it reads every existing Audio/Instrument/Hybrid track of the track window (one native lane read each, inside one native job); clips are in track order, then by `start`. `clips:[{ref, start, length, end, bar, name, kind:"instrument"|"audio"|"other", loopEnabled, loop:{start, length}, playStart, playStop}]`, `count`, `markers:[{ref, name, beat}]` and `markersComplete` (the `markers.list` rows and its `observationsComplete`), `tempo` (bpm), `timeSignature`, `window` (the track window); `ref` is `{kind:"clip", track, lane:"main", start, name}`. `bar` is `1 + start / (numerator * 4 / denominator)` at the current public time signature (fractional off a bar line; time-signature changes are not applied); `bar`, `tempo` and `timeSignature` are null until the transport has reported them. Start/length are `SMz.x3t()`/`asx.nfq()`; timing uses the same native properties as `clips.get`. No stopped transport needed |
+| `arranger.list` | `target` (track ref) optional; read-only; `format=timeline` renders it as text (below). Without `target` it reads every existing Audio/Instrument/Hybrid track of the track window (one native lane read each, inside one native job); clips are in track order, then by `start`. `clips:[{ref, start, length, end, bar, name, kind:"instrument"|"audio"|"other", loopEnabled, loop:{start, length}, playStart, playStop}]`, `count`, `markers:[{ref, name, beat}]` and `markersComplete` (the `markers.list` rows and its `observationsComplete`), `tempo` (bpm), `timeSignature`, `window` (the track window); `ref` is `{kind:"clip", track, lane:"main", start, name}`. `bar` is `1 + start / (numerator * 4 / denominator)` at the current public time signature (fractional off a bar line; time-signature changes are not applied); `bar`, `tempo` and `timeSignature` are null until the transport has reported them. Start/length are `SMz.x3t()`/`asx.nfq()`; timing uses the same native properties as `clips.get`. No stopped transport needed |
 | `clips.insert` (arranger) | `to:{track, start}` (0–4194304), `length` (1/128–65536), `name` (1–128), optional `notes` (1–256 `{beat, pitch, velocity, duration}`, beats from the clip start, must fit `length`; the [note rules](#note-rules) apply) and `channel` (0–15, default 0, only with notes). Instrument tracks only. Inside one project transaction it builds the clip with `g1d.cfM(start, length)`, inserts it with `PSn.cfM(event, false, false, null)` ("Insert Event", without the range-clearing overwrite), names it with `Ob.g_(name)` and adds each note with `AGr.MRY(n1.cfM(beat, duration, velocity/127), channel, pitch, null)` ("Insert Note"; the row factory `YeP.TMF(channel, key, create)` takes the channel first and asserts 0..15). Readback: exactly one new clip, the created object, at the requested start/length/name; every note row of the clip (`YeP.wGc()`) is read back with channel, key, beat, duration and velocity |
 | `clips.copy` (to arranger) | `from` (launcher clip ref), `to:{track, start}` on the same track. Copies that occupied slot onto the track's arranger lane through Bitwig's copy-launcher-clips-to-arranger operation: `shO.cfM([slot], slot, start, i3D.COPY, false, null, null)`, a unique copy rather than an alias. The slot must be on the track's main lane. The copy's length is the clip's arrangement length `zZi.Mb2()` (`expectedLength`). Readback: exactly one new clip at `start` with that length |
 | `clips.set` / `clips.move` / `clips.delete` (arranger) | `target` is the arranger clip ref, located on the lane by its start and name: no clip starting there is `stale`/`target_not_found`, another name there is `target_changed` with `current`. `clips.set {length}` (`asx.lYc`, start kept) then `{name}` (`Ob.g_`), `clips.move {to:{start}}` (`SMz.wGc`, length kept), `clips.delete` (`PSn.cfM(Collection)`, "Delete Events"). Move/resize/rename run in their own project transaction (`g2L.cfM(label, false)` … `g2L.cfM(false)`). An already-matching value is not rewritten (`already_matched`). `expect` compares `name` and `length` first |
+
+**`arranger.list format=timeline`** renders the rows as a read-only tracks x bars timeline (client-side):
+
+```
+tempo 128  4/4  cell = 1 bar (4 beats)
+markers: 1 intro · 9 verse · 25 drop
+bar    1       9       17      25
+Drums  ........AAAAAAAAAAAAAAAABBBBBBBB
+Bass   ........CCCCCCCC........DDDDDDDD
+Pad    EEEEEEEE........EEEEEEEEEEEEEEEE
+Drums: A "drums A" 32-96 · B "drums drop" 96-128
+Bass: C "bass A" 32-64 · D "bass drop" 97-128
+Pad: E "pad" 0-32, 64-128
+off-grid: Bass D "bass drop" 97-128
+read-only: exact beats are in the legend and the JSON rows; write with clips.insert, clips.copy, clips.move, clips.set and markers.insert/set, never with this text
+```
+
+One cell is one bar at the current time signature (4 beats, with a note, when it is not observed), doubled to 2, 4, 8 … bars when the arrangement would need more than 256 cells; more than 64 cells wrap into blocks. Each (track, clip name) gets a letter in order of appearance (A–Z, a–z, 0–9, then `*`); a cell shows the clip covering most of it. The legend gives every clip's beats `start-end`; a clip that starts or ends inside a cell is also listed under `off-grid`. Markers are given by bar (fractional off a bar line). Track names are aligned by display width (wcwidth) and cut at 24 columns in the grid, never in the legend. Only tracks with clips appear; a track window that is not complete adds a line.
 
 **Safety and evidence:**
 
