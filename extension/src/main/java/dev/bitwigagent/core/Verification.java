@@ -16,4 +16,9 @@ public enum Verification {
     public void put(JsonObject result) {
         result.addProperty("verification", wire());
     }
+
+    /** Stamps a write result whose outcome is {@code applied}: an applied result always says how it was confirmed. */
+    public void putIfApplied(JsonObject result) {
+        if (Results.outcomeOf(result) == Outcome.APPLIED) put(result);
+    }
 }

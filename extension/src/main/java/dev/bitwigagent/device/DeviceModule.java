@@ -143,7 +143,7 @@ public final class DeviceModule implements HostModule {
             walk.a.write(onOff, wanted ? 1 : 0);
             boolean observed = on(walk, device);
             return observed == wanted
-                    ? result(device.ref, asked, wanted, Outcome.APPLIED, null)
+                    ? applied(device.ref, asked, wanted, Verification.NATIVE_READBACK)
                     : result(device.ref, asked, observed, Outcome.UNKNOWN, Reason.READBACK_MISMATCH);
         });
     }
@@ -172,10 +172,17 @@ public final class DeviceModule implements HostModule {
                 () -> {
                     snapshot.require(op);
                     if (state.sequence <= sequence || device.device.isEnabled().get() != wanted) return null;
-                    return () -> op.result.complete(result(device.ref(), asked, wanted, Outcome.APPLIED, null));
+                    return () -> op.result.complete(applied(device.ref(), asked, wanted, Verification.API_READBACK));
                 },
                 () -> op.result.complete(result(
                         device.ref(), asked, device.device.isEnabled().get(), Outcome.UNKNOWN, Reason.NOT_OBSERVED)));
+    }
+
+    private static JsonObject applied(
+            JsonObject ref, JsonElement requested, boolean wanted, Verification verification) {
+        JsonObject result = result(ref, requested, wanted, Outcome.APPLIED, null);
+        verification.put(result);
+        return result;
     }
 
     private static JsonObject result(

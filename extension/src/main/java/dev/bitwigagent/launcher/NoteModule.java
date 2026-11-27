@@ -9,6 +9,7 @@ import dev.bitwigagent.core.Outcome;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.Scheduler;
+import dev.bitwigagent.core.Verification;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -318,6 +319,7 @@ public final class NoteModule implements HostModule {
             summary.addProperty("notReached", unreached);
             out.add("summary", summary);
             out.addProperty("undo", NativeNotes.undo(written != null, dispatched));
+            Verification.API_READBACK.putIfApplied(out);
             out.add("windows", windows);
             if (notReached.size() > 0) out.add("notReached", notReached);
             op.result.complete(out);
@@ -449,6 +451,7 @@ public final class NoteModule implements HostModule {
         summary.addProperty("unverified", changes.size() - verified);
         out.add("summary", summary);
         out.addProperty("undo", NativeNotes.undo(nativeWrite, changes.size() - matched));
+        Verification.API_READBACK.putIfApplied(out);
         if (full) out.add("edits", results);
         else if (results.size() > 0) out.add("unverifiedEdits", results);
         op.result.complete(out);

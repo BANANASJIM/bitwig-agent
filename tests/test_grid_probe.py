@@ -120,6 +120,7 @@ def test_probe_reroutes_records_and_restores_exactly(rig):
         (host.out1, "IN"): (host.osc, "OUT")
     }  # probe on one Audio Out, the other silenced
     assert out["outcome"] == "applied"
+    assert out["verification"] == "file_readback"
     assert out["restored"] is True
     assert out["audioOut"] == "P: out1"
     assert out["cablesChanged"] == 2

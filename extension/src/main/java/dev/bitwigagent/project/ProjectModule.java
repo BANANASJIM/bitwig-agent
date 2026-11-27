@@ -173,6 +173,7 @@ public final class ProjectModule implements HostModule, JobsModule.Source {
         scheduler.poll(op, scheduler.deadlineUntil(op), projectState::engineActive, done -> {
             if (done) {
                 JsonObject result = Results.outcome(Outcome.APPLIED);
+                Verification.API_READBACK.put(result);
                 result.addProperty("engineActive", true);
                 op.result.complete(result);
                 return;
@@ -194,6 +195,7 @@ public final class ProjectModule implements HostModule, JobsModule.Source {
                 done -> {
                     if (done) {
                         JsonObject result = Results.outcome(Outcome.APPLIED);
+                        Verification.API_READBACK.put(result);
                         result.addProperty("projectModified", false);
                         op.result.complete(result);
                         return;

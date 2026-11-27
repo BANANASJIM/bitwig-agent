@@ -12,6 +12,7 @@ import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.RpcException;
 import dev.bitwigagent.core.Scheduler;
+import dev.bitwigagent.core.Verification;
 import dev.bitwigagent.host.LauncherStructureLock;
 import dev.bitwigagent.host.SelectionLease;
 import dev.bitwigagent.host.TrackWindow;
@@ -421,6 +422,7 @@ public final class LauncherState implements RenderModule.LauncherContent {
             HostOperation op, Target target, Slot slot, JsonObject ref, boolean observed, boolean queued) {
         JsonObject out = written(observed ? Outcome.APPLIED : queued ? Outcome.SENT : Outcome.UNKNOWN);
         out.add("ref", ref);
+        Verification.API_READBACK.putIfApplied(out);
         if (!observed && !queued) out.addProperty("reason", Reason.NOT_OBSERVED.wire());
         out.addProperty(
                 "playbackState", observed ? slot == null ? "stopped" : "playing" : queued ? "queued" : "not_observed");

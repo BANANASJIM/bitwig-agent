@@ -12,6 +12,7 @@ import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Refs;
 import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.Scheduler;
+import dev.bitwigagent.core.Verification;
 import dev.bitwigagent.host.TransportSafety;
 import java.util.*;
 
@@ -268,6 +269,7 @@ public final class MarkerModule implements HostModule {
         Snapshot now = read();
         JsonObject result = describe(now);
         result.addProperty("outcome", outcome.wire());
+        Verification.API_READBACK.putIfApplied(result);
         if (outcome.succeeded() && !method.equals("markers.delete")) {
             String key = new Marker(0, name, beat).key();
             for (int i = 0; i < now.markers.size(); i++)

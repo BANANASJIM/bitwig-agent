@@ -17,6 +17,7 @@ import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Refs;
 import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.RpcException;
+import dev.bitwigagent.core.Verification;
 import java.lang.reflect.*;
 import java.util.*;
 import java.util.concurrent.*;
@@ -375,7 +376,9 @@ public final class AutomationModuleTest {
                     before.run();
                     writes++;
                     if (failAfterWrite) throw Errors.unknown(Reason.READBACK_MISMATCH, "simulated readback mismatch");
-                    return Results.outcome(Outcome.APPLIED);
+                    JsonObject applied = Results.outcome(Outcome.APPLIED);
+                    Verification.NATIVE_READBACK.put(applied);
+                    return applied;
                 }
             });
         }

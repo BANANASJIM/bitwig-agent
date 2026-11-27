@@ -77,7 +77,7 @@ The top-level `outcome` is the worst entry. A field or batch entry is `{requeste
 | `api_readback` | Observing the public Controller API (bank counts, names, types, UUIDs, slot content, values) change as requested. |
 | `file_readback` | Reading files on disk (written project or rendered audio headers, preset or device files). |
 
-It accompanies `applied` (and the native no-ops that say so); `sent`, `unknown` and errors carry none. Native results also carry `nativeVersion` and `nativeJarSha256`, the host binary that answered. Other result keys are data (values, counts, diffs, warnings).
+It accompanies every `applied` (and the native no-ops that say so), except the `applied` of `ack`, which observes nothing; `sent`, `unknown` and errors carry none. `grid.apply`, composed by the client from native-readback Grid writes, carries `native_readback`. Native results also carry `nativeVersion` and `nativeJarSha256`, the host binary that answered. Other result keys are data (values, counts, diffs, warnings).
 
 **Errors.** `{code, reason, message, next?, current?, observed?, entries?}`. An error always means nothing changed, so the call may be corrected and repeated. `current` is the ref now found where a stale ref pointed (`target_changed`), `observed` the current values an `expect` did not match, and `entries` the refused entries of a batch, each an error with its `index`. Each reason belongs to one code and also explains a result entry:
 

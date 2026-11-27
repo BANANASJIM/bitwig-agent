@@ -414,6 +414,7 @@ public final class TrackLifecycleModule implements HostModule {
             Creation after = capture();
             JsonObject result = Results.outcome(gone ? Outcome.APPLIED : Outcome.UNKNOWN);
             if (!gone) result.addProperty("reason", Reason.NOT_OBSERVED.wire());
+            Verification.API_READBACK.putIfApplied(result);
             result.add("deleted", deleted);
             result.addProperty("trackCountBefore", before.total);
             result.addProperty("trackCountAfter", after.total);

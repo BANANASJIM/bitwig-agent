@@ -13,6 +13,7 @@ import dev.bitwigagent.core.Outcome;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Refs;
 import dev.bitwigagent.core.Results;
+import dev.bitwigagent.core.Verification;
 import dev.bitwigagent.launcher.ClipModule;
 import dev.bitwigagent.launcher.LauncherFake;
 import java.util.*;
@@ -111,6 +112,7 @@ public final class ArrangerModuleTest {
 
             private JsonObject result(JsonObject clip) {
                 JsonObject out = Results.outcome(Outcome.APPLIED);
+                Verification.NATIVE_READBACK.put(out);
                 out.addProperty("trackId", f.trackId);
                 out.addProperty("lane", "main");
                 JsonArray rows = new JsonArray();

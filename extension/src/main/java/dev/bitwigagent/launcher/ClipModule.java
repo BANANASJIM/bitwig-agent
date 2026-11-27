@@ -1104,6 +1104,7 @@ public final class ClipModule implements HostModule {
             JsonObject out =
                     Results.outcome(Results.worst(batch.entries().asList()).worst(Outcome.ALREADY_MATCHED));
             out.add("entries", batch.entries());
+            Verification.API_READBACK.putIfApplied(out);
             op.result.complete(out);
             return;
         }

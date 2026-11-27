@@ -244,6 +244,7 @@ public final class NoteModuleTest {
         assertEquals(32, w.pitches, "the pitch range comes from the edits");
         JsonObject out = f.call("notes.set", p);
         assertEquals("applied", out.get("outcome").getAsString());
+        assertEquals("api_readback", out.get("verification").getAsString());
         assertTrue(out.getAsJsonObject("window").get("derived").getAsBoolean(), "the derived window is echoed");
         assertTrue(
                 f.notes.containsKey(LauncherFake.key(0, 0, 0, 60))
