@@ -1,16 +1,19 @@
-"""ITU-R BS.1770-4 / EBU R128 loudness of decoded WAV channels, stdlib only.
+"""ITU-R BS.1770-4 / EBU R128 loudness of decoded audio channels (numpy/scipy: the optional [audio] extra).
 
 Integrated loudness is the standard's: K-weighting (shelf + RLB high-pass), 400 ms blocks with 75 % overlap, per-channel
 energy sum with channel weights, -70 LUFS absolute gate, then a -10 LU relative gate. Short-term (3 s) and momentary (400 ms)
-maxima and the EBU 3342 loudness range use the same blocks. True peak is an estimate (see true_peak).
+maxima and the EBU 3342 loudness range use the same blocks. True peak is an estimate (see true_peak). The filtering and
+oversampling are scipy's; the gating arithmetic below follows the standard step by step.
 """
 
 from __future__ import annotations
 
 import math
-from array import array
-from collections.abc import Sequence
 from typing import Any
+
+import numpy as np
+from numpy.typing import NDArray
+from scipy.signal import freqz_sos, resample_poly, sosfilt
 
 OFFSET = -0.691  # BS.1770 constant: K-weighted energy -> LKFS
 ABS_GATE = -70.0
@@ -18,9 +21,9 @@ REL_GATE_LU = -10.0
 LRA_REL_GATE_LU = -20.0  # EBU TECH 3342
 SUB_BLOCK_SECONDS = 0.1  # 400 ms block = 4 sub-blocks (75 % overlap), 3 s window = 30
 MOMENTARY_SUB, SHORT_TERM_SUB = 4, 30
-TP_CANDIDATE_FRACTION = 0.5  # only intervals touching a sample >= -6 dB below the sample peak can hold the true peak
-TP_MAX_INTERVALS = 150_000
-TP_HALF_TAPS = 12  # 24 taps per phase
+TP_OVERSAMPLE = 4
+TP_EDGE = 10  # input samples at each end that resample_poly's default filter (half length 10 per phase) pads with zeros
+TP_CHUNK = 1 << 20  # oversample this many input samples at a time to bound memory
 MAX_SECONDS = 1800
 
 
@@ -55,36 +58,23 @@ def coefficients(rate: int) -> dict[str, tuple[float, ...]]:
     return {"shelfB": b, "shelfA": a, "rlbB": c, "rlbA": d}
 
 
+def _sos(rate: int) -> NDArray[np.float64]:
+    """Both K-weighting stages as second-order sections."""
+    return np.array([[*b, 1.0, *a] for b, a in (_shelf(rate), _rlb(rate))])
+
+
 def gain_db(rate: int, hz: float) -> float:
-    """Magnitude of the cascaded K-weighting filter at hz (analytic, for checks and documentation)."""
-    z = complex(math.cos(2 * math.pi * hz / rate), -math.sin(2 * math.pi * hz / rate))  # z^-1
-    total = 1.0
-    for b, a in (_shelf(rate), _rlb(rate)):
-        num = b[0] + b[1] * z + b[2] * z * z
-        den = 1 + a[0] * z + a[1] * z * z
-        total *= abs(num / den)
-    return 20 * math.log10(total)
+    """Magnitude of the cascaded K-weighting filter at hz (for checks and documentation)."""
+    _, response = freqz_sos(_sos(rate), worN=[hz], fs=rate)
+    return float(20 * np.log10(np.abs(response[0])))
 
 
-def sub_block_energies(x: Sequence[float], rate: int) -> list[float]:
+def sub_block_energies(x: NDArray[np.float64], rate: int) -> list[float]:
     """Mean square of the K-weighted signal per 100 ms sub-block (full sub-blocks only)."""
-    (b0, b1, b2), (a1, a2) = _shelf(rate)
-    (c0, c1, c2), (d1, d2) = _rlb(rate)
     size = max(1, round(SUB_BLOCK_SECONDS * rate))
-    s1 = s2 = t1 = t2 = 0.0
-    out = []
-    for start in range(0, len(x) - size + 1, size):
-        total = 0.0
-        for v in x[start : start + size]:
-            y = b0 * v + s1  # transposed direct form II
-            s1 = b1 * v - a1 * y + s2
-            s2 = b2 * v - a2 * y
-            w = c0 * y + t1
-            t1 = c1 * y - d1 * w + t2
-            t2 = c2 * y - d2 * w
-            total += w * w
-        out.append(total / size)
-    return out
+    count = len(x) // size
+    weighted = sosfilt(_sos(rate), x[: count * size])
+    return [float(v) for v in np.mean((weighted * weighted).reshape(count, size), axis=1)]
 
 
 def channel_weights(channels: int) -> tuple[list[float], str]:
@@ -149,54 +139,20 @@ def loudness_range(short_term_energies: list[float]) -> float | None:
     return _percentile(final, 0.95) - _percentile(final, 0.10)
 
 
-def _interpolator() -> list[list[float]]:
-    """Phases 1..3 of a 4x windowed-sinc interpolator (Blackman-Harris, 2*TP_HALF_TAPS taps, unity DC gain per phase)."""
-    k = TP_HALF_TAPS
-    phases = []
-    for p in (1, 2, 3):
-        frac = p / 4
-        taps = []
-        for n in range(-k + 1, k + 1):  # sample i+n, distance u = n - frac from the interpolation point
-            u = n - frac
-            sinc = math.sin(math.pi * u) / (math.pi * u)
-            r = u / k
-            w = (
-                0.35875
-                + 0.48829 * math.cos(math.pi * r)
-                + 0.14128 * math.cos(2 * math.pi * r)
-                + 0.01168 * math.cos(3 * math.pi * r)
-            )
-            taps.append(sinc * w)
-        gain = sum(taps)
-        phases.append([t / gain for t in taps])
-    return phases
-
-
-_PHASES = _interpolator()
-
-
-def true_peak(x: Sequence[float]) -> tuple[float, float]:
-    """(samplePeak, truePeakEstimate), both linear. 4x oversampling by windowed sinc, evaluated only on intervals that
-    touch a sample within 6 dB of the sample peak (at most TP_MAX_INTERVALS, the loudest first). An estimate of the
-    BS.1770-4 Annex 2 meter, not a certified one."""
+def true_peak(x: NDArray[np.float64]) -> tuple[float, float]:
+    """(samplePeak, truePeakEstimate), both linear: the peak of the signal oversampled 4x with scipy's polyphase FIR
+    (the BS.1770-4 Annex 2 method; scipy's Kaiser filter, not the standard's example filter). TP_EDGE samples at each
+    end are left out because the filter sees zero padding there. An estimate, not a certified meter."""
     n = len(x)
-    peak = max(map(abs, x), default=0.0)
-    if peak == 0 or n < 2 * TP_HALF_TAPS:
+    peak = float(np.max(np.abs(x))) if n else 0.0
+    if peak == 0 or n <= 2 * TP_EDGE:
         return peak, peak
-    floor = TP_CANDIDATE_FRACTION * peak
-    candidates = [i for i in range(n - 1) if abs(x[i]) >= floor or abs(x[i + 1]) >= floor]
-    if len(candidates) > TP_MAX_INTERVALS:
-        candidates.sort(key=lambda i: -max(abs(x[i]), abs(x[i + 1])))
-        candidates = candidates[:TP_MAX_INTERVALS]
     best = peak
-    lo_pad, hi_pad = TP_HALF_TAPS - 1, TP_HALF_TAPS
-    for i in candidates:
-        if i - lo_pad < 0 or i + hi_pad >= n:
-            continue
-        seg = x[i - lo_pad : i + hi_pad + 1]
-        for taps in _PHASES:
-            v = abs(sum(t * s for t, s in zip(taps, seg, strict=False)))
-            best = max(best, v)
+    edge = TP_EDGE * TP_OVERSAMPLE
+    for start in range(0, n - 2 * TP_EDGE, TP_CHUNK):
+        seg = x[start : start + TP_CHUNK + 2 * TP_EDGE]  # chunks overlap by 2 * TP_EDGE so every interior sample counts
+        up = resample_poly(seg, TP_OVERSAMPLE, 1)[edge:-edge]
+        best = max(best, float(np.max(np.abs(up))))
     return peak, best
 
 
@@ -204,7 +160,7 @@ def _db(value: float) -> float | None:
     return round(20 * math.log10(value), 2) if value > 0 else None
 
 
-def analyze(channels: list[array[Any]], rate: int) -> dict[str, Any]:
+def analyze(channels: list[NDArray[np.float64]], rate: int) -> dict[str, Any]:
     if not channels or not len(channels[0]):
         raise ValueError("no samples to measure")
     seconds = len(channels[0]) / rate
@@ -215,7 +171,7 @@ def analyze(channels: list[array[Any]], rate: int) -> dict[str, Any]:
     weights, layout = channel_weights(len(channels))
     per_channel = [sub_block_energies(ch, rate) if w else [] for ch, w in zip(channels, weights, strict=False)]
     count = min((len(e) for e, w in zip(per_channel, weights, strict=False) if w), default=0)
-    weighted = [sum(w * e[i] for e, w in zip(per_channel, weights, strict=False) if w) for i in range(count)]
+    weighted = [float(sum(w * e[i] for e, w in zip(per_channel, weights, strict=False) if w)) for i in range(count)]
     momentary = _windows(weighted, MOMENTARY_SUB)
     short = _windows(weighted, SHORT_TERM_SUB)
     value, gating = integrated(momentary)
@@ -238,8 +194,8 @@ def analyze(channels: list[array[Any]], rate: int) -> dict[str, Any]:
             "BS.1770-4 K-weighting and gating; 48 kHz coefficients are the standard's, other rates are bilinear-transform derived.",
             "Mono counts as one front channel (about 3 LU below the same signal played on two speakers). Channel order is assumed to be WAV order; 6 channels use 5.1 weights, other counts weight every channel 1.",
             "integratedLufs is null when no 400 ms block passes the -70 LUFS gate; shortTermMaxLufs and loudnessRangeLu need at least 3 s.",
-            "truePeakDbtp is a 4x windowed-sinc estimate over intervals near the sample peak, not a certified BS.1770 true-peak meter; expect about +-0.1 dB.",
-            f"Pure Python: about 2 s of CPU per minute of stereo 48 kHz audio (measured on one desktop CPU); at most {MAX_SECONDS} s per call.",
+            "truePeakDbtp is the peak after 4x polyphase-FIR oversampling (scipy resample_poly), not a certified BS.1770 true-peak meter: tones read within about +0.02 dB; wideband content near Nyquist can read up to about 1 dB low, as with any 4x meter.",
+            f"At most {MAX_SECONDS} s per call.",
             "The whole file counts (use skipSeconds to drop a warm-up); this is a file measurement, not Bitwig's own meter.",
         ],
     }

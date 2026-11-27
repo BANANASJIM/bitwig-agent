@@ -19,9 +19,9 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
-from bitwig_agent.audio import analysis
 from bitwig_agent.errors import BridgeError, HostChanged, bridge_error, changed_before, unknown_result
 from bitwig_agent.protocol.base import SUCCEEDED, Outcome, Verification
 
@@ -77,6 +77,22 @@ def spawn(args: list[str]) -> subprocess.Popen[bytes]:
 
 
 sleep = asyncio.sleep
+
+
+AUDIO_EXTRA = "pip install 'bitwig-agent[audio]'"
+
+
+def load_analysis() -> ModuleType:
+    """The analysis module; its numpy/scipy/soundfile imports are the optional [audio] extra."""
+    try:
+        from bitwig_agent.audio import analysis  # noqa: PLC0415 - optional dependencies load on first use
+    except ImportError as exc:
+        raise bridge_error(
+            "unsupported_platform",
+            f"Audio analysis needs the optional audio dependencies (numpy, scipy, soundfile); {exc.name or exc} is missing. "
+            f"Install them with {AUDIO_EXTRA} (Arch: python-numpy python-scipy python-soundfile).",
+        ) from exc
+    return analysis
 
 
 def check_platform() -> None:
@@ -433,6 +449,7 @@ async def stop_recorder(proc: Any) -> None:
 
 async def capture(bridge: Any, args: dict[str, Any], timeout_ms: int) -> dict[str, Any]:
     check_platform()
+    load_analysis()  # a capture reports its levels: refuse before recording when analysis cannot run
     check_capture_target(args["outPath"], args.get("overwrite", False), args.get("allowAudible", False))
     await require_engine(bridge, timeout_ms)
     solo = args.get("soloTrack")
@@ -524,6 +541,7 @@ async def _record(
         if previous_solo:
             solo_block.update(await restore_solo(bridge, previous_solo, changed, timeout_ms))
             writes.restore_failed = solo_block.get("restoreFailed", [])
+    analysis = load_analysis()
     stats = await asyncio.to_thread(analysis.analyze, {"path": path, "mode": "level", "windowSeconds": 60})
     if solo_block.get("restoreFailed") and not unsettled:
         unsettled = unknown_result(
@@ -557,6 +575,7 @@ async def _record(
 
 
 async def analyze(args: dict[str, Any]) -> dict[str, Any]:
+    analysis = load_analysis()
     try:
         return await asyncio.to_thread(analysis.analyze, args)
     except analysis.WavError as exc:

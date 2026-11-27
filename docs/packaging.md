@@ -36,7 +36,7 @@ The reviewed recipe lives in [`packaging/aur`](https://github.com/BANANASJIM/bit
 The package is named `bitwig-agent`, not `bitwig-agent-bin`: its Python component is built from the versioned Python source distribution. The same-version prebuilt Java extension uses the Arch Java packaging exception for Java artifacts. This avoids requiring a user's proprietary Bitwig host JAR merely to package the public Python tools.
 
 - Build Python with the standard `python-build --no-isolation` / `python-installer --destdir` path and declared build dependencies.
-- Use Arch's system `python-mcp` and `python-pydantic` at runtime. No runtime pipx, embedded private virtualenv or pip-driven package-manager hook is needed.
+- Use Arch's system `python-mcp` and `python-pydantic` at runtime; `python-numpy`, `python-scipy` and `python-soundfile` (the wheel's `audio` extra, for `audio.analyze`) are `optdepends`. No runtime pipx, embedded private virtualenv or pip-driven package-manager hook is needed.
 - Put the prebuilt extension at `/usr/share/bitwig-agent/BitwigAgent.bwextension`, with license/notices in the package's standard shared locations.
 - Install public guides under `/usr/share/doc/bitwig-agent/`, retaining their `docs/` subdirectory, and the copyable skill under `/usr/share/bitwig-agent/skills/bitwig-agent/`. A skill consumer copies the whole skill directory rather than only `SKILL.md`.
 - Do not run network package resolution from `package()` or a post-install hook. Source retrieval and hash verification belong to `makepkg`'s source phase.
