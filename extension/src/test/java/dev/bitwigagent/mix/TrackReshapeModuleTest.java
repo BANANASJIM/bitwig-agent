@@ -21,8 +21,9 @@ public final class TrackReshapeModuleTest {
     static final class FakeCommands implements TrackReshapeModule.Access {
         final List<String> calls = new ArrayList<>();
         Runnable effect = () -> {};
-        boolean restored = true, enabled = true;
-        int allowed;
+        boolean restored = true;
+        /** The simulated track's content: whether it holds audio clips and note clips. */
+        boolean audioClips, noteClips;
 
         @Override
         public void execute(Runnable work) {
@@ -31,13 +32,19 @@ public final class TrackReshapeModuleTest {
 
         @Override
         public JsonObject convert(
-                Object proxy, String trackId, int command, int allowed, Runnable check, Runnable beforeWrite) {
-            this.allowed = allowed;
-            if (!enabled) {
+                Object proxy,
+                String trackId,
+                int command,
+                java.util.function.BiPredicate<Boolean, Boolean> allowed,
+                Runnable check,
+                Runnable beforeWrite) {
+            if (!allowed.test(audioClips, noteClips)) {
                 check.run();
                 JsonObject info = new JsonObject();
-                info.addProperty("selectionRestored", restored);
+                info.addProperty("selectionRestored", true);
                 info.addProperty("enabled", false);
+                info.addProperty("hasAudioClips", audioClips);
+                info.addProperty("hasNoteClips", noteClips);
                 return info;
             }
             JsonObject info = run("convert:" + trackId + ":" + command, check, beforeWrite);
@@ -115,9 +122,8 @@ public final class TrackReshapeModuleTest {
                 "convert",
                 result.getAsJsonObject("native").get("nativeOperation").getAsString());
         assertFalse(f.services.selection.held(), "the selection lease ends with the call");
-        assertEquals(6922, commands.allowed, "enablement is read from can_convert_to_hybrid");
-        assertArrayEquals(new int[] {6918, 6921}, TrackReshapeModule.CONVERT_COMMANDS.get("audio"));
-        assertArrayEquals(new int[] {6917, 6920}, TrackReshapeModule.CONVERT_COMMANDS.get("instrument"));
+        assertEquals(6918, TrackReshapeModule.CONVERT_COMMANDS.get("audio"));
+        assertEquals(6917, TrackReshapeModule.CONVERT_COMMANDS.get("instrument"));
 
         JsonObject same =
                 finish(f, f.submit(module(f, commands), "tracks.convert", convert(HostFixture.B, "Track 1", "hybrid")));
@@ -147,21 +153,63 @@ public final class TrackReshapeModuleTest {
         assertEquals("Audio", unknown.getAsJsonObject("type").get("after").getAsString());
     }
 
-    @Test
-    void aConversionBitwigDisablesIsNotAppliedAndSendsNothing() {
+    /** Converts hybrid track B to {@code to} with the given content; the effect sets the new type. */
+    private static JsonObject convertHybrid(String to, boolean audio, boolean notes, FakeCommands commands) {
         HostFixture f = new HostFixture();
         f.tracks[1].child("trackType").emit("Hybrid");
-        FakeCommands commands = new FakeCommands();
-        commands.enabled = false;
-        HostOperation op = f.submit(module(f, commands), "tracks.convert", convert(HostFixture.B, "Track 1", "audio"));
+        commands.audioClips = audio;
+        commands.noteClips = notes;
+        String type = to.substring(0, 1).toUpperCase() + to.substring(1);
+        commands.effect = () -> f.tracks[1].child("trackType").emit(type);
+        HostOperation op = f.submit(module(f, commands), "tracks.convert", convert(HostFixture.B, "Track 1", to));
         JsonObject result = finish(f, op);
-        assertEquals("not_applied", result.get("outcome").getAsString(), result.toString());
-        assertEquals("host_refused", result.get("reason").getAsString());
-        assertTrue(result.get("next").getAsString().contains("Remove the clips"));
-        assertTrue(result.get("selectionRestored").getAsBoolean());
-        assertFalse(op.dispatched(), "nothing was dispatched");
-        assertTrue(commands.calls.isEmpty());
-        assertEquals(6921, commands.allowed);
+        if (!result.get("outcome").getAsString().equals("applied"))
+            assertFalse(op.dispatched(), "a refused conversion dispatches nothing");
+        return result;
+    }
+
+    @Test
+    void aConversionThatWouldDropClipsIsNotAppliedAndSendsNothing() {
+        // {to, audio clips, note clips, applied?}: Bitwig's rule, the same both directions.
+        Object[][] cases = {
+            {"audio", true, true, false},
+            {"instrument", true, true, false},
+            {"audio", true, false, true},
+            {"instrument", true, false, false},
+            {"audio", false, true, false},
+            {"instrument", false, true, true},
+            {"audio", false, false, true},
+            {"instrument", false, false, true},
+        };
+        for (Object[] c : cases) {
+            FakeCommands commands = new FakeCommands();
+            JsonObject result = convertHybrid((String) c[0], (Boolean) c[1], (Boolean) c[2], commands);
+            String label = java.util.Arrays.toString(c) + " " + result;
+            if ((Boolean) c[3]) {
+                assertEquals("applied", result.get("outcome").getAsString(), label);
+                assertEquals(1, commands.calls.size(), label);
+                continue;
+            }
+            assertEquals("not_applied", result.get("outcome").getAsString(), label);
+            assertEquals("host_refused", result.get("reason").getAsString(), label);
+            String blocking = c[0].equals("audio") ? "note" : "audio";
+            assertTrue(result.get("next").getAsString().contains("Remove the track's " + blocking + " clips"), label);
+            assertEquals(c[1], result.get("hasAudioClips").getAsBoolean(), label);
+            assertEquals(c[2], result.get("hasNoteClips").getAsBoolean(), label);
+            assertTrue(result.get("selectionRestored").getAsBoolean(), label);
+            assertTrue(commands.calls.isEmpty(), label);
+        }
+        FakeCommands mixed = new FakeCommands();
+        assertEquals("applied", convertHybridFrom("Audio", mixed).get("outcome").getAsString(), "hybrid holds both");
+    }
+
+    private static JsonObject convertHybridFrom(String type, FakeCommands commands) {
+        HostFixture f = new HostFixture();
+        f.tracks[1].child("trackType").emit(type);
+        commands.audioClips = true;
+        commands.noteClips = true;
+        commands.effect = () -> f.tracks[1].child("trackType").emit("Hybrid");
+        return finish(f, f.submit(module(f, commands), "tracks.convert", convert(HostFixture.B, "Track 1", "hybrid")));
     }
 
     @Test

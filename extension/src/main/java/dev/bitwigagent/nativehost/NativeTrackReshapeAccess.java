@@ -1,9 +1,12 @@
 package dev.bitwigagent.nativehost;
 
 import com.google.gson.JsonObject;
+import dev.bitwigagent.core.Errors;
+import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.mix.TrackReshapeModule;
 import java.lang.reflect.Method;
 import java.util.*;
+import java.util.function.BiPredicate;
 
 /**
  * Exact bindings for the two track commands Bitwig only offers on the track selection: Convert to
@@ -14,9 +17,10 @@ import java.util.*;
  * selection.descriptor.invoke(selection, id, [])}; ids 6917 instrument, 6918 audio, 6919 hybrid are the same on every
  * supported host). The command acts on the selected tracks, so the target is selected natively with {@code
  * selection.editable.set}, the command is dispatched, and the previous selection is set back. Bitwig disables a
- * conversion that would drop content (its menu item is greyed out); the same descriptor answers that as a boolean
- * property ({@code selection.descriptor.enabled(selection, id)}, ids 6920/6921/6922 can_convert_to_*), read with the
- * target selected: when false nothing is dispatched and the selection is set back at once.
+ * conversion that would drop content. Its menu state is a cached selection property that lags behind selection and
+ * clip changes, so the content is read from the track itself instead: {@code track.player.hasAudioClips()} and
+ * {@code hasNoteClips()} are the live predicates Bitwig's own rule uses (any audio or note clip among the track's
+ * clips). When the caller's rule refuses, nothing is selected or dispatched.
  *
  * <p>Ungroup: {@code track.groupNode.ungroup()} on the group itself (no selection needed), which moves the children up
  * and then selects the last moved child; the previous selection is set back afterwards.
@@ -30,7 +34,9 @@ public final class NativeTrackReshapeAccess implements TrackReshapeModule.Access
     private final NativeHost.Access a;
     private final NativeTrackResolver resolver;
     private final Class<?> projectType;
-    private final Method selections, tracks, items, set, descriptor, dispatch, enabled, ungroup, begin, end;
+    private final Method selections, tracks, items, set, descriptor, dispatch, audioClips, noteClips, ungroup;
+    private final Method begin, end;
+    private final Class<?> playerType;
 
     public NativeTrackReshapeAccess(NativeHost.Access a) throws ReflectiveOperationException {
         this.a = a;
@@ -48,8 +54,9 @@ public final class NativeTrackReshapeAccess implements TrackReshapeModule.Access
                 a.type("selection.channels"),
                 int.class,
                 List.class);
-        enabled = a.exactMethod(
-                "selection.descriptor.enabled", boolean.class, false, a.type("selection.channels"), int.class);
+        playerType = a.type("track.player");
+        audioClips = a.exactMethod("track.player.hasAudioClips", boolean.class, false);
+        noteClips = a.exactMethod("track.player.hasNoteClips", boolean.class, false);
         ungroup = a.exactMethod("track.groupNode.ungroup", void.class, false);
         begin = a.exactMethod("project.begin", void.class, false, String.class, boolean.class);
         end = a.exactMethod("project.end", void.class, false, boolean.class);
@@ -62,7 +69,12 @@ public final class NativeTrackReshapeAccess implements TrackReshapeModule.Access
 
     @Override
     public JsonObject convert(
-            Object proxy, String trackId, int command, int allowed, Runnable check, Runnable beforeWrite) {
+            Object proxy,
+            String trackId,
+            int command,
+            BiPredicate<Boolean, Boolean> allowed,
+            Runnable check,
+            Runnable beforeWrite) {
         a.documentThread();
         check.run();
         Object track = resolver.resolve(proxy, trackId, NativeTrackResolver.Kind.CHANNEL);
@@ -70,17 +82,24 @@ public final class NativeTrackReshapeAccess implements TrackReshapeModule.Access
         Object selection = trackSelection(project);
         List<Object> previous = selected(selection);
         Object commands = a.invoke(descriptor, selection);
+        if (!playerType.isInstance(track))
+            throw Errors.notApplied(
+                    Reason.UNSUPPORTED_SCOPE, "Track " + trackId + " is not an audio/instrument/hybrid track.");
+        boolean audio = Boolean.TRUE.equals(a.invoke(audioClips, track));
+        boolean notes = Boolean.TRUE.equals(a.invoke(noteClips, track));
         check.run();
-        a.invoke(set, selection, List.of(track));
-        if (!Boolean.TRUE.equals(a.invoke(enabled, commands, selection, allowed))) {
-            JsonObject refused = info("track_selection.convert_track", restore(selection, previous), previous.size());
+        if (!allowed.test(audio, notes)) {
+            JsonObject refused = info("track_selection.convert_track", true, previous.size());
             refused.addProperty("enabled", false);
+            refused.addProperty("hasAudioClips", audio);
+            refused.addProperty("hasNoteClips", notes);
             return refused;
         }
         beforeWrite.run();
         a.invoke(begin, project, CONVERT_LABEL, false);
         boolean restored;
         try {
+            a.invoke(set, selection, List.of(track));
             a.invoke(dispatch, commands, selection, command, new ArrayList<>());
         } finally {
             a.invoke(end, project, false);
