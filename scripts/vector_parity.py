@@ -38,11 +38,6 @@ REF_MODELS = {model.__name__ for model in Ref.__subclasses__()}
 # for cross-field rules the two sides legitimately express differently.
 SKIPS: dict[tuple[str, str, str], str] = {
     (
-        "transport.set",
-        "clipLauncherAutomationWriteEnabled",
-        "optional",
-    ): "kept in the schema only to refuse it with unsupported_scope (no effect in Bitwig 6); both sides refuse it",
-    (
         "devices.insert",
         "insert.id",
         "accept",
