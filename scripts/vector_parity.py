@@ -158,10 +158,12 @@ def steps_fix(field):
 
 
 def automation_fix(field):
-    """Keep range ordered and points increasing and inside it while one of them sweeps."""
+    """Keep range ordered and points increasing and inside it while one of them sweeps; "all" bounds nothing."""
 
     def fix(params, value):
         box = params.get("range")
+        if not isinstance(box, dict):
+            box = None
         if box and isinstance(value, (int, float)) and 0 <= value <= MAX_BEAT:
             if field == "start":
                 box["end"] = max(box["end"], value)
