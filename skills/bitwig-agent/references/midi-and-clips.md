@@ -55,7 +55,7 @@ Write variation as rules on a short loop, not as more notes. Bitwig plays the ru
 
 1. Make or find a 1- or 2-bar clip with the basic pattern (`clips insert` with `notes`).
 2. Add the operators with `notes set` and no `range`, listing only `beat`, `pitch` (and `channel`) plus the fields: `{"beat":0.5,"pitch":42,"chance":0.7}`. Omitted fields keep their values, so nothing else changes.
-3. Turn one off with `null` (`"chance": null`), not by leaving it out.
+3. Turn one off with `null` (`"chance": null`), not by leaving it out. With `range` a listed note is the whole note: operators it does not name are turned off, so `notes get` the range first and edit that list.
 4. `notes get` lists only operators that are on, so the read is the full rule set. A 1-bar clip with one `recurrence` fill reads as 4 bars of variation.
 
 Without the native note binding (`exact:false`) operators still work, but expressions are refused and not read (`unreadFields`).

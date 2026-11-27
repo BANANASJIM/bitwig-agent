@@ -92,7 +92,8 @@ def nullable(description: str) -> Any:
 
 
 class Repeat(StrictModel):
-    """Repeats (ratchets); omitted members keep an enabled repeat's values, turning it on needs count."""
+    """Repeats (ratchets). Omitted members keep an enabled repeat's values without range and are 0 with range;
+    turning repeats on needs count."""
 
     count: Annotated[int, Field(ge=-127, le=127)] = omitted(
         description="Repeats: positive splits the note into that many; negative is Bitwig's rate-based repeat."
@@ -284,6 +285,15 @@ def collision_problems(listed: list[Span], field: str) -> list[tuple[int, str]]:
     return found
 
 
+REPEAT_OFF = "repeat is off on this note: give repeat.count to turn it on"
+
+
+def repeat_without_count(note: Any) -> bool:
+    """A repeat that turns repeats on (a new note, or any listed note under a range) and names no count."""
+    repeat = getattr(note, "repeat", None)
+    return repeat is not None and "count" not in repeat.model_fields_set
+
+
 def note_violations(notes: list[Any], field: str, length: Decimal | None = None, range_: Any = None) -> list[str]:
     """Every rule the listed notes break on their own, in request order, with the extension's texts.
 
@@ -295,6 +305,7 @@ def note_violations(notes: list[Any], field: str, length: Decimal | None = None,
     for span in listed:
         at = f"{field}[{span.position}]"
         problems = (
+            f"{at} {REPEAT_OFF}" if range_ is not None and repeat_without_count(notes[span.position]) else None,
             length_problem(at, span, length) if length is not None else None,
             range_problem(at, span, range_) if isinstance(range_, NoteRange) else None,
         )
@@ -376,11 +387,7 @@ class ClipInsertArgs(StatusArgs):
             refuse_violations("notes", note_violations(self.notes, "notes", length))
             refuse_violations(
                 "notes",
-                [
-                    f"notes[{i}] repeat is off on this note: give repeat.count to turn it on"
-                    for i, note in enumerate(self.notes)
-                    if note.repeat is not None and "count" not in note.repeat.model_fields_set
-                ],
+                [f"notes[{i}] {REPEAT_OFF}" for i, note in enumerate(self.notes) if repeat_without_count(note)],
             )
             if not launcher and any(note.model_fields_set & set(FEATURES) for note in self.notes):
                 raise ReasonError(
@@ -648,8 +655,10 @@ NOTES_SET_DESCRIPTION = (
     "pitch, beat; inserted when absent, given fields updated when present) and nothing is removed. With range "
     '("all" or {start, end, pitches?}): the notes whose onset lies in it become exactly the listed ones (notes:[] '
     "clears it); every listed note must lie in it. The recipe for removing or moving notes: notes.get the range, "
-    "edit the list, notes.set the same range. Omitted fields keep the note's value; null turns an operator off (an "
-    "expression back to neutral). A new note needs velocity and duration; a listed note may not "
+    "edit the list, notes.set the same range. null turns an operator off (an expression back to neutral). An omitted "
+    "operator or expression keeps the note's value without range; with range a listed note is the whole note "
+    "(unnamed operators off, expressions neutral; omitted velocity and duration still kept). A new note needs "
+    "velocity and duration; a listed note may not "
     "overlap a note left in place, and every written note must end within the clip loop. "
     + NOTE_RULES
     + NOTE_PATHS

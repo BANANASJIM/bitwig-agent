@@ -13,11 +13,9 @@ import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.Scheduler;
 import dev.bitwigagent.core.Verification;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 /**
  * Note reads and writes of one launcher clip, in one record shape and one range rule. With the exact native binding a
@@ -35,9 +33,9 @@ public final class NoteModule implements HostModule {
      * so the list also stops here; the rest of the result fits in the remainder.
      */
     static final int NOTES_BYTES = HostLimits.LIMITS.maxMessageBytes - (1 << 16);
-    /** The record fields only the native path reads back. */
-    static final String EXPRESSIONS =
-            Arrays.stream(NoteFeatures.Expression.values()).map(e -> e.wire).collect(Collectors.joining(", "));
+    /** Why the public path does not read or write expressions. */
+    private static final String PUBLIC_UNREAD =
+            "the public API does not read them back (its getters do not return" + " what its setters take)";
     /** Expected or unexpected notes a readback mismatch lists. */
     private static final int MISMATCH_LIMIT = 16;
 
@@ -80,8 +78,7 @@ public final class NoteModule implements HostModule {
             if (write) state.requireResolved(target.id(), target.scene());
             LauncherState.requireContent(target.slot);
             NativeNotes.Access access = natives.access(op);
-            if (access == null && write)
-                for (NotePlan.Listed l : listed) if (l.features.setsExpression()) refuseExpressions();
+            if (write) refuseUnread(listed, unread(access), access != null);
             if (access == null) state.acquire(op);
             if (write) {
                 NotePlan plan = new NotePlan(listed, range, access != null);
@@ -99,13 +96,24 @@ public final class NoteModule implements HostModule {
         });
     }
 
-    /** Without the native binding expressions are refused before anything is selected or written. */
-    static void refuseExpressions() {
+    /** The record keys this path cannot read back: the expressions without the native binding. */
+    static List<String> unread(NativeNotes.Access access) {
+        return access != null ? access.unread() : NoteFeatures.EXPRESSION_KEYS;
+    }
+
+    /** A listed note that names a key this path cannot read back is refused before anything is selected or written. */
+    static void refuseUnread(List<NotePlan.Listed> listed, List<String> unread, boolean nativePath) {
+        List<String> named = new ArrayList<>();
+        for (NotePlan.Listed l : listed)
+            for (String key : l.features.names(unread)) if (!named.contains(key)) named.add(key);
+        if (named.isEmpty()) return;
+        String fields = String.join(", ", named);
         throw Errors.notApplied(
                 Reason.NATIVE_UNAVAILABLE,
-                "Without the native note binding the note expressions (" + EXPRESSIONS + ") are not written: the"
-                        + " public API does not read them back (its getters do not return what its setters take)."
-                        + " Nothing was written.");
+                (nativePath
+                                ? "This Bitwig's native note binding cannot read or write " + fields
+                                : "Without the native note binding " + fields + " are not written: " + PUBLIC_UNREAD)
+                        + ". Nothing was written.");
     }
 
     // ---- native ----
@@ -116,18 +124,20 @@ public final class NoteModule implements HostModule {
         access.execute(() -> {
             try {
                 NativeNotes.Observed clip = access.read(target.slot.api, id, expected, check);
-                scheduler.schedule(op, () -> op.result.complete(nativeRead(target, range, clip)), 0);
+                scheduler.schedule(op, () -> op.result.complete(nativeRead(target, range, clip, access.unread())), 0);
             } catch (RuntimeException | Error failure) {
                 op.fail(failure);
             }
         });
     }
 
-    private JsonObject nativeRead(LauncherState.Target target, NoteRange range, NativeNotes.Observed clip) {
+    private JsonObject nativeRead(
+            LauncherState.Target target, NoteRange range, NativeNotes.Observed clip, List<String> unread) {
         JsonObject out = new JsonObject();
         out.add("ref", state.clipRef(target));
         out.add("loop", loop(clip.loopStart, clip.loopLength));
         listing(out, range, clip.notes);
+        unreadFields(out, unread);
         out.addProperty("exact", true);
         return out;
     }
@@ -217,7 +227,7 @@ public final class NoteModule implements HostModule {
                 "loop",
                 loop(state.clip.getLoopStart().get(), state.clip.getLoopLength().get()));
         listing(out, range, read.notes);
-        out.addProperty("unreadFields", EXPRESSIONS);
+        unreadFields(out, NoteFeatures.EXPRESSION_KEYS);
         if (read.incomplete != null) {
             out.addProperty("complete", false);
             out.addProperty("incompleteReason", read.incomplete);
@@ -331,6 +341,11 @@ public final class NoteModule implements HostModule {
         out.addProperty("count", count);
         out.addProperty("complete", count == list.size());
         out.add("notes", list);
+    }
+
+    /** Record keys this read could not see; absent when it saw every field. */
+    private static void unreadFields(JsonObject out, List<String> unread) {
+        if (!unread.isEmpty()) out.addProperty("unreadFields", String.join(", ", unread));
     }
 
     private static JsonObject loop(double start, double length) {

@@ -53,24 +53,32 @@ public final class NotePlan {
             return Note.ofTicks(channel, pitch, beat, 1, 1).key();
         }
 
-        /** The note this entry writes over {@code existing} (null: a new note); {@link #problem} is null first. */
-        Note resolve(Note existing) {
+        /**
+         * The note this entry writes over {@code existing} (null: a new note); {@link #problem} is null first. Listed
+         * under a range ({@code whole}) the entry is the whole note: features it does not name are default; without one
+         * it patches the existing note's features. Velocity and duration have no default and stay when omitted.
+         */
+        Note resolve(Note existing, boolean whole) {
             if (existing == null)
                 return Note.ofTicks(channel, pitch, beat, duration, velocity).with(features.apply(NoteFeatures.NONE));
             return existing.with(
                     velocity == null ? existing.velocity : velocity,
                     duration == null ? existing.duration : duration,
-                    features.apply(existing.features));
+                    features.apply(base(existing, whole)));
         }
 
         /** Why this entry cannot be written over {@code existing} (null: a new note); null when it can. */
-        String problem(Note existing) {
+        String problem(Note existing, boolean whole) {
             String at = "notes[" + index + "] ";
             if (existing == null && (velocity == null || duration == null))
                 return at + "is a new note (none at beat " + plain(shown) + ", pitch " + pitch
                         + (channel == 0 ? "" : ", channel " + channel) + "): give velocity and duration";
-            String features = this.features.problem(existing == null ? NoteFeatures.NONE : existing.features);
+            String features = this.features.problem(base(existing, whole));
             return features == null ? null : at + features;
+        }
+
+        private static NoteFeatures base(Note existing, boolean whole) {
+            return existing == null || whole ? NoteFeatures.NONE : existing.features;
         }
     }
 
@@ -122,6 +130,8 @@ public final class NotePlan {
             String at = "notes[" + n.index + "]";
             String shape = n.features.shape();
             if (shape != null) add(out, n.index, at + " " + shape);
+            String whole = range != null ? n.features.problem(NoteFeatures.NONE) : null;
+            if (whole != null) add(out, n.index, at + " " + whole);
             if (limit != null && n.end() != null && n.end() > limit)
                 add(
                         out,
@@ -197,12 +207,12 @@ public final class NotePlan {
         Map<Note, Integer> index = new IdentityHashMap<>();
         for (Listed l : listed) {
             Note existing = byKey.get(l.key());
-            String problem = l.problem(existing);
+            String problem = l.problem(existing, range != null);
             if (problem != null) {
                 add(out, l.index, problem);
                 continue;
             }
-            Note note = l.resolve(existing);
+            Note note = l.resolve(existing, range != null);
             notes.add(note);
             index.put(note, l.index);
         }
@@ -275,9 +285,9 @@ public final class NotePlan {
         List<Object[]> out = new ArrayList<>();
         List<Note> notes = new ArrayList<>(listed.size());
         for (Listed l : listed) {
-            String problem = l.problem(null);
+            String problem = l.problem(null, true);
             if (problem != null) add(out, l.index, problem);
-            else notes.add(l.resolve(null));
+            else notes.add(l.resolve(null, true));
         }
         refuse(out);
         return notes;

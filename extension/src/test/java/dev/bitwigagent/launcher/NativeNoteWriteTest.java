@@ -308,6 +308,89 @@ public final class NativeNoteWriteTest {
     }
 
     @Test
+    void aFeatureGroupThatDoesNotBindIsUnreadAndRefusedWhilePlainNotesStayNative() {
+        LauncherFake f = riff();
+        f.nativeNotes.unread = NoteFeatures.EXPRESSION_KEYS;
+        JsonObject read = f.call("notes.get", target(f, 0));
+        assertTrue(read.get("exact").getAsBoolean());
+        assertEquals(
+                "timbre, pressure, pan, gain, transpose, formant",
+                read.get("unreadFields").getAsString());
+        HostOperation op = f.startAndDrain("notes.set", set(f, 0, null, obj("{\"beat\":1,\"pitch\":64,\"pan\":null}")));
+        String message = assertRpcError("native_unavailable", op).getMessage();
+        assertTrue(message.contains("cannot read or write pan"), message);
+        assertEquals(0, f.nativeNotes.transactions);
+        JsonObject chance = f.call("notes.set", set(f, 0, null, obj("{\"beat\":1,\"pitch\":64,\"chance\":0.5}")));
+        assertEquals("one_step", chance.get("undo").getAsString(), "operators bind on their own");
+        JsonObject plain = f.call("notes.set", set(f, 0, null, note(3, 50, 90, .5)));
+        assertEquals("native_readback", plain.get("verification").getAsString());
+        HostOperation insert = f.startAndDrain(
+                "clips.insert",
+                params(
+                        "to",
+                        f.slot(1),
+                        "loop",
+                        obj("{\"length\":4}"),
+                        "name",
+                        "Lead",
+                        "notes",
+                        array(obj("{\"beat\":0,\"pitch\":60,\"velocity\":90,\"duration\":1,\"gain\":1}"))));
+        assertRpcError("native_unavailable", insert);
+        assertEquals(0, f.nativeNotes.creates);
+    }
+
+    /** A riff whose note at beat 1 has chance 0.7, pan 0.3 and a repeat with curve 0.5. */
+    private static LauncherFake withFeatures() {
+        LauncherFake f = riff();
+        f.call(
+                "notes.set",
+                set(
+                        f,
+                        0,
+                        null,
+                        obj("{\"beat\":1,\"pitch\":64,\"chance\":0.7,\"pan\":0.3,"
+                                + "\"repeat\":{\"count\":2,\"curve\":0.5}}")));
+        return f;
+    }
+
+    @Test
+    void underARangeAListedNoteIsTheWholeNoteAndWithoutOneAPatch() {
+        LauncherFake f = withFeatures();
+        JsonObject plain = obj("{\"beat\":1,\"pitch\":64,\"velocity\":90,\"duration\":1}");
+        JsonObject patch = f.call("notes.set", set(f, 0, null, plain));
+        assertEquals("already_matched", patch.get("outcome").getAsString(), "without range omitted features stay");
+        JsonObject whole = f.call("notes.set", set(f, 0, range(1, 2), plain));
+        assertEquals("applied", whole.get("outcome").getAsString(), whole.toString());
+        assertEquals(obj("{\"inserted\":0,\"updated\":1,\"removed\":0,\"unchanged\":0}"), whole.get("summary"));
+        assertEquals(NoteFeatures.NONE, f.at(0, 0, 1, 64).features, "with range unnamed features are default");
+        assertEquals(
+                "already_matched",
+                f.call("notes.set", set(f, 0, range(1, 2), plain))
+                        .get("outcome")
+                        .getAsString());
+    }
+
+    @Test
+    void underARangeNullIsTheSameAsOmittedAndRepeatMembersStartAtZero() {
+        LauncherFake f = withFeatures();
+        f.call("notes.set", set(f, 0, range(1, 2), obj("{\"beat\":1,\"pitch\":64,\"chance\":null,\"pan\":0.3}")));
+        NoteFeatures nulled = f.at(0, 0, 1, 64).features;
+        LauncherFake g = withFeatures();
+        g.call("notes.set", set(g, 0, range(1, 2), obj("{\"beat\":1,\"pitch\":64,\"pan\":0.3}")));
+        assertEquals(nulled, g.at(0, 0, 1, 64).features);
+        assertNull(nulled.chance);
+        assertNull(nulled.repeat);
+        LauncherFake h = withFeatures();
+        h.call("notes.set", set(h, 0, range(1, 2), obj("{\"beat\":1,\"pitch\":64,\"repeat\":{\"count\":3}}")));
+        assertEquals(new NoteFeatures.Repeat(3, 0, 0, 0), h.at(0, 0, 1, 64).features.repeat, "not the old curve 0.5");
+        HostOperation op = h.startAndDrain(
+                "notes.set", set(h, 0, range(1, 2), obj("{\"beat\":1,\"pitch\":64,\"repeat\":{\"curve\":0.5}}")));
+        String message = assertRpcError("invalid_params", op).getMessage();
+        assertTrue(message.contains("notes[0] repeat is off on this note: give repeat.count to turn it on"), message);
+        assertFalse(op.dispatched());
+    }
+
+    @Test
     void theMismatchListsAreCappedAndAgreeingContentHasNone() {
         List<Note> one = List.of(Note.canonical(0, 60, 0, 1, 100));
         assertNull(NoteModule.mismatch(one, List.of(Note.canonical(0, 60, 0, 1, 100))));

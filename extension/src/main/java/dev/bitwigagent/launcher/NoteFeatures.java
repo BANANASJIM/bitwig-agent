@@ -10,6 +10,8 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * The operators and expressions of one note, canonical: floats are kept as float32 (the comparison the design uses for
@@ -21,21 +23,15 @@ public final class NoteFeatures {
     /** Bitwig's release velocity of a new note: 100/127 ({@code note.create} with no release velocity). */
     public static final int DEFAULT_RELEASE_VELOCITY = 100;
 
+    /** The operator keys of the record, in the order notes.get lists them. */
+    public static final List<String> OPERATOR_KEYS =
+            List.of("chance", "velocitySpread", "releaseVelocity", "repeat", "recurrence", "occurrence", "muted");
+    /** The expression keys, in the order notes.get lists them after the operators. */
+    public static final List<String> EXPRESSION_KEYS =
+            Arrays.stream(Expression.values()).map(e -> e.wire).collect(Collectors.toUnmodifiableList());
     /** The record's feature keys, in the order notes.get lists them. */
-    static final List<String> KEYS = List.of(
-            "chance",
-            "velocitySpread",
-            "releaseVelocity",
-            "repeat",
-            "recurrence",
-            "occurrence",
-            "muted",
-            "timbre",
-            "pressure",
-            "pan",
-            "gain",
-            "transpose",
-            "formant");
+    static final List<String> KEYS =
+            Stream.concat(OPERATOR_KEYS.stream(), EXPRESSION_KEYS.stream()).collect(Collectors.toUnmodifiableList());
 
     /** Whether a note record names any operator or expression, a value or null. */
     public static boolean named(JsonObject note) {
@@ -229,6 +225,17 @@ public final class NoteFeatures {
         return expression[e.ordinal()];
     }
 
+    /** Whether an operator is on or a release velocity or spread is not at its default. */
+    public boolean hasOperators() {
+        return chance != null
+                || velocitySpread != 0
+                || releaseVelocity != DEFAULT_RELEASE_VELOCITY
+                || repeat != null
+                || recurrence != null
+                || occurrence != null
+                || muted;
+    }
+
     public boolean hasExpression() {
         for (Expression e : Expression.values()) if (expression(e) != e.neutral) return true;
         return false;
@@ -270,8 +277,9 @@ public final class NoteFeatures {
     }
 
     /**
-     * The feature fields of one listed note: an omitted field keeps the note's value, null turns an operator off (an
-     * expression back to neutral), a value sets it. A repeat object's omitted members keep an enabled repeat's values.
+     * The feature fields of one listed note, applied to a base (the existing note's features for a patch, {@link
+     * NoteFeatures#NONE} for a whole record): an omitted field keeps the base's value, null turns an operator off (an
+     * expression back to neutral), a value sets it. A repeat object's omitted members keep the base repeat's values.
      */
     static final class Patch {
         static final Patch NONE = new Patch(new JsonObject());
@@ -300,10 +308,11 @@ public final class NoteFeatures {
                     : "recurrence.mask has " + entries + " entries for length " + length + ": give one per pass";
         }
 
-        /** Whether it sets an expression, which only the native path reads back. */
-        boolean setsExpression() {
-            for (Expression e : Expression.values()) if (fields.has(e.wire)) return true;
-            return false;
+        /** The keys of {@code keys} it names, a value or null. */
+        List<String> names(List<String> keys) {
+            List<String> out = new java.util.ArrayList<>();
+            for (String key : keys) if (fields.has(key)) out.add(key);
+            return out;
         }
 
         /** Why the patch cannot apply to {@code base}; null when it can. */

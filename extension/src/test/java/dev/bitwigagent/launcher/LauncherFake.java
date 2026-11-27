@@ -635,10 +635,17 @@ public final class LauncherFake {
         boolean drop, failAfterDispatch, occupied;
         /** The clip name the native model reports, when it differs from the slot's public name. */
         String rename;
+        /** Record keys whose bindings do not bind on this host. */
+        List<String> unread = List.of();
 
         @Override
         public void execute(Runnable work) {
             work.run();
+        }
+
+        @Override
+        public List<String> unread() {
+            return unread;
         }
 
         private int target(Object slot, String trackId, String expectedName, Runnable check) {

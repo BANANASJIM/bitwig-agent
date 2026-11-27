@@ -272,6 +272,37 @@ final class RangeEditPropertyTest {
         assertTrue(error.getMessage().contains("is a new note"), error.getMessage());
     }
 
+    /** Whatever the clip holds now, writing back an earlier read with range "all" restores that read exactly. */
+    @Property
+    void writingBackAReadWithTheWholeRangeRestoresIt(
+            @ForAll("clip") List<Note> earlier, @ForAll("clip") List<Note> now) {
+        List<Note> read = withoutOverlaps(earlier), current = withoutOverlaps(now);
+        JsonArray listed = new JsonArray();
+        for (Note n : read) listed.add(n.json());
+        RangeEdit.Change<Note> change =
+                new NotePlan(NotePlan.listed(listed), NoteRange.ALL, true).plan(current, Long.MAX_VALUE);
+        assertEquals(set(read), set(RangeEdit.apply(current, change)));
+    }
+
+    /** The same restore through notes.get and notes.set on the fake native port. */
+    @Property(tries = 40)
+    void aReadWrittenBackRestoresTheClipOnTheFakePort(
+            @ForAll("clip") List<Note> earlier, @ForAll("clip") List<Note> now) {
+        LauncherFake f = LauncherFake.withNativeNotes();
+        NoteModuleTest.clipAt(f, 0);
+        f.slots[0].length = 16;
+        for (Note n : withoutOverlaps(earlier)) f.put(0, n);
+        JsonObject read = f.call("notes.get", NoteModuleTest.target(f, 0));
+        List<Note> expected = f.clipNotes(0);
+        f.rows.clear();
+        for (Note n : withoutOverlaps(now)) f.put(0, n);
+        JsonObject p = NoteModuleTest.target(f, 0);
+        p.addProperty("range", "all");
+        p.add("notes", read.getAsJsonArray("notes"));
+        f.call("notes.set", p);
+        assertEquals(set(expected), set(f.clipNotes(0)));
+    }
+
     /** A listed note with only an operator changes that operator and keeps the rest of the note. */
     @Property
     void anOperatorAloneUpdatesOnlyThatOperator(

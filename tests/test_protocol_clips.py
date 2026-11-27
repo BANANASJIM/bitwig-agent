@@ -373,6 +373,15 @@ def test_operators_and_expressions_ride_on_the_note_record_and_null_reaches_the_
     assert validate_call("clips.insert", insert)[0]["notes"] == [note(**OPERATORS)]
 
 
+def test_under_a_range_a_repeat_needs_its_count_and_without_one_it_may_patch():
+    partial = {"beat": 0, "pitch": 60, "repeat": {"curve": 0.5}}
+    text = message("notes.set", {"target": CLIP_REF, "range": "all", "notes": [partial]})
+    assert "notes[0] repeat is off on this note: give repeat.count to turn it on" in text
+    assert validate_call("notes.set", {"target": CLIP_REF, "notes": [partial]})[0]["notes"] == [partial]
+    counted = {**partial, "repeat": {"count": 3}}
+    assert validate_call("notes.set", {"target": CLIP_REF, "range": "all", "notes": [counted]})[0]["notes"] == [counted]
+
+
 @pytest.mark.parametrize(
     "feature",
     [

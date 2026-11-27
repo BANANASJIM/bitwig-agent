@@ -25,8 +25,9 @@ import java.util.function.Function;
  * key, null)}, which leaves the editor selection alone. Times and durations are canonical (2^-20 beat), the step the
  * public setter rounds to. A written note's operators and expressions are set on it after the add, in the same
  * transaction ({@link NativeNoteFeatures}); an updated note is written as a new note, so a multi-point expression
- * curve it had keeps only the value notes.get reads (its start). Clip creation is {@code launcher.emptySlot.createClip()} plus the length the public
- * {@code createEmptyClip} sets, without its slot selection.
+ * curve it had keeps only the value notes.get reads (its start). Clip creation is {@code
+ * launcher.emptySlot.createClip()} plus the length the public {@code createEmptyClip} sets, without its slot
+ * selection.
  */
 public final class NativeNoteWriteAccess implements NativeNotes.Access {
     static final String EDIT_LABEL = "Edit Notes", CREATE_LABEL = "Insert Clip";
@@ -74,6 +75,11 @@ public final class NativeNoteWriteAccess implements NativeNotes.Access {
     @Override
     public void execute(Runnable work) {
         a.execute(work);
+    }
+
+    @Override
+    public List<String> unread() {
+        return features.unread();
     }
 
     @Override

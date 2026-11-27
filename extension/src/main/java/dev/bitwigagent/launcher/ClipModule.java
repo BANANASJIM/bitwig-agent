@@ -249,11 +249,13 @@ public final class ClipModule implements HostModule {
                 throw Errors.notApplied(Reason.TARGET_EXISTS, "Insert only accepts an observed empty slot");
             state.guard(op, target);
             NativeNotes.Access access = notes.natives.access(op);
+            if (p.has("notes"))
+                NoteModule.refuseUnread(
+                        NotePlan.listed(p.getAsJsonArray("notes")), NoteModule.unread(access), access != null);
             if (access != null) {
                 insertNative(op, target, p, access);
                 return;
             }
-            for (Note n : launcherNotes(p)) if (n.features.hasExpression()) NoteModule.refuseExpressions();
             op.markDispatched();
             state.beginMutation(target, "clips.insert");
             int length = p.getAsJsonObject("loop").get("length").getAsInt();

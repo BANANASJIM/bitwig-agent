@@ -302,25 +302,26 @@ A note is one record, the same in `notes.get`, `notes.set` and `clips.insert`: `
 
 #### Operators and expressions
 
-A note record also carries Bitwig's operators and note expressions. `notes.get` lists only those that are on or not at their default, so a plain note keeps its four fields; `notes.set` and `clips.insert` take the same fields. In `notes.set` an omitted field keeps the note's value, `null` turns an operator off (an expression back to neutral), a value sets it (and turns the operator on). Floats are compared as float32 and listed as their shortest decimal, so a value read back and written again is `already_matched`.
+A note record also carries Bitwig's operators and note expressions. `notes.get` lists only those that are on or not at their default, so a plain note keeps its four fields; `notes.set` and `clips.insert` take the same fields. In `notes.set` a value sets a field (and turns an operator on) and `null` turns an operator off (an expression back to neutral). An omitted field depends on `range`: without `range` it keeps the note's value; with `range` it is the default (operator off, expression neutral, not muted), exactly as `notes.get` omits defaults. Floats are compared as float32 and listed as their shortest decimal, so a value read back and written again is `already_matched`.
 
 | Field | Values | Off / default |
 |---|---|---|
 | `chance` | 0–1, the chance the note plays (rolled per loop pass) | absent: Chance off |
 | `velocitySpread` | 0–1, random velocity range around `velocity` | 0 |
 | `releaseVelocity` | MIDI 0–127 | 100 (Bitwig's value for a new note) |
-| `repeat` | `{count, curve, velocityEnd, velocityCurve}`: `count` −127–127 (positive splits the note into that many repeats, negative is Bitwig's rate-based repeat), the others −1–1 | absent: Repeats off. Omitted members keep an enabled repeat's values; turning repeats on needs `count` (the others then start at 0) |
+| `repeat` | `{count, curve, velocityEnd, velocityCurve}`: `count` −127–127 (positive splits the note into that many repeats, negative is Bitwig's rate-based repeat), the others −1–1 | absent: Repeats off. Without `range`, omitted members keep an enabled repeat's values; with `range` they are 0. Turning repeats on needs `count` (the others then start at 0) |
 | `recurrence` | `{length, mask}`: a cycle of `length` (1–8) loop passes, `mask` one boolean per pass (true: the note plays on that pass) | absent: Recurrence off |
 | `occurrence` | `always`, `first`, `not_first`, `prev`, `not_prev`, `prev_channel`, `not_prev_channel`, `prev_key`, `not_prev_key`, `fill`, `not_fill` (Bitwig's 11 conditions) | absent: Occurrence off |
 | `muted` | `true` | false |
-| `timbre`, `pan`, `formant` | −1–1 | 0 |
+| `timbre`, `pan` | −1–1 | 0 |
+| `formant` | −1–1, native only; range and conversion unverified until a native check (assumed like `timbre`) | 0 |
 | `pressure` | 0–1 | 0 |
-| `gain` | 0–1 | 0.5 |
+| `gain` | 0–1 | 0.5 (assumed neutral, unverified until a native check) |
 | `transpose` | semitones −96–96 | 0 |
 
 The randomness stays in Bitwig: the record holds the rule (`chance: 0.85`, `recurrence:{length:4, mask:[false,false,false,true]}`), Bitwig rolls it while playing, and what you read back is the rule, not a played result.
 
-An expression is the value at the note's start. Bitwig stores each as a curve of points; a write sets the point at time 0 (Bitwig adds one when there is none) and leaves later points, and a read lists the first point. A note `notes.set` changes is written as a new note (native path), so a multi-point expression curve drawn in Bitwig on that note keeps only its start value; notes the call leaves unchanged keep their curves. Only the native path reads expressions back: without the native note binding `notes.get` omits them (the result says `unreadFields`), and `notes.set` or `clips.insert` with an expression field is `not_applied`/`native_unavailable` before anything is selected, because the public API's getters do not return what its setters take. Operators work on both paths. Arranger clips take no operators or expressions in this version (`unsupported_scope`).
+An expression is the value at the note's start. Bitwig stores each as a curve of points; a write sets the point at time 0 (Bitwig adds one when there is none) and leaves later points, and a read lists the first point. A note `notes.set` changes is written as a new note (native path), so a multi-point expression curve drawn in Bitwig on that note keeps only its start value; notes the call leaves unchanged keep their curves. Only the native path reads expressions back: without the native note binding `notes.get` omits them (the result says `unreadFields`), and `notes.set` or `clips.insert` with an expression field is `not_applied`/`native_unavailable` before anything is selected, because the public API's getters do not return what its setters take. When this Bitwig's native binding lacks the operator or expression symbols, those fields are listed in `unreadFields` and refused the same way, while plain notes stay native. A path that does not read a field cannot keep it either: a note whose velocity or duration such a write changes may lose that field's values in Bitwig (the public `setStep` and the native rewrite replace the note), so on a clip with drawn expressions change notes on the native path. Operators work on both paths. Arranger clips take no operators or expressions in this version (`unsupported_scope`).
 
 `target` is a launcher clip ref (a scene past the count or an empty slot is `stale`/`target_not_found`; another clip or scene name there is `target_changed` with `current`). Arranger clips are not read or written here yet.
 
@@ -329,7 +330,7 @@ An expression is the value at the note's start. Bitwig stores each as a curve of
 **`notes.set`** writes by the range rule:
 
 - **Without `range`** each listed note is written in place: inserted when no note has its (channel, pitch, beat), else the given fields updated. Nothing is removed. `velocity`, `duration` and any operator or expression may be omitted for an existing note (its value stays); a new note needs `velocity` and `duration`. "Give every hat a chance" needs no read first: list the hats with just `beat`, `pitch` and `chance`.
-- **With `range`** the notes whose onset lies in it become exactly the listed ones: unlisted notes in it are removed, in the same Undo step. Every listed note must lie in the range. `range:"all"` with `notes:[]` clears the clip. The recipe for removing or moving notes is one call: `notes.get` the range, edit the list, `notes.set` the same range.
+- **With `range`** the notes whose onset lies in it become exactly the listed ones: unlisted notes in it are removed, in the same Undo step. Every listed note must lie in the range. `range:"all"` with `notes:[]` clears the clip. The recipe for removing or moving notes is one call: `notes.get` the range, edit the list, `notes.set` the same range. A listed note is the whole note here: operators and expressions it does not name are turned off or set back to neutral (`velocity` and `duration` have no default and, when omitted, stay as on the existing note). So writing a `notes.get` result back with the same range restores that range whatever was changed since; a list read with a `--fields` projection restores only what it kept and resets the rest. On the public path expressions are not read and a ranged write leaves them as they are (`unreadFields`).
 - A replay of the same request is `already_matched` (nothing written, `undo:"none"`), and so is writing back what `notes.get` read. After an `unknown` result, do not resend: `notes.get` first and decide from what is there.
 
 The result is `{outcome, verification?, reason?, ref, range?, summary:{inserted, updated, removed, unchanged}, undo, exact, count?}`. `unchanged` counts listed notes that already matched; `count` is the number of notes in the clip after the write (native path). A native readback that differs from the planned content is `unknown`/`readback_mismatch` with `mismatch:{missing, unexpected}` (at most 16 notes each).
