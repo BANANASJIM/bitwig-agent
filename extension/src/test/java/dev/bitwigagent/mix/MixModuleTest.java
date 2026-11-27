@@ -525,13 +525,12 @@ public final class MixModuleTest {
             HostOperation op = f.submit(module, "tracks.set", pendingWrite);
             f.next();
             assertTrue(
-                    f.tracks[0].child("mute").writes == 1 && !op.result.isDone(),
+                    f.tracks[0].child("mute").writes == 1,
                     "unready matching getter must dispatch rather than falsely skip as already_at_value");
-            f.tracks[0].child("mute").emit(true);
-            f.next();
-            assertTrue(
-                    op.result.join().get("outcome").getAsString().matches("applied|already_matched"),
-                    "requested field can verify without every unchanged field replaying");
+            assertEquals(
+                    "already_matched",
+                    op.result.join().get("outcome").getAsString(),
+                    "the equal write raises no callback; the readable getter verifies it without a replay");
             JsonObject selected = f.call(module, "tracks.select", params(target));
             assertTrue(
                     f.tracks[0].actions == 1
@@ -634,6 +633,29 @@ public final class MixModuleTest {
                             && read.getAsJsonObject("pan").get("value").getAsDouble() == .5,
                     "same/new UUID reappearance recovers continuous values without unchanged callbacks");
         }
+    }
+
+    @Test
+    void equalWriteAfterRebindIsAlreadyMatched() {
+        HostFixture f = new HostFixture();
+        MixModule module = f.services.mix();
+        // A group or insert rebinds the slot; unchanged values never replay, and an equal write raises no callback.
+        f.tracks[0].child("exists").emit(false);
+        f.tracks[0].child("exists").emit(true);
+        module.flush();
+        JsonObject read = f.call(module, "tracks.get", HostFixture.targeting(HostFixture.A));
+        for (String field : List.of("mute", "arm")) f.tracks[0].child(field).notifyWrites = false;
+        f.tracks[0].child("volume").child("value").notifyWrites = false;
+        JsonObject write = set(HostFixture.A, "{}");
+        write.add("mute", read.get("mute"));
+        write.add("arm", read.get("arm"));
+        write.add("volume", read.getAsJsonObject("volume").get("value"));
+        HostOperation op = f.submit(module, "tracks.set", write);
+        for (int i = 0; i < 2000 && !op.result.isDone(); i++) f.next();
+        assertEquals(
+                "already_matched",
+                op.result.join().get("outcome").getAsString(),
+                op.result.join().toString());
     }
 
     @Test
