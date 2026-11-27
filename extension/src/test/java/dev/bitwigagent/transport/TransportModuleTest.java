@@ -9,6 +9,7 @@ import dev.bitwigagent.HostFixture;
 import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.HostOperation;
 import dev.bitwigagent.core.Reason;
+import dev.bitwigagent.core.RpcException;
 import dev.bitwigagent.core.Scheduler;
 import dev.bitwigagent.core.ValueMatch;
 import java.util.List;
@@ -94,8 +95,7 @@ public final class TransportModuleTest {
     void recordingAndAutomationBlockSettingsAndPlaybackButNotTheModesOrStop() {
         Map<String, String> modes = Map.of(
                 "isArrangerRecordEnabled", "arrangerRecordEnabled",
-                "isArrangerAutomationWriteEnabled", "arrangerAutomationWriteEnabled",
-                "isClipLauncherAutomationWriteEnabled", "clipLauncherAutomationWriteEnabled");
+                "isArrangerAutomationWriteEnabled", "arrangerAutomationWriteEnabled");
         for (Map.Entry<String, String> mode : modes.entrySet()) {
             HostFixture f = new HostFixture();
             TransportModule module = f.services.transportModule();
@@ -125,6 +125,36 @@ public final class TransportModuleTest {
             JsonObject stop = f.call(module, "transport.set", HostFixture.json("{\"playing\":false}"));
             assertTrue(f.transport.actions == 1, "stopping is always allowed: " + stop);
         }
+    }
+
+    @Test
+    void theLauncherAutomationWriteSwitchIsRefusedUpFront() {
+        HostFixture f = new HostFixture();
+        TransportModule module = f.services.transportModule();
+        HostOperation op = f.submit(
+                module,
+                "transport.set",
+                HostFixture.json("{\"clipLauncherAutomationWriteEnabled\":false,\"tempo\":100}"));
+        RpcException refused = assertRpcError("unsupported_scope", op);
+        assertTrue(refused.getMessage().contains("arrangerAutomationWriteEnabled"), refused.getMessage());
+        assertEquals(0, f.transport.child("tempo").child("value").writes, "nothing was written");
+    }
+
+    @Test
+    void recordingStateBitwigSwitchesAlongIsReportedAsASideEffect() {
+        HostFixture f = new HostFixture();
+        TransportModule module = f.services.transportModule();
+        f.transport.child("isArrangerRecordEnabled").afterWrite =
+                () -> f.transport.child("isArrangerAutomationWriteEnabled").emit(true);
+        JsonObject result = f.call(module, "transport.set", HostFixture.json("{\"arrangerRecordEnabled\":true}"));
+        assertEquals("applied", result.get("outcome").getAsString(), result.toString());
+        assertEquals(
+                HostFixture.json("{\"arrangerAutomationWriteEnabled\":{\"before\":false,\"after\":true}}"),
+                result.get("observedSideEffects"));
+        assertFalse(
+                f.call(module, "transport.set", HostFixture.json("{\"arrangerOverdubEnabled\":true}"))
+                        .has("observedSideEffects"),
+                "nothing else changed: no side effects reported");
     }
 
     @Test

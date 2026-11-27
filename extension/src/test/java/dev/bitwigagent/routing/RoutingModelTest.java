@@ -234,6 +234,7 @@ final class RoutingModelTest {
                         .getAsString());
         assertTrue(Results.leafRuleHolds(applied), applied.toString());
         assertTrue(applied.get("nativeUndo").getAsBoolean());
+        assertTrue(applied.get("undoGroupingVerified").getAsBoolean(), "one Undo step, natively verified on 6.1.7");
         JsonObject unknown = RoutingModel.finish(new JsonObject(), p, before, before, change);
         assertEquals("unknown", unknown.get("outcome").getAsString());
         JsonObject field = unknown.getAsJsonObject("fields").getAsJsonObject("input");

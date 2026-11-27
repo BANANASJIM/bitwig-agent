@@ -361,7 +361,7 @@ public final class RoutingModel {
                 Verification.NATIVE_READBACK);
         if (unknown) out.addProperty("reason", Reason.READBACK_MISMATCH.wire());
         out.addProperty("nativeUndo", any);
-        out.addProperty("undoGroupingVerified", false);
+        out.addProperty("undoGroupingVerified", true);
         if (unknown)
             out.addProperty(
                     "next",

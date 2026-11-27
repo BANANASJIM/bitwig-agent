@@ -18,8 +18,8 @@ import java.util.UUID;
  * the audio backend's configured input buses (PipeWire, JACK; by bus UUID) and every controller's note inputs (by
  * controller UUID, instance and note input index). A bus is written as the descriptor {@code prefs.audioBus.descriptor}
  * makes through {@code routing.sourceSelector.setHardwareAudio}, a note input through its own
- * {@code prefs.noteInput.assign} (the GUI's path). Readback compares the chooser's own hardware source with the same
- * descriptors ({@code routing.hardwareDescriptor.same}) or reads its controller descriptor. These keys were added after
+ * {@code prefs.noteInput.assign} (the GUI's path). Readback reads the bus UUID of every descriptor the chooser's own
+ * hardware source holds ({@code routing.busDescriptor.uuid}) or its controller descriptor. These keys were added after
  * the supported hosts shipped, so they are bound here on first use and a missing one only disables hardware entries.
  * Nothing here writes preferences; "Add MIDI Controller" (a preferences change) is not offered.
  */
@@ -52,9 +52,9 @@ final class NativeHardwareInputs {
     }
 
     private final NativeHost.Access a;
-    private final Class<?> audioSource, controllerSource, controllerDescriptor, noteTarget;
+    private final Class<?> audioSource, controllerSource, controllerDescriptor, noteTarget, busDescriptorType;
     private final Method audioSettings, backend, configuredBuses, buses, inputBuses, busItems, busUuid, busName;
-    private final Method busDescriptor, setAudio, audioDescriptors, sameDescriptor;
+    private final Method busDescriptor, setAudio, audioDescriptors, descriptorBus;
     private final Method application, controllerSettings, controllers, controllerList, noteInputs, assign;
     private final Method controllerDescriptors, descriptorUuid, descriptorInstance, descriptorNoteInput, descriptorName;
 
@@ -83,7 +83,8 @@ final class NativeHardwareInputs {
         busDescriptor = a.exactMethod("prefs.audioBus.descriptor", busDescriptorType, false, backendType);
         setAudio = a.exactMethod("routing.sourceSelector.setHardwareAudio", void.class, false, port);
         audioDescriptors = a.exactMethod("routing.hardwareAudioSource.descriptors", List.class, false);
-        sameDescriptor = a.exactMethod("routing.hardwareDescriptor.same", boolean.class, false, descriptor);
+        descriptorBus = a.exactMethod("routing.busDescriptor.uuid", UUID.class, false);
+        this.busDescriptorType = busDescriptorType;
         Class<?> controllerSettingsType = a.type("prefs.controllerSettings");
         Class<?> controllersType = a.type("prefs.controllers");
         application = a.exactMethod("application.singleton", a.type("application"), true);
@@ -108,7 +109,7 @@ final class NativeHardwareInputs {
         Object current = currentBackend();
         if (current == null) return new Listing(List.of(), "no_audio_backend");
         if (!Boolean.TRUE.equals(a.invoke(configuredBuses, current)))
-            return new Listing(List.of(), "audio_backend_has_no_configured_buses");
+            return new Listing(List.of(), "audio_backend_has_no_named_busses");
         List<Input> out = new ArrayList<>();
         for (Object bus : (List<?>) a.invoke(busItems, a.invoke(inputBuses, a.invoke(buses, current)))) {
             UUID id = (UUID) a.invoke(busUuid, bus);
@@ -116,7 +117,7 @@ final class NativeHardwareInputs {
             String name = (String) a.invoke(busName, bus);
             out.add(new Input(RoutingEntry.hardware("hardware_audio_input", id.toString(), name), bus));
         }
-        return new Listing(out, null);
+        return new Listing(out, out.isEmpty() ? "no_named_input_busses_add_one_in_settings_audio" : null);
     }
 
     /**
@@ -174,14 +175,10 @@ final class NativeHardwareInputs {
      */
     RoutingEntry describe(Object source) {
         if (audioSource.isInstance(source)) {
-            Object current = currentBackend();
-            List<?> held = (List<?>) a.invoke(audioDescriptors, source);
-            for (Input bus : audio().inputs) {
-                Object descriptor = a.invoke(busDescriptor, bus.handle, current);
-                for (Object item : held)
-                    if (Boolean.TRUE.equals(a.invoke(sameDescriptor, item, descriptor))) return bus.entry;
-            }
-            return null;
+            List<UUID> held = new ArrayList<>();
+            for (Object item : (List<?>) a.invoke(audioDescriptors, source))
+                if (busDescriptorType.isInstance(item)) held.add((UUID) a.invoke(descriptorBus, item));
+            return heldBus(held, audio().inputs);
         }
         if (!controllerSource.isInstance(source)) return null;
         for (Object item : (List<?>) a.invoke(controllerDescriptors, source))
@@ -191,6 +188,16 @@ final class NativeHardwareInputs {
                         noteId((UUID) a.invoke(descriptorUuid, item), (int) a.invoke(descriptorInstance, item), (int)
                                 a.invoke(descriptorNoteInput, item)),
                         (String) a.invoke(descriptorName, item));
+        return null;
+    }
+
+    /**
+     * The listed bus a chooser holds a descriptor of, by bus UUID only: the descriptor keeps the bus name it was written
+     * with, which a rename in the preferences makes stale, so the name is display only (the listed, current one).
+     */
+    static RoutingEntry heldBus(List<UUID> held, List<Input> listed) {
+        for (Input bus : listed)
+            for (UUID id : held) if (id != null && id.toString().equalsIgnoreCase(bus.entry.id)) return bus.entry;
         return null;
     }
 

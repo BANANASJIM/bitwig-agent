@@ -49,11 +49,17 @@ public final class TransportModule implements HostModule {
         "arrangerOverdubEnabled",
         "clipLauncherOverdubEnabled",
         "arrangerAutomationWriteEnabled",
-        "clipLauncherAutomationWriteEnabled",
         "automationWriteMode"
     };
     /** Fields writable while recording or automation write is on: the modes themselves. */
     static final Set<String> RECORDING_FIELDS = Set.of(
+            "arrangerRecordEnabled",
+            "arrangerOverdubEnabled",
+            "clipLauncherOverdubEnabled",
+            "arrangerAutomationWriteEnabled",
+            "automationWriteMode");
+    /** Recording state Bitwig may switch along with a requested field (Global Record also turns automation write on). */
+    static final List<String> SIDE_EFFECTS = List.of(
             "arrangerRecordEnabled",
             "arrangerOverdubEnabled",
             "clipLauncherOverdubEnabled",
@@ -137,6 +143,11 @@ public final class TransportModule implements HostModule {
         if (!method.equals("transport.set"))
             throw Errors.notApplied(Reason.UNKNOWN_METHOD, "Unknown transport method.");
         if (p.size() == 0) throw Errors.notApplied(Reason.INVALID_PARAMS, "At least one transport field is required.");
+        if (p.has("clipLauncherAutomationWriteEnabled"))
+            throw Errors.notApplied(
+                    Reason.UNSUPPORTED_SCOPE,
+                    "clipLauncherAutomationWriteEnabled has no effect in Bitwig 6 (one automation write button); use"
+                            + " arrangerAutomationWriteEnabled. Nothing was written.");
         if (p.has("timeSignature") && !validSignature(Params.string(p, "timeSignature")))
             throw Errors.notApplied(
                     Reason.INVALID_PARAMS,
@@ -213,6 +224,7 @@ public final class TransportModule implements HostModule {
                 p,
                 scheduler.observeUntil(op),
                 p.has("playing") && p.get("playing").getAsBoolean() && !projectState.engineActive());
+        for (String key : SIDE_EFFECTS) request.before.put(key, values.get(key).value);
         boolean stopping = p.has("playing") && !p.get("playing").getAsBoolean();
         try {
             if (stopping) write(request, "playing");
@@ -230,6 +242,7 @@ public final class TransportModule implements HostModule {
         final HostOperation op;
         final JsonObject p;
         final Map<String, Long> writes = new LinkedHashMap<>();
+        final Map<String, JsonElement> before = new LinkedHashMap<>();
         final long until;
         final boolean silentEngine;
 
@@ -328,9 +341,6 @@ public final class TransportModule implements HostModule {
             case "arrangerAutomationWriteEnabled":
                 transport.isArrangerAutomationWriteEnabled().set(value.getAsBoolean());
                 break;
-            case "clipLauncherAutomationWriteEnabled":
-                launcherAutomationWrite().set(value.getAsBoolean());
-                break;
             case "loopStart":
                 transport.arrangerLoopStart().set(value.getAsDouble());
                 break;
@@ -405,6 +415,16 @@ public final class TransportModule implements HostModule {
         if (!worst.succeeded()) result.addProperty("reason", (reason != null ? reason : worstReason).wire());
         nest(fields);
         result.add("fields", fields);
+        JsonObject effects = new JsonObject();
+        for (Map.Entry<String, JsonElement> seen : request.before.entrySet()) {
+            JsonElement now = values.get(seen.getKey()).value;
+            if (p.has(seen.getKey()) || now.equals(seen.getValue())) continue;
+            JsonObject change = new JsonObject();
+            change.add("before", seen.getValue());
+            change.add("after", now);
+            effects.add(seen.getKey(), change);
+        }
+        if (effects.size() > 0) result.add("observedSideEffects", effects);
         if (request.silentEngine)
             Results.addWarning(
                     result,

@@ -405,6 +405,21 @@ public final class RoutingModuleTest {
     }
 
     @Test
+    void aRenamedBusIsStillTheSameIdSoRewritingItAlreadyMatches() {
+        Fixture f = new Fixture();
+        f.adapter.inputs.put(A, RoutingEntry.hardware("hardware_audio_input", FakeRoutingPort.BUS.id, "Old name"));
+        JsonObject p = target();
+        p.add("input", FakeRoutingPort.BUS.json());
+        p.add(
+                "expect",
+                json("{\"input\":{\"kind\":\"hardware_audio_input\",\"id\":\"" + FakeRoutingPort.BUS.id
+                        + "\",\"name\":\"Older name\"}}"));
+        JsonObject result = f.call("tracks.routing.set", p);
+        assertEquals("already_matched", result.get("outcome").getAsString(), result.toString());
+        assertEquals(0, f.adapter.writes, "the stored display name differs, the bus is the same: nothing written");
+    }
+
+    @Test
     void aControllerNoteInputOnAnAudioTrackIsAKindMismatch() {
         Fixture f = new Fixture();
         JsonObject p = target();
