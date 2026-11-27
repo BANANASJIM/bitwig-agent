@@ -776,7 +776,23 @@ def test_a_failed_cut_keeps_the_abort_reason_and_still_kills(tmp_path, desktop, 
         harness.up(cfg, "6.1.7", "")
     data = evidence.read_run(Path((lock.owner() or {})["run"]))
     assert data["aborted"].startswith("RuntimeError: Bitwig linked outside bwtest")
-    assert data["cutFailed"] == "pw-link -d failed: 1"
+    assert data["cutFailed"] == "BridgeError: pw-link -d failed: 1"
+    assert desktop.killed == [(102, signal.SIGTERM)]
+    assert not bitwig.session_alive(102)
+
+
+def test_a_cut_that_cannot_run_pw_link_still_kills(tmp_path, desktop, monkeypatch):
+    cfg = prepared(tmp_path, desktop, monkeypatch)
+    desktop.bitwig_links = {("Bitwig Studio:out1", "alsa_output.pci:playback_FL")}
+
+    def no_pw_link():
+        raise FileNotFoundError(2, "No such file or directory", "pw-link")
+
+    monkeypatch.setattr(audio, "disconnect_strays", no_pw_link)
+    with pytest.raises(SystemExit, match=r"ABORTED: Bitwig linked outside bwtest.*; sandbox stopped;"):
+        harness.up(cfg, "6.1.7", "")
+    data = evidence.read_run(Path((lock.owner() or {})["run"]))
+    assert data["cutFailed"].startswith("FileNotFoundError: ")
     assert desktop.killed == [(102, signal.SIGTERM)]
     assert not bitwig.session_alive(102)
 

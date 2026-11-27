@@ -13,7 +13,6 @@ from pathlib import Path
 from typing import Any
 
 from bitwig_agent.audio import pipewire
-from bitwig_agent.errors import BridgeError, HostChanged
 
 from . import audio, bitwig, doctor, evidence, lock, monitor, sandbox
 from .config import Config, Host
@@ -93,8 +92,8 @@ def stop_sandbox(run: Path, session: int, reason: str) -> bool:
     evidence.update_run(run, aborted=reason)
     try:
         evidence.update_run(run, strayLinksCut=audio.disconnect_strays())
-    except (BridgeError, HostChanged) as exc:
-        evidence.update_run(run, cutFailed=str(exc))
+    except Exception as exc:  # noqa: BLE001 - whatever the cut raised is recorded; the kill below must run
+        evidence.update_run(run, cutFailed=f"{type(exc).__name__}: {exc}")
     for sig in (signal.SIGTERM, signal.SIGKILL):
         if bitwig.session_alive(session):
             with contextlib.suppress(ProcessLookupError):  # the last process exited after the check
