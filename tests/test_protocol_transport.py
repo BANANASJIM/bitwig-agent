@@ -50,7 +50,6 @@ def test_the_recording_fields_are_transport_set_fields():
         "arrangerOverdubEnabled": True,
         "clipLauncherOverdubEnabled": False,
         "arrangerAutomationWriteEnabled": False,
-        "clipLauncherAutomationWriteEnabled": False,
         "automationWriteMode": "latch",
     }
     assert validate_call("transport.set", args)[0] == args
@@ -63,3 +62,9 @@ def test_no_example_starts_recording():
     for example in TOOLS["transport.set"].examples:
         assert not (example.get("arrangerRecordEnabled") and example.get("playing")), example
         assert example.get("arrangerRecordEnabled") is not True, example
+
+
+def test_the_launcher_automation_write_switch_is_refused_as_unsupported():
+    with pytest.raises(ValidationError) as refused:
+        validate_call("transport.set", {"clipLauncherAutomationWriteEnabled": False})
+    assert "arrangerAutomationWriteEnabled" in str(refused.value)

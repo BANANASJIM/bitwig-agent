@@ -6,7 +6,7 @@ from typing import Annotated, Self
 
 from pydantic import Field, field_validator, model_validator
 
-from bitwig_agent.protocol.base import Nonempty, StatusArgs, StrictModel, ToolSpec, omitted
+from bitwig_agent.protocol.base import Nonempty, ReasonError, StatusArgs, StrictModel, ToolSpec, omitted
 from bitwig_agent.protocol.values import Normalized
 
 MAX_TIME_SIGNATURE_NUMERATOR = 32
@@ -79,6 +79,12 @@ class TransportSetArgs(StatusArgs):
     def require_change(self) -> Self:
         if not self.model_fields_set - {"timeoutMs"}:
             raise ValueError("transport.set requires at least one changed field")
+        if "clipLauncherAutomationWriteEnabled" in self.model_fields_set:
+            raise ReasonError(
+                "unsupported_scope",
+                "clipLauncherAutomationWriteEnabled has no effect in Bitwig 6 (one automation write button); use "
+                "arrangerAutomationWriteEnabled. Nothing was written.",
+            )
         return self
 
 
