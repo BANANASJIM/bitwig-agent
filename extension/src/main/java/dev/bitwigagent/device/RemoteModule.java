@@ -83,6 +83,14 @@ public final class RemoteModule implements HostModule, ParameterResolver.RemoteP
         }
     }
 
+    /** The observed Remote Controls page names of a root device slot, joined, or null while unobserved or absent. */
+    public String pageNames(int track, int device) {
+        Remote source = sources[track][device];
+        String[] names = source.page.pageNames().get();
+        if (!source.pageNamesObserved || names == null || !remoteSourcePresent(source)) return null;
+        return String.join("\n", names);
+    }
+
     private void initRemotes(Remote source, int track, int device) {
         source.page = source.device.createCursorRemoteControlsPage(
                 "BitwigAgent-" + track + "-" + device, GridRemotePageWriter.SLOTS, "");
