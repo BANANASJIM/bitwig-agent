@@ -247,4 +247,58 @@ final class ClipCommandsTest {
         assertRpcError("invalid_params", f.start("clips.gain", params("target", f.clip(0), "deltaDb", 0)));
         assertRpcError("invalid_params", f.start("clips.gain", params("target", f.clip(0), "deltaDb", 25)));
     }
+
+    @Test
+    void aFailingRefocusKeepsTheResultAndStillPutsTheCursorClipBack() {
+        LauncherFake f = clips(ClipCommands.Kind.AUDIO, 0, 1, 2);
+        f.slots[0].name = "Other";
+        f.selected = 0;
+        f.commands.refocusThrows = true;
+        List<Integer> selected = selections(f);
+        JsonObject out = f.call("clips.gain", params("target", f.clip(1), "deltaDb", 1));
+        assertEquals("sent", out.get("outcome").getAsString());
+        assertEquals("launcher", out.get("focusSideEffect").getAsString());
+        assertEquals("restored", out.get("selectionSideEffect").getAsString());
+        assertEquals("gain", out.get("op").getAsString());
+        assertEquals(List.of("increase_gain_1db"), strings(out.getAsJsonArray("actions")));
+        selected.clear();
+        out = transform(f, "normalize", 1, 2);
+        assertEquals("sent", out.get("outcome").getAsString());
+        assertEquals(List.of(1, 0, 2, 0), selected);
+        for (int i = 0; i < 2; i++) {
+            assertEquals("sent", entry(out, i).get("outcome").getAsString());
+            assertEquals("launcher", entry(out, i).get("focusSideEffect").getAsString());
+            assertEquals("restored", entry(out, i).get("selectionSideEffect").getAsString());
+        }
+    }
+
+    @Test
+    void aCursorClipThatChangedIsNotReportedRestored() {
+        LauncherFake f = clips(ClipCommands.Kind.AUDIO, 1, 2);
+        f.slots[2].name = "Other";
+        f.selected = 2;
+        f.onAction = id -> f.slots[2].name = "Shifted";
+        JsonObject out = f.call("clips.gain", params("target", f.clip(1), "deltaDb", 1));
+        assertEquals("replaced", out.get("selectionSideEffect").getAsString());
+    }
+
+    @Test
+    void aBatchWithAResultOutsideTheWindowIsRefusedBeforeAnyWrite() {
+        LauncherFake f = clips(ClipCommands.Kind.NOTES, 3, 15);
+        RpcException refused = assertRpcError(
+                "outside_window",
+                f.startAndDrain("clips.transform", params("targets", targets(f, 3, 15), "op", "sliceAtRepeats")));
+        assertEquals(1, refused.entries.get(0).getAsJsonObject().get("index").getAsInt());
+        assertEquals(List.of(), f.actions);
+        assertEquals(-1, f.selected);
+    }
+
+    @Test
+    void aRefusedFocusRequestPutsFocusBack() {
+        LauncherFake f = clips(ClipCommands.Kind.AUDIO, 1);
+        f.commands.focusable = false;
+        f.commands.strandFocus = true;
+        assertRpcError("not_ready", f.startAndDrain("clips.gain", params("target", f.clip(1), "deltaDb", 1)));
+        assertEquals("device panel", f.commands.focus);
+    }
 }

@@ -682,7 +682,7 @@ public final class LauncherFake {
     public final class CommandsAccess implements ClipCommands.Access {
         public ClipCommands.Kind kind = ClipCommands.Kind.NOTES;
         public final Map<Integer, ClipCommands.Kind> kinds = new HashMap<>();
-        public boolean focusable = true, refocusable = true;
+        public boolean focusable = true, refocusable = true, refocusThrows, strandFocus;
         public int focusRequests, kindReads;
         public Object focus = "device panel";
 
@@ -707,13 +707,14 @@ public final class LauncherFake {
         public boolean focusLauncher(Runnable check) {
             check.run();
             focusRequests++;
-            if (focusable) focus = "launcher";
+            if (focusable || strandFocus) focus = "launcher";
             return focusable;
         }
 
         @Override
         public boolean refocus(Object widget, Runnable check) {
             check.run();
+            if (refocusThrows) throw new IllegalStateException("fixture refocus failure");
             if (refocusable) focus = widget;
             return refocusable;
         }

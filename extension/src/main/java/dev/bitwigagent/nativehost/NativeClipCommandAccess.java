@@ -3,6 +3,7 @@ package dev.bitwigagent.nativehost;
 import dev.bitwigagent.launcher.ClipCommands;
 import java.lang.reflect.Method;
 import java.util.function.BiPredicate;
+import java.util.function.Predicate;
 import java.util.function.UnaryOperator;
 
 /**
@@ -78,14 +79,14 @@ public final class NativeClipCommandAccess implements ClipCommands.Access {
                 v -> a.invoke(panel, v, arrangerKind),
                 p -> arrangerPanel.isInstance(p) ? a.invoke(arrangerWidget, p) : null,
                 w -> a.invoke(launcherWidget, w));
-        return clipLauncher != null && focus(clipLauncher, window);
+        return focusIfPresent(clipLauncher, w -> focus(w, window));
     }
 
     @Override
     public boolean refocus(Object widget, Runnable check) {
         a.documentThread();
         check.run();
-        return widget != null && focus(widget, window());
+        return focusIfPresent(widget, w -> focus(w, window()));
     }
 
     private Object window() {
@@ -98,6 +99,11 @@ public final class NativeClipCommandAccess implements ClipCommands.Access {
         Object focused = follow(window, w -> a.invoke(focusedWidget, w));
         return holds(
                 widget, a.invoke(focusState, widget), focused, (f, w) -> Boolean.TRUE.equals(a.invoke(isInside, f, w)));
+    }
+
+    /** Whether {@code focus} moved focus to {@code widget}; false without asking it when there is no widget. */
+    static boolean focusIfPresent(Object widget, Predicate<Object> focus) {
+        return widget != null && focus.test(widget);
     }
 
     /** {@code start} through each link in turn; null as soon as a link gives null, without calling the rest. */

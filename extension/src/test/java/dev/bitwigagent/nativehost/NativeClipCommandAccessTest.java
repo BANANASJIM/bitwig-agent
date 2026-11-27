@@ -40,4 +40,13 @@ final class NativeClipCommandAccessTest {
         assertFalse(NativeClipCommandAccess.holds("launcher", State.FOCUSED, null, (f, w) -> true));
         assertFalse(NativeClipCommandAccess.holds("launcher", State.FOCUSED, "dialog", (f, w) -> false));
     }
+
+    @Test
+    void noLauncherWidgetIsNotFocusedAndNothingIsAsked() {
+        List<Object> asked = new ArrayList<>();
+        assertFalse(NativeClipCommandAccess.focusIfPresent(null, w -> asked.add(w)));
+        assertEquals(List.of(), asked);
+        assertTrue(NativeClipCommandAccess.focusIfPresent("launcher", w -> asked.add(w)));
+        assertEquals(List.of("launcher"), asked);
+    }
 }

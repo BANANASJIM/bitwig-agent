@@ -151,6 +151,23 @@ public final class ClipCommands {
         return verify;
     }
 
+    /**
+     * How {@code command} verifies the target's clip of {@code kind}; refused when the command does not take the kind
+     * or its effect would land outside the window it is read back in (a new clip below the last row of the scene
+     * window, a new track after the last track of the track window).
+     */
+    static Verify admit(Command command, Kind kind, LauncherState.Target target) {
+        Verify verify = verify(command, kind);
+        if (verify == Verify.CLIPS && target.at.position() == HostLimits.SCENES - 1
+                || verify == Verify.TRACKS && target.at.track == HostLimits.TRACKS - 1)
+            throw Errors.notApplied(
+                    Reason.OUTSIDE_WINDOW,
+                    command.name + " would put its result outside the window it is read back in (the clip is in the "
+                            + "last row of its scene window or on the last track of the track window); nothing was "
+                            + "sent.");
+        return verify;
+    }
+
     /** Reads the target's clip kind natively; {@code next} gets the refusal, or null when the command takes it. */
     void checkKind(HostOperation op, LauncherState.Target target, Command command, Consumer<RpcException> next) {
         Access access = port.get(op);
@@ -161,7 +178,7 @@ public final class ClipCommands {
                 access::execute,
                 () -> {
                     try {
-                        verify(command, access.kind(target.slot.api, id, name, check));
+                        admit(command, access.kind(target.slot.api, id, name, check), target);
                         return null;
                     } catch (RpcException refused) {
                         return refused;
@@ -175,21 +192,26 @@ public final class ClipCommands {
      * selection. One per call; a batch's entries share it, so each entry puts back the user's own state.
      */
     static final class Restore {
-        final String track;
+        final String track, name;
         final int scene;
         boolean focusRead;
         Object focus;
 
-        private Restore(String track, int scene) {
+        private Restore(String track, int scene, String name) {
             this.track = track;
             this.scene = scene;
+            this.name = name;
         }
     }
 
-    /** Records the launcher cursor clip now, before anything is selected. */
+    /** Records the launcher cursor clip now, before anything is selected; no track when it is not in the windows. */
     Restore restore() {
-        return new Restore(
-                state.clip.exists().get() ? state.clipTrack.channelId().get() : null, state.cursorScene());
+        String track = state.clip.exists().get() ? state.clipTrack.channelId().get() : null;
+        int scene = state.cursorScene();
+        LauncherState.Slot slot = track == null ? null : slotOf(track, scene);
+        return slot == null
+                ? new Restore(null, -1, null)
+                : new Restore(track, scene, slot.api.name().get());
     }
 
     /**
@@ -212,20 +234,18 @@ public final class ClipCommands {
                 op,
                 access::execute,
                 () -> {
-                    Verify verify = verify(command, access.kind(target.slot.api, id, name, check));
-                    if (verify == Verify.CLIPS && target.at.position() == HostLimits.SCENES - 1)
-                        throw Errors.notApplied(
-                                Reason.OUTSIDE_WINDOW,
-                                "Scene " + target.scene() + " is the last row of its 16-scene window, so the new clip "
-                                        + "would land outside the window it is read back in; nothing was sent. Use "
-                                        + "clips.copy to an empty slot instead.");
+                    Verify verify = admit(command, access.kind(target.slot.api, id, name, check), target);
                     List<Note> before =
                             verify == Verify.NOTES ? sorted(reader.read(target.slot.api, id, name, check)) : null;
                     if (!restore.focusRead) {
                         restore.focus = access.focused(check);
                         restore.focusRead = true;
                     }
-                    if (!access.focusLauncher(check)) throw LauncherDispatch.notFocused();
+                    if (!access.focusLauncher(check)) {
+                        // A focus request that half-moved focus is undone before refusing.
+                        refocus(access, restore, check);
+                        throw LauncherDispatch.notFocused();
+                    }
                     return new Read(verify, before);
                 },
                 read -> select(op, method, target, command, read, restore, access, reader, done));
@@ -246,8 +266,24 @@ public final class ClipCommands {
             NativeNotes.Access reader,
             Consumer<JsonObject> done) {
         HostOperation step = op.child();
-        step.result.whenComplete((result, error) -> state.scheduler.schedule(
-                op, () -> putBack(op, target, command, access, restore, result, error, done), 0));
+        step.result.whenComplete((result, error) -> {
+            JsonObject out = error == null ? result : Errors.entryResult(error);
+            // Putting back runs under its own operation and deadline, so it never replaces the command's result: what
+            // it could not confirm stays launcher / replaced.
+            HostOperation back = new HostOperation(state.scheduler.now() + RESTORE_NANOS);
+            back.result.whenComplete((r, e) -> {
+                state.selection.handOff(op);
+                if (!out.has("focusSideEffect")) out.addProperty("focusSideEffect", "launcher");
+                if (!out.has("selectionSideEffect")) out.addProperty("selectionSideEffect", "replaced");
+                out.addProperty("op", command.name);
+                out.add("ref", state.clipRef(target));
+                JsonArray actions = new JsonArray();
+                command.actions.forEach(actions::add);
+                out.add("actions", actions);
+                done.accept(out);
+            });
+            state.scheduler.schedule(back, () -> putBack(back, access, restore, out), 0);
+        });
         state.selection.handOff(step);
         state.bind(step, target, false, null, state.until(step), (o, t, end, w) -> {
             Effect effect = new Effect(o, method, t, command, read, access, reader, step.result::complete);
@@ -255,45 +291,38 @@ public final class ClipCommands {
         });
     }
 
-    private void putBack(
-            HostOperation op,
-            LauncherState.Target target,
-            Command command,
-            Access access,
-            Restore restore,
-            JsonObject result,
-            Throwable error,
-            Consumer<JsonObject> done) {
-        state.selection.handOff(op);
-        JsonObject out = error == null ? result : Errors.entryResult(error);
-        out.addProperty("op", command.name);
-        out.add("ref", state.clipRef(target));
-        JsonArray actions = new JsonArray();
-        command.actions.forEach(actions::add);
-        out.add("actions", actions);
+    /** Puts focus and the cursor clip back under {@code back}, recording each in {@code out}; completes {@code back}. */
+    private void putBack(HostOperation back, Access access, Restore restore, JsonObject out) {
+        state.selection.handOff(back);
         state.scheduler.afterNative(
-                op,
-                access::execute,
-                () -> access.refocus(restore.focus, () -> state.scheduler.check(op)),
-                refocused -> {
+                back, access::execute, () -> refocus(access, restore, () -> state.scheduler.check(back)), refocused -> {
                     out.addProperty("focusSideEffect", refocused ? "restored" : "launcher");
                     LauncherState.Slot prior = restore.track == null ? null : slotOf(restore.track, restore.scene);
                     if (prior == null) {
-                        selected(out, false, done);
+                        out.addProperty("selectionSideEffect", "replaced");
+                        back.result.complete(out);
                         return;
                     }
                     prior.api.select();
                     state.scheduler.poll(
-                            op,
-                            state.scheduler.deadlineUntil(op),
-                            () -> state.bound(restore.track, prior),
-                            restored -> selected(out, restored, done));
+                            back,
+                            state.scheduler.deadlineUntil(back),
+                            () -> state.bound(restore.track, prior)
+                                    && restore.name.equals(prior.api.name().get()),
+                            restored -> {
+                                out.addProperty("selectionSideEffect", restored ? "restored" : "replaced");
+                                back.result.complete(out);
+                            });
                 });
     }
 
-    private static void selected(JsonObject out, boolean restored, Consumer<JsonObject> done) {
-        out.addProperty("selectionSideEffect", restored ? "restored" : "replaced");
-        done.accept(out);
+    /** Moves focus back to what it was before the call; false when that is not confirmed or the binding throws. */
+    private static boolean refocus(Access access, Restore restore, Runnable check) {
+        try {
+            return access.refocus(restore.focus, check);
+        } catch (RuntimeException failure) {
+            return false;
+        }
     }
 
     /** The slot proxy of a track and absolute scene inside the current windows; null when either is outside. */
@@ -360,8 +389,7 @@ public final class ClipCommands {
                 return;
             }
             hold = state.hold(target, method);
-            // The rest of the deadline is left for putting focus and the cursor clip back.
-            long until = state.scheduler.deadlineUntil(op) - RESTORE_NANOS;
+            long until = state.scheduler.deadlineUntil(op);
             if (read.verify == Verify.NOTES) awaitNotes(until);
             else
                 state.scheduler.poll(
