@@ -11,8 +11,8 @@ from bitwig_agent.errors import bridge_error, unknown_result
 from bitwig_agent.protocol import TOOLS, export_bundle, validate_call
 from bitwig_agent.protocol.base import leaf_rule_holds
 from bitwig_agent.protocol.devices import DEVICE_REF, INSERT_CAUTION, TRACK_REF
+from bitwig_agent.protocol.modulators import DEVICE_PARAMETER_REF, GRID_PARAMETER_REF
 from bitwig_agent.protocol.modulators import DEVICE_REF as GRID_DEVICE
-from bitwig_agent.protocol.modulators import GRID_PARAMETER_REF
 
 FILTER = {"kind": "file", "path": "/devices/Filter+.bwdevice"}
 NEW_DEVICE = {**DEVICE_REF, "index": 1, "name": "Filter+"}
@@ -134,7 +134,13 @@ def test_an_unknown_step_stops_the_run_and_points_at_its_read():
     )
     assert result["outcome"] == "unknown"
     assert result["ref"] == NEW_DEVICE
-    assert "params.Cutoff is unknown: inspect with parameters.list" in result["next"]
+    assert (
+        "params.Cutoff is unknown: inspect with parameters.list before any further write; never resend it"
+        in (result["next"])
+    )
+    assert result["next"].endswith(
+        "Not done: params.Resonance; finish with parameters.set on the new object (refs from parameters.list)."
+    )
 
 
 @pytest.mark.parametrize(
@@ -248,6 +254,16 @@ def test_a_mapping_target_on_another_device_is_refused_before_the_insert():
     assert host.calls == []
 
 
+def test_a_mapping_may_target_a_parameter_of_the_device_itself():
+    host = Host()
+    args = {"to": GRID_DEVICE, "typeName": "LFO", "map": [{"target": DEVICE_PARAMETER_REF, "amount": 0.3}]}
+    assert call(host, "modulators.insert", args)["outcome"] == "applied"
+    assert host.calls[-1] == ("modulators.map", {"source": LFO, "target": DEVICE_PARAMETER_REF, "amount": 0.3})
+    elsewhere = {**DEVICE_PARAMETER_REF, "owner": DEVICE_REF | {"index": 3}}
+    args["map"] = [{"target": elsewhere, "amount": 0.3}]
+    assert "map[0].target" in refusal(Host(), "modulators.insert", args)["message"]
+
+
 def test_the_host_never_sees_the_composed_fields():
     for method in ("devices.insert", "modulators.insert"):
         spec = TOOLS[method]
@@ -305,7 +321,7 @@ def test_chains_insert_fills_the_new_pad_chain_with_the_sample():
         ("chains.insert", {"to": DRUMS, "pad": 38}),
         ("devices.insert", {"to": PAD_CHAIN, "insert": SNARE}),
     ]
-    assert steps(result) == [("chain", "applied", None), ("insert", "applied", None)]
+    assert steps(result) == [("chain", "applied", None), ("fill", "applied", None)]
     assert result["ref"] == PAD_CHAIN
     assert result["entries"][1]["ref"] == SAMPLER
     assert result["verification"] == "native_readback"
@@ -320,14 +336,14 @@ def test_the_filled_chain_ref_has_the_name_bitwig_gave_it_after_the_file():
     )
     result = call(host, "chains.insert", {"to": DRUMS, "pad": 38, "insert": SNARE})
     assert result["ref"] == renamed
-    assert result["entries"][0]["ref"]["name"] == "C1"
+    assert result["entries"][0]["ref"] == renamed  # the chain entry agrees with the top level
 
 
 def test_a_pad_that_already_has_a_chain_is_not_filled():
     host = chain_host({"outcome": "already_matched", "ref": PAD_CHAIN, "pad": 38})
     result = call(host, "chains.insert", {"to": DRUMS, "pad": 38, "insert": SNARE})
     assert [method for method, _ in host.calls] == ["chains.insert"]
-    assert steps(result) == [("chain", "already_matched", None), ("insert", "not_applied", "target_exists")]
+    assert steps(result) == [("chain", "already_matched", None), ("fill", "not_applied", "target_exists")]
     assert result["reason"] == "target_exists"
     assert "devices.insert on its ref" in result["next"]
 
@@ -336,10 +352,21 @@ def test_a_failed_fill_keeps_the_chain_and_finishes_with_devices_insert():
     refused = bridge_error("invalid_target", "The host knows no file for this file.")
     host = chain_host(None, refused)
     result = call(host, "chains.insert", {"to": DRUMS, "pad": 38, "insert": SNARE})
-    assert steps(result) == [("chain", "applied", None), ("insert", "not_applied", "invalid_target")]
+    assert steps(result) == [("chain", "applied", None), ("fill", "not_applied", "invalid_target")]
     assert result["ref"] == PAD_CHAIN
     assert "do not repeat chains.insert" in result["next"]
     assert "finish with devices.insert" in result["next"]
+
+
+def test_an_unknown_fill_says_to_inspect_the_pad_never_to_resend_devices_insert():
+    host = chain_host(None, unknown_result("not_observed", "No new device was observed."))
+    result = call(host, "chains.insert", {"to": DRUMS, "pad": 38, "insert": SNARE})
+    assert steps(result) == [("chain", "applied", None), ("fill", "unknown", "not_observed")]
+    assert result["ref"] == PAD_CHAIN
+    assert result["next"] == (
+        "chains.insert applied and its ref is in this result; do not repeat chains.insert. fill is unknown: inspect "
+        "with devices.list before any further write; never resend it."
+    )
 
 
 def test_without_insert_chains_insert_is_the_plain_host_call():

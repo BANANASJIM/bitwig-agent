@@ -18,6 +18,7 @@ import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Refs;
 import dev.bitwigagent.core.RpcException;
 import dev.bitwigagent.device.DeviceModule;
+import dev.bitwigagent.device.DirectParameters;
 import dev.bitwigagent.host.NativeReadContext;
 import java.util.*;
 import java.util.function.Supplier;
@@ -58,6 +59,12 @@ public final class GridRemotePageWriterTest {
         final Node host = new Node(), editedPages = new Node(), otherPages = new Node();
         final List<Page> others = new ArrayList<>(), pages = new ArrayList<>(), modulePages = new ArrayList<>();
         final Node darkness, grit, panel;
+        /** The device's own (direct) parameters by parameters.list id. */
+        final Map<String, Object> direct = new HashMap<>();
+
+        final Map<Object, String> names = new IdentityHashMap<>();
+
+        boolean swapDirect;
         final Set<Object> unmappable = Collections.newSetFromMap(new IdentityHashMap<>());
         final Set<Object> ineligible = Collections.newSetFromMap(new IdentityHashMap<>());
         final List<String> calls = new ArrayList<>();
@@ -229,6 +236,29 @@ public final class GridRemotePageWriterTest {
         }
 
         @Override
+        public DirectParameters.Lookup direct() {
+            return new DirectParameters.Lookup() {
+                @Override
+                public String[] parameterIds(Object device) {
+                    assertTrue(device == model.device, "direct parameters belong to the bound device");
+                    return direct.keySet().toArray(new String[0]);
+                }
+
+                @Override
+                public Object parameter(Object device, String id) {
+                    Object found = direct.get(id);
+                    if (swapDirect) direct.put(id, new Node(FLOAT));
+                    return found;
+                }
+
+                @Override
+                public String parameterName(Object parameter) {
+                    return names.get(parameter);
+                }
+            };
+        }
+
+        @Override
         public Object slot(Object page, int index) {
             return ((Page) page).slots.get(index);
         }
@@ -279,6 +309,117 @@ public final class GridRemotePageWriterTest {
             call("delete");
             if (apply) pages.remove(page);
         }
+    }
+
+    /** A define request whose slots are the device's own parameters, by id. */
+    private static JsonObject defineOwn(RemoteFixture f, String... ids) {
+        JsonObject[] refs = new JsonObject[ids.length];
+        for (int i = 0; i < ids.length; i++) refs[i] = Refs.parameter(f.model.source.ref(), ids[i], null);
+        return defineSlots(f, refs);
+    }
+
+    /** A define request whose slot k is the parameter ref k. */
+    private static JsonObject defineSlots(RemoteFixture f, JsonObject... refs) {
+        JsonObject p = new JsonObject();
+        p.addProperty("name", "Macros");
+        JsonArray slots = new JsonArray();
+        for (JsonObject ref : refs) {
+            JsonObject slot = new JsonObject();
+            slot.add("parameter", ref);
+            slots.add(slot);
+        }
+        p.add("slots", slots);
+        return f.writer.define(
+                f.model.source, GridRemotePageWriter.Request.parse(p), () -> {}, () -> f.op.markDispatched());
+    }
+
+    @Test
+    void anOwnParameterRefWithAnotherNameIsTargetChangedAndWritesNothing() {
+        RemoteFixture f = new RemoteFixture();
+        f.model.device.values.remove(GRAPH);
+        Node cutoff = new Node(FLOAT);
+        f.direct.put("CONTENTS/CUTOFF", cutoff);
+        f.names.put(cutoff, "Cutoff");
+        JsonObject device = f.model.source.ref();
+        RpcException renamed = assertRpcError(
+                "target_changed", () -> defineSlots(f, Refs.parameter(device, "CONTENTS/CUTOFF", "Resonance")));
+        assertEquals(Refs.parameter(device, "CONTENTS/CUTOFF", "Cutoff"), renamed.current);
+        assertTrue(f.calls.isEmpty() && !f.op.dispatched(), "nothing is written");
+        JsonObject named = Refs.parameter(device, "CONTENTS/CUTOFF", "Cutoff");
+        JsonObject result = defineSlots(f, named);
+        assertEquals(
+                named, result.getAsJsonArray("slots").get(0).getAsJsonObject().get("parameter"));
+    }
+
+    @Test
+    void aListedOwnParameterWithNoNativeObjectIsTargetNotFound() {
+        RemoteFixture f = new RemoteFixture();
+        f.direct.put("CONTENTS/CUTOFF", null);
+        assertRpcError("target_not_found", () -> defineOwn(f, "CONTENTS/CUTOFF"));
+        assertTrue(f.calls.isEmpty() && !f.op.dispatched(), "nothing is written");
+    }
+
+    @Test
+    void aGridDeviceTakesItsOwnAndItsModulesParametersOnOnePage() {
+        RemoteFixture f = new RemoteFixture();
+        Node mix = new Node(FLOAT);
+        f.direct.put("CONTENTS/MIX", mix);
+        JsonObject result = defineSlots(
+                f,
+                Refs.parameter(f.model.source.ref(), "CONTENTS/MIX", null),
+                Refs.parameter(Refs.gridModule(f.model.source.ref(), FIRST.toString(), "module"), "VALUE", null));
+        assertEquals("applied", result.get("outcome").getAsString());
+        assertSame(mix, f.pages.get(0).slots.get(0).target);
+        assertSame(f.darkness, f.pages.get(0).slots.get(1).target);
+    }
+
+    @Test
+    void anOwnParameterSlotOfAnotherDeviceIsRefused() {
+        RemoteFixture f = new RemoteFixture();
+        f.direct.put("CONTENTS/MIX", new Node(FLOAT));
+        JsonObject other = f.model.source.ref().deepCopy();
+        other.addProperty("index", 1);
+        assertRpcError("unsupported_scope", () -> defineSlots(f, Refs.parameter(other, "CONTENTS/MIX", null)));
+        assertTrue(f.calls.isEmpty() && !f.op.dispatched(), "nothing is written");
+    }
+
+    @Test
+    void aDeviceWithoutAGridMapsItsOwnParametersAndDeletesThePage() {
+        RemoteFixture f = new RemoteFixture();
+        f.model.device.values.remove(GRAPH);
+        Node cutoff = new Node(FLOAT), drive = new Node(FLOAT);
+        f.direct.put("CONTENTS/CUTOFF", cutoff);
+        f.direct.put("CONTENTS/DRIVE", drive);
+        JsonObject result = defineOwn(f, "CONTENTS/CUTOFF", "CONTENTS/DRIVE");
+        assertEquals(List.of("create", "rename", "map0", "map1"), f.calls);
+        Page page = f.pages.get(0);
+        assertSame(cutoff, page.slots.get(0).target);
+        assertSame(drive, page.slots.get(1).target);
+        assertEquals("applied", result.get("outcome").getAsString());
+        assertEquals("native_readback", result.get("verification").getAsString());
+        assertEquals(
+                Refs.parameter(f.model.source.ref(), "CONTENTS/CUTOFF", null),
+                result.getAsJsonArray("slots").get(0).getAsJsonObject().get("parameter"));
+        assertEquals(
+                "already_matched",
+                defineOwn(f, "CONTENTS/CUTOFF", "CONTENTS/DRIVE").get("outcome").getAsString());
+        assertEquals("applied", f.delete("Macros", 0).get("outcome").getAsString());
+        assertTrue(f.pages.isEmpty());
+    }
+
+    @Test
+    void anOwnParameterThatIsGoneOrChangesIsRefusedAndAGridSlotNeedsAGrid() {
+        RemoteFixture f = new RemoteFixture();
+        f.model.device.values.remove(GRAPH);
+        f.direct.put("CONTENTS/CUTOFF", new Node(FLOAT));
+        assertRpcError("target_not_found", () -> defineOwn(f, "CONTENTS/GONE"));
+        assertRpcError("kind_mismatch", () -> f.define(TWO));
+        f.swapDirect = true;
+        assertRpcError("target_changed", () -> defineOwn(f, "CONTENTS/CUTOFF"));
+        assertTrue(f.calls.isEmpty() && !f.op.dispatched(), "nothing is written");
+        RemoteFixture grid = new RemoteFixture();
+        grid.direct.put("CONTENTS/MIX", new Node(FLOAT));
+        assertRpcError("invalid_params", () -> defineOwn(grid, "CONTENTS/MIX", "CONTENTS/MIX"));
     }
 
     private static final String TWO =

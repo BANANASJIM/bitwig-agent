@@ -93,6 +93,8 @@ public final class ModulatorEditor implements ParameterResolver.ModuleOwners {
         double range(Object target);
 
         boolean canModulate(Object source, Object target);
+        /** The device's direct parameters, for mappings to the device's own parameters. */
+        DirectParameters.Lookup direct();
         /** {graph, module, parameter} for a Grid module control on this device, or null when it has none now. */
         Object[] gridParameter(DeviceSources.Source source, UUID moduleId, String parameterId, Runnable check);
 
@@ -141,8 +143,9 @@ public final class ModulatorEditor implements ParameterResolver.ModuleOwners {
 
     // ---------------------------------------------------------------- requests
 
-    /** Target control of a mapping: a Grid module control or another modulator's control on the same device. */
+    /** Target control of a mapping on the same device: its own parameter, a Grid module's or another modulator's. */
     static final class TargetRef {
+        final boolean direct;
         final UUID moduleId, modulatorId;
         final String parameterId;
         /** The control's name as the ref read it, or null when the ref carries none. */
@@ -150,24 +153,28 @@ public final class ModulatorEditor implements ParameterResolver.ModuleOwners {
         /** The parameter ref as given, for the error that names what was not found. */
         final JsonObject ref;
 
-        private TargetRef(JsonObject ref, UUID moduleId, UUID modulatorId, String parameterId, String name) {
+        private TargetRef(
+                JsonObject ref, boolean direct, UUID moduleId, UUID modulatorId, String parameterId, String name) {
             this.ref = ref;
+            this.direct = direct;
             this.moduleId = moduleId;
             this.modulatorId = modulatorId;
             this.parameterId = parameterId;
             this.name = name;
         }
 
-        /** The control a parameter ref owned by a Grid module or a modulator names. */
+        /** The control a parameter ref owned by the device, a Grid module or a modulator names. */
         static TargetRef of(JsonObject parameter) {
             JsonObject owner = parameter.getAsJsonObject("owner");
-            boolean module = ParameterRefs.GRID_MODULE.equals(Refs.kind(owner));
-            UUID id = UUID.fromString(owner.get("id").getAsString());
+            String kind = Refs.kind(owner);
+            boolean direct = ParameterRefs.DEVICE.equals(kind), module = ParameterRefs.GRID_MODULE.equals(kind);
+            UUID id = direct ? null : UUID.fromString(owner.get("id").getAsString());
             String name = parameter.has("name") ? parameter.get("name").getAsString() : null;
             return new TargetRef(
                     parameter,
+                    direct,
                     module ? id : null,
-                    module ? null : id,
+                    module || direct ? null : id,
                     parameter.get("id").getAsString(),
                     name);
         }
@@ -432,6 +439,11 @@ public final class ModulatorEditor implements ParameterResolver.ModuleOwners {
             if (!a.isTarget(bound[2]))
                 throw Errors.notApplied(Reason.UNSUPPORTED_SCOPE, "This Grid control is not a modulation target.");
             found = new Resolved(bound[2], bound[0], bound[1]);
+        } else if (ref.direct) {
+            Object parameter = DirectParameters.resolve(a.direct(), s.device, s.deviceRef, ref.ref);
+            if (!a.isTarget(parameter))
+                throw Errors.notApplied(Reason.UNSUPPORTED_SCOPE, "This device parameter is not a modulation target.");
+            found = new Resolved(parameter, s.device, s.device);
         } else {
             Object modulator = s.modulator(ref.modulatorId);
             Object parameter = child(modulator, ref.parameterId, false);
@@ -440,7 +452,7 @@ public final class ModulatorEditor implements ParameterResolver.ModuleOwners {
                         Reason.UNSUPPORTED_SCOPE, "This modulator control is not a supported modulation target.");
             found = new Resolved(parameter, s.collection, modulator);
         }
-        if (ref.name != null && !ref.name.equals(parameterName(found.parameter)))
+        if (!ref.direct && ref.name != null && !ref.name.equals(parameterName(found.parameter)))
             throw Errors.targetChanged("The control was renamed since it was read.", describe(s, found.parameter));
         return found;
     }
@@ -568,9 +580,11 @@ public final class ModulatorEditor implements ParameterResolver.ModuleOwners {
         Object modulator = target == null ? null : a.owner(target, Owner.MODULATOR);
         if (modulator != null && s.contains(modulator))
             return Refs.parameter(modulatorRef(s, modulator), id, readableName(target));
+        boolean here = target != null && a.owner(target, Owner.DEVICE) == s.device;
+        JsonObject direct = here ? DirectParameters.find(a.direct(), s.device, s.deviceRef, target) : null;
+        if (direct != null) return direct;
         JsonObject result = new JsonObject();
-        result.addProperty(
-                "location", target != null && a.owner(target, Owner.DEVICE) == s.device ? "device" : "external");
+        result.addProperty("location", here ? "device" : "external");
         result.addProperty("path", target == null ? null : a.path(target));
         result.addProperty("parameterId", id);
         return result;

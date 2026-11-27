@@ -15,6 +15,8 @@ These guides describe the public implementation and supported user workflows. Th
 | Look up exact schemas, bounds and side effects | [Protocol](../PROTOCOL.md) |
 | Understand package contents, AUR maintenance and PyPI promotion | [Packaging and releases](packaging.md) |
 | Build from source or contribute | [Contributing](../CONTRIBUTING.md) |
+| Add private support for a new platform or Bitwig version | [Name tables](name-tables.md) |
+| See what changed in each version | [Changelog](../CHANGELOG.md) |
 | Run checks or interpret native coverage | [Verification](../VERIFICATION.md) |
 | Report a vulnerability privately | [Security](../SECURITY.md) |
 

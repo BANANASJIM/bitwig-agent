@@ -315,9 +315,11 @@ AutomationParameterRef = Annotated[
     _scope("automation.points", remotePage="parameters.list"),
 ]
 MappingParameterRef = Annotated[
-    _GRID_PARAMETER | _MODULATOR_PARAMETER, Discriminator(tag), _scope("modulators.map/unmap")
+    _GRID_PARAMETER | _MODULATOR_PARAMETER | _DEVICE_PARAMETER, Discriminator(tag), _scope("modulators.map/unmap")
 ]
-RemoteSlotParameterRef = Annotated[_GRID_PARAMETER, Discriminator(tag), _scope("devices.remote.define")]
+RemoteSlotParameterRef = Annotated[
+    _GRID_PARAMETER | _DEVICE_PARAMETER, Discriminator(tag), _scope("devices.remote.define")
+]
 
 FORWARD: tuple[type[Ref], ...] = (*PARAMETER_VARIANTS.values(), TrackDeviceRef, ChainDeviceRef, ChainRef, RemotePageRef)
 for _model in FORWARD:
