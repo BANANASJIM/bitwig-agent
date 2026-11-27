@@ -78,7 +78,9 @@ public final class ModulatorEditModule implements HostModule {
         JsonArray methods = new JsonArray();
         METHODS.stream().sorted().forEach(methods::add);
         section.add("editMethods", methods);
-        section.addProperty("mappingTargets", "grid_module_controls_and_other_modulator_controls_on_the_same_device");
+        section.addProperty(
+                "mappingTargets",
+                "device_parameters_grid_module_controls_and_other_modulator_controls_on_the_same_device");
         section.addProperty("structuralWritesRequireStoppedTransport", true);
         section.addProperty("nativeVerification", "not_established_by_binding");
         out.add("modulators", section);
@@ -151,9 +153,12 @@ public final class ModulatorEditModule implements HostModule {
         });
     }
 
-    /** A mapping's target control lives on the same device as its source modulator. */
+    /** A mapping's target control lives on the same device as its source modulator, or is one of its parameters. */
     private void requireSameDevice(DeviceSources.Source device, JsonObject targetOwner) {
-        if (sources.device(targetOwner.getAsJsonObject("device"), false) != device)
+        JsonObject owner = ParameterRefs.DEVICE.equals(Refs.kind(targetOwner))
+                ? targetOwner
+                : targetOwner.getAsJsonObject("device");
+        if (sources.device(owner, false) != device)
             throw Errors.invalid("The target control is not on the source modulator's device.");
     }
 

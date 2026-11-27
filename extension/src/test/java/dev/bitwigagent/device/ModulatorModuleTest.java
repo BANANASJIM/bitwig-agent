@@ -342,6 +342,24 @@ public final class ModulatorModuleTest {
     }
 
     @Test
+    void aMappingToADeviceParameterNamesTheDeviceItself() {
+        Fixture f = new Fixture();
+        JsonObject p = new JsonObject();
+        p.add("source", f.random);
+        p.add("target", Refs.parameter(f.ref, "CONTENTS/CUTOFF", "Cutoff"));
+        p.addProperty("amount", 0.5);
+        HostOperation map = f.finish(f.start(f.edits, "modulators.map", p));
+        assertEquals(
+                Refs.parameter(f.ref, "CONTENTS/CUTOFF", "Cutoff"),
+                map.result.join().get("ref"));
+        f.addRack();
+        p.add(
+                "target",
+                Refs.parameter(Refs.device(Refs.track(HostFixture.A, "Track 0"), 1, "Instrument Layer"), "X", null));
+        assertRpcError("invalid_params", f.finish(f.start(f.edits, "modulators.map", p)));
+    }
+
+    @Test
     void mapAndUnmapRefuseAnotherDeviceAndRenamedRefs() {
         Fixture f = new Fixture();
         f.addRack();

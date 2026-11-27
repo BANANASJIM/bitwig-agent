@@ -16,10 +16,11 @@ import java.util.stream.Stream;
  * opening its own named undoable change: remote.devicePages.create "Create Page" (inherited by the preset-page list),
  * remote.page.map "Map Remote Control Slot" (what eligibility mapping and the parameter's map-mode path call),
  * remote.page.clear "Delete Remote Control", remote.devicePages.delete "Delete Page", and the public final recorded
- * name setter remote.page.rename.
+ * name setter remote.page.rename. A slot on a device's own parameter maps the {@link NativeDirectParameters} object.
  */
 public final class NativeRemotePageAccess implements GridRemotePageWriter.Access {
     private final NativeHost.Access bindings;
+    private final NativeDirectParameters direct;
     private final Class<?> pageType, slotType, parameterType, deviceType, devicePageList, presetPageList;
     private final Method host,
             devicePages,
@@ -46,6 +47,7 @@ public final class NativeRemotePageAccess implements GridRemotePageWriter.Access
 
     public NativeRemotePageAccess(NativeHost.Access bindings) throws ReflectiveOperationException {
         this.bindings = bindings;
+        direct = new NativeDirectParameters(bindings);
         deviceType = bindings.type("device");
         Class<?> hostType = bindings.type("remote.host");
         devicePageList = bindings.type("remote.devicePages");
@@ -182,6 +184,11 @@ public final class NativeRemotePageAccess implements GridRemotePageWriter.Access
     public boolean eligible(Object page, Object parameter) {
         requireType(pageType, page, "page");
         return parameterType.isInstance(parameter) && Boolean.TRUE.equals(bindings.invoke(eligible, page, parameter));
+    }
+
+    @Override
+    public Object directParameter(Object device, String id) {
+        return direct.find(device, id);
     }
 
     @Override

@@ -809,6 +809,7 @@ def test_grid_voicing_set_rejects_bad_values_and_missing_preconditions(changes):
 GRID_MODULE_REF = {"kind": "gridModule", "device": DEVICE, "id": TRACK, "name": "Mx: darkness"}
 SLOT = {"kind": "parameter", "owner": GRID_MODULE_REF, "id": "VALUE"}
 PAGE = {"kind": "remotePage", "device": DEVICE, "index": 1, "name": "Macros"}
+OWN = {"kind": "parameter", "owner": DEVICE, "id": "CONTENTS/CUTOFF", "name": "Cutoff"}
 
 
 def test_remote_page_define_is_an_upsert_by_name_and_delete_takes_the_page_ref():
@@ -824,6 +825,8 @@ def test_remote_page_define_is_an_upsert_by_name_and_delete_takes_the_page_ref()
         "devices.remote.define", {**TARGET, "name": "P" * 256, "slots": [None] * 7 + [{"parameter": SLOT}]}
     )
     assert validate_call("devices.remote.delete", {"target": PAGE})[0] == {"target": PAGE}
+    own = {**TARGET, "name": "Macros", "slots": [{"parameter": OWN}, {"parameter": SLOT}]}
+    assert validate_call("devices.remote.define", own)[0] == own
     fields = TOOLS["devices.remote.define"].model.model_fields
     assert "mode" not in fields
     assert "pageName" not in fields
@@ -849,7 +852,18 @@ def test_remote_page_define_is_an_upsert_by_name_and_delete_takes_the_page_ref()
                 {"parameter": {**SLOT, "owner": {"kind": "modulator", "device": DEVICE, "id": TRACK, "name": "LFO"}}}
             ]
         },
-        {"slots": [{"parameter": {"kind": "parameter", "owner": DEVICE, "id": "VALUE"}}]},
+        {"slots": [{"parameter": OWN}, {"parameter": OWN, "label": "again"}]},
+        {
+            "slots": [
+                {
+                    "parameter": {
+                        "kind": "parameter",
+                        "owner": {"kind": "track", "id": TRACK, "name": "T"},
+                        "id": "volume",
+                    }
+                }
+            ]
+        },
         {"slots": [1]},
     ],
 )

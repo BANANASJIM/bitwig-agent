@@ -140,6 +140,10 @@ public final class ModulatorEditorTest {
         final Param decay = new Param("DECAY", "Decay", "float", 0.2, 0, 1, module);
         final Param level = new Param("LEVEL", "Level", "float", 0.4, 0, 1, new Object());
         final Param farAway = new Param("FAR", "Far", "float", 0.4, 0, 1, new Object());
+        /** A direct parameter of the device; TEXT is one that is no modulation target. */
+        final Param cutoff = new Param("CONTENTS/CUTOFF", "Cutoff", "float", 0.3, 0, 1, device);
+
+        final Object text = new Object();
         final Deque<Runnable> queue = new ArrayDeque<>();
         final NativeAccess nativeAccess;
         final DeviceSources.Native natives;
@@ -376,6 +380,22 @@ public final class ModulatorEditorTest {
         }
 
         @Override
+        public Object directParameter(Object device, String id) {
+            assertSame(this.device, device);
+            return id.equals(cutoff.id) ? cutoff : id.equals("CONTENTS/TEXT") ? text : null;
+        }
+
+        @Override
+        public String directId(Object device, Object parameter) {
+            return parameter == cutoff ? cutoff.id : null;
+        }
+
+        @Override
+        public String directName(Object parameter) {
+            return ((Param) parameter).name;
+        }
+
+        @Override
         public Object[] gridParameter(DeviceSources.Source source, UUID moduleId, String parameterId, Runnable check) {
             if (!MODULE.equals(moduleId) || !parameterId.equals("DECAY")) return null;
             return new Object[] {graph, module, decay};
@@ -480,7 +500,7 @@ public final class ModulatorEditorTest {
         final DeviceSources.Source source;
         final Fake f;
         final ModulatorEditor editor;
-        final JsonObject device, random, lfo, decay, rate, depth;
+        final JsonObject device, random, lfo, decay, rate, depth, cutoff;
 
         Env() {
             FakeHost bank = host.tracks[0].child("createDeviceBank");
@@ -499,6 +519,7 @@ public final class ModulatorEditorTest {
             decay = Refs.parameter(Refs.gridModule(device, MODULE.toString(), "Env"), "DECAY", "Decay");
             rate = Refs.parameter(random, "RATE", "Rate");
             depth = Refs.parameter(lfo, "DEPTH", "Depth");
+            cutoff = Refs.parameter(device, "CONTENTS/CUTOFF", "Cutoff");
         }
 
         JsonObject read() {
@@ -856,6 +877,58 @@ public final class ModulatorEditorTest {
         Outcome lost = same.upsert(same.random, same.decay, "\"amount\":0.75,\"transfer\":\"cubic\"", d);
         assertEquals("readback_mismatch", code(lost));
         assertEquals("linear", same.f.source(0).mappings.get(0).transfer);
+    }
+
+    @Test
+    void aDeviceParameterIsMappedByItsIdAndReadBackAsADeviceParameterRef() {
+        Env e = new Env();
+        int[] d = {0};
+        Outcome o = e.upsert(e.lfo, e.cutoff, "\"amount\":0.3", d);
+        assertNull(o.error);
+        assertEquals(1, d[0]);
+        assertSame(e.f.cutoff, e.f.source(1).mappings.get(0).target);
+        assertEquals("applied", o.value.get("outcome").getAsString());
+        assertEquals("native_readback", o.value.get("verification").getAsString());
+        assertEquals(e.cutoff, o.value.get("ref"));
+        HostFixture.REF_SCHEMA.apply(o.value.getAsJsonObject("ref"));
+        JsonObject read = e.read()
+                .getAsJsonArray("modulators")
+                .get(1)
+                .getAsJsonObject()
+                .getAsJsonArray("outputs")
+                .get(0)
+                .getAsJsonObject()
+                .getAsJsonArray("mappings")
+                .get(0)
+                .getAsJsonObject();
+        assertEquals(e.cutoff, read.get("target"));
+        assertEquals(0.3, read.get("amount").getAsDouble());
+        JsonObject unnamed = Refs.parameter(e.device, "CONTENTS/CUTOFF", null);
+        assertEquals(
+                "already_matched",
+                e.upsert(e.lfo, unnamed, "\"amount\":0.3", d)
+                        .value
+                        .get("outcome")
+                        .getAsString());
+        assertEquals(1, d[0], "an unchanged mapping is not dispatched");
+    }
+
+    @Test
+    void aDeviceParameterThatIsGoneRenamedOrNoTargetIsRefusedBeforeDispatch() {
+        Env e = new Env();
+        int[] d = {0};
+        assertEquals(
+                "target_not_found",
+                code(e.upsert(e.lfo, Refs.parameter(e.device, "CONTENTS/GONE", null), "\"amount\":0.3", d)));
+        RpcException renamed =
+                failure(e.upsert(e.lfo, Refs.parameter(e.device, "CONTENTS/CUTOFF", "Old"), "\"amount\":0.3", d));
+        assertEquals("target_changed", renamed.reason.wire());
+        assertEquals(e.cutoff, renamed.current);
+        assertEquals(
+                "unsupported_scope",
+                code(e.upsert(e.lfo, Refs.parameter(e.device, "CONTENTS/TEXT", null), "\"amount\":0.3", d)));
+        assertEquals(0, d[0]);
+        assertTrue(e.f.source(1).mappings.isEmpty());
     }
 
     // ------------------------------------------------------------------ unmap

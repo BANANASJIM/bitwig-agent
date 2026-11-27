@@ -58,6 +58,10 @@ public final class GridRemotePageWriterTest {
         final Node host = new Node(), editedPages = new Node(), otherPages = new Node();
         final List<Page> others = new ArrayList<>(), pages = new ArrayList<>(), modulePages = new ArrayList<>();
         final Node darkness, grit, panel;
+        /** The device's own (direct) parameters by parameters.list id. */
+        final Map<String, Object> direct = new HashMap<>();
+
+        boolean swapDirect;
         final Set<Object> unmappable = Collections.newSetFromMap(new IdentityHashMap<>());
         final Set<Object> ineligible = Collections.newSetFromMap(new IdentityHashMap<>());
         final List<String> calls = new ArrayList<>();
@@ -229,6 +233,14 @@ public final class GridRemotePageWriterTest {
         }
 
         @Override
+        public Object directParameter(Object device, String id) {
+            assertTrue(device == model.device, "direct parameters belong to the bound device");
+            Object found = direct.get(id);
+            if (swapDirect && found != null) direct.put(id, new Node(FLOAT));
+            return found;
+        }
+
+        @Override
         public Object slot(Object page, int index) {
             return ((Page) page).slots.get(index);
         }
@@ -279,6 +291,60 @@ public final class GridRemotePageWriterTest {
             call("delete");
             if (apply) pages.remove(page);
         }
+    }
+
+    /** A define request whose slots are the device's own parameters, by id. */
+    private static JsonObject defineOwn(RemoteFixture f, String... ids) {
+        JsonObject p = new JsonObject();
+        p.addProperty("name", "Macros");
+        JsonArray slots = new JsonArray();
+        for (String id : ids) {
+            JsonObject slot = new JsonObject();
+            slot.add("parameter", Refs.parameter(f.model.source.ref(), id, null));
+            slots.add(slot);
+        }
+        p.add("slots", slots);
+        return f.writer.define(
+                f.model.source, GridRemotePageWriter.Request.parse(p), () -> {}, () -> f.op.markDispatched());
+    }
+
+    @Test
+    void aDeviceWithoutAGridMapsItsOwnParametersAndDeletesThePage() {
+        RemoteFixture f = new RemoteFixture();
+        f.model.device.values.remove(GRAPH);
+        Node cutoff = new Node(FLOAT), drive = new Node(FLOAT);
+        f.direct.put("CONTENTS/CUTOFF", cutoff);
+        f.direct.put("CONTENTS/DRIVE", drive);
+        JsonObject result = defineOwn(f, "CONTENTS/CUTOFF", "CONTENTS/DRIVE");
+        assertEquals(List.of("create", "rename", "map0", "map1"), f.calls);
+        Page page = f.pages.get(0);
+        assertSame(cutoff, page.slots.get(0).target);
+        assertSame(drive, page.slots.get(1).target);
+        assertEquals("applied", result.get("outcome").getAsString());
+        assertEquals("native_readback", result.get("verification").getAsString());
+        assertEquals(
+                Refs.parameter(f.model.source.ref(), "CONTENTS/CUTOFF", null),
+                result.getAsJsonArray("slots").get(0).getAsJsonObject().get("parameter"));
+        assertEquals(
+                "already_matched",
+                defineOwn(f, "CONTENTS/CUTOFF", "CONTENTS/DRIVE").get("outcome").getAsString());
+        assertEquals("applied", f.delete("Macros", 0).get("outcome").getAsString());
+        assertTrue(f.pages.isEmpty());
+    }
+
+    @Test
+    void anOwnParameterThatIsGoneOrChangesIsRefusedAndAGridSlotNeedsAGrid() {
+        RemoteFixture f = new RemoteFixture();
+        f.model.device.values.remove(GRAPH);
+        f.direct.put("CONTENTS/CUTOFF", new Node(FLOAT));
+        assertRpcError("target_not_found", () -> defineOwn(f, "CONTENTS/GONE"));
+        assertRpcError("kind_mismatch", () -> f.define(TWO));
+        f.swapDirect = true;
+        assertRpcError("target_changed", () -> defineOwn(f, "CONTENTS/CUTOFF"));
+        assertTrue(f.calls.isEmpty() && !f.op.dispatched(), "nothing is written");
+        RemoteFixture grid = new RemoteFixture();
+        grid.direct.put("CONTENTS/MIX", new Node(FLOAT));
+        assertRpcError("invalid_params", () -> defineOwn(grid, "CONTENTS/MIX", "CONTENTS/MIX"));
     }
 
     private static final String TWO =

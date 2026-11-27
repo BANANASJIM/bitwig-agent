@@ -38,7 +38,7 @@ Modulator topology edits need a stopped, non-recording transport; `parameters se
 
 ## Macro knobs
 
-`devices remote define` sets a named Remote Controls page whose knobs drive chosen scalar Grid parameters (refs from the export). It is an upsert; `devices remote delete` removes the page. Pages live in the device's preset-page list, which is what the UI's Add New Page creates.
+`devices remote define` sets a named Remote Controls page whose knobs drive chosen scalar Grid parameters (refs from the export) or the device's own parameters (refs from `parameters list`), on any root device. It is an upsert; `devices remote delete` removes the page. Pages live in the device's preset-page list, which is what the UI's Add New Page creates.
 
 ## Debug silent patches
 
