@@ -206,7 +206,7 @@ def test_modulators_insert_sets_controls_then_maps_from_the_new_modulator():
     args = {
         "to": GRID_DEVICE,
         "typeName": "LFO",
-        "params": {"Rate": {"display": "0.25 Hz"}},
+        "params": {"Rate": -0.60206},
         "map": [{"target": GRID_PARAMETER_REF, "amount": 0.3, "transfer": "cubic"}],
     }
     result = call(host, "modulators.insert", args)
@@ -217,7 +217,7 @@ def test_modulators_insert_sets_controls_then_maps_from_the_new_modulator():
     assert steps(result) == [("insert", "applied", None), ("params.Rate", "applied", None), ("map[0]", "applied", None)]
     assert host.calls == [
         ("modulators.insert", {"to": GRID_DEVICE, "typeName": "LFO"}),
-        ("parameters.set", {"target": LFO_ROW["parameters"][0]["ref"], "value": {"display": "0.25 Hz"}}),
+        ("parameters.set", {"target": LFO_ROW["parameters"][0]["ref"], "value": -0.60206}),
         ("modulators.map", {"source": LFO, "target": GRID_PARAMETER_REF, "amount": 0.3, "transfer": "cubic"}),
     ]
 
@@ -269,3 +269,15 @@ def test_a_host_ref_the_client_refuses_is_a_not_applied_step_not_an_error():
     result = call(host, "devices.insert", {"to": TRACK_REF, "insert": FILTER, "params": {"Drive": 0.5}})
     assert steps(result) == [("insert", "applied", None), ("params.Drive", "not_applied", "invalid_params")]
     assert result["ref"] == NEW_DEVICE
+
+
+def test_next_names_the_finishing_calls_in_run_order():
+    host = Host(**{"parameters.set": bridge_error("not_observed", "No callback.")})
+    args = {
+        "to": GRID_DEVICE,
+        "typeName": "LFO",
+        "params": {"Rate": 0},
+        "map": [{"target": GRID_PARAMETER_REF, "amount": 0.3}],
+    }
+    result = call(host, "modulators.insert", args)
+    assert "Not done: params.Rate, map[0]; finish with parameters.set and modulators.map" in result["next"]

@@ -191,8 +191,8 @@ SPECS: dict[str, ToolSpec] = {
             {"to": CHAIN_REF, "position": "start", "insert": {"kind": "clap", "id": "org.example.effect"}},
             {
                 "to": TRACK_REF,
-                "insert": {"kind": "file", "path": "/devices/Filter+.bwdevice"},
-                "params": {"Cutoff": {"display": "800 Hz"}, "Resonance": 0.3},
+                "insert": {"kind": "file", "path": "/devices/Filter.bwdevice"},
+                "params": {"Frequency": {"display": "800 Hz"}, "Resonance": 0.3},
             },
         ),
         requires=PROJECT_READY,

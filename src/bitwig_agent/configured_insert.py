@@ -131,7 +131,7 @@ def finish_hint(method: str, created: dict[str, Any], steps: list[Step], entries
         hint += (
             f" {unknown[0].name} is unknown: inspect with {TOOLS[unknown[0].method].inspect} before any further write."
         )
-    calls = " and ".join(sorted({s.method for s, _ in open_steps}))
+    calls = " and ".join(dict.fromkeys(s.method for s, _ in open_steps))  # in run order
     return f"{hint} Not done: {', '.join(s.name for s, _ in open_steps)}; finish with {calls} on the new object (refs from {read})."
 
 

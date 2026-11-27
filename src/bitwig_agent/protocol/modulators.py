@@ -190,7 +190,7 @@ SPECS: dict[str, ToolSpec] = {
             {
                 "to": DEVICE_REF,
                 "typeName": "LFO",
-                "params": {"Rate": {"display": "0.25 Hz"}},
+                "params": {"Rate": -0.60206},
                 "map": [{"target": GRID_PARAMETER_REF, "amount": 0.3}],
             },
         ),
