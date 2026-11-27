@@ -9,6 +9,7 @@ import dev.bitwigagent.core.DisplaySolver;
 import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.HostModule;
 import dev.bitwigagent.core.HostOperation;
+import dev.bitwigagent.core.MethodSpecs;
 import dev.bitwigagent.core.Outcome;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Refs;
@@ -311,7 +312,7 @@ public final class ParameterModule implements HostModule, ParameterResolver.Dire
                     unparsed(text),
                     parameter.value == null ? null : new JsonPrimitive(parameter.value),
                     parameter.display == null ? null : new JsonPrimitive(parameter.display));
-        Runnable safety = transportSafety.writeGuard(op, true);
+        Runnable safety = transportSafety.atLeast(op, MethodSpecs.Transport.STOPPED);
         if (source.displayOwner != null)
             throw Errors.notApplied(Reason.BUSY, "Another request is reading this device's display texts.");
         long mark = displaySequence;
@@ -478,7 +479,7 @@ public final class ParameterModule implements HostModule, ParameterResolver.Dire
     /** A display write on a device inside a chain: the same bisection, each probe a native write and read-back. */
     private void nestedSolve(HostOperation op, JsonObject ref, String text, JsonObject expect) {
         DisplayScale.Quantity wanted = DisplayScale.quantity(text);
-        Runnable safety = transportSafety.writeGuard(op, true);
+        Runnable safety = transportSafety.atLeast(op, MethodSpecs.Transport.STOPPED);
         JsonObject owner = ref.getAsJsonObject("owner");
         NativeParameterPort port =
                 new NativeParameterPort(chains, scheduler, op, owner, walk -> walk.parameter(ref), safety);

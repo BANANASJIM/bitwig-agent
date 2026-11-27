@@ -7,15 +7,9 @@ import com.google.gson.*;
 import dev.bitwigagent.FakeHost;
 import dev.bitwigagent.HostBridge;
 import dev.bitwigagent.HostFixture;
-import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.HostOperation;
-import dev.bitwigagent.core.Outcome;
-import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Refs;
-import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.RpcException;
-import dev.bitwigagent.core.Verification;
-import dev.bitwigagent.host.DeviceSources;
 import java.util.*;
 import org.junit.jupiter.api.Test;
 
@@ -124,58 +118,6 @@ public final class RoutingModuleTest {
     }
 
     @Test
-    void helpers() {
-        assertTrue(
-                RoutingModule.sourceKinds(RoutingModule.trackSourceGroups("AUDIO"))
-                        .equals(List.of("none", "pre_fader", "post_fader")),
-                "audio track: pre/post fader");
-        assertTrue(
-                RoutingModule.sourceKinds(RoutingModule.trackSourceGroups("INSTRUMENT"))
-                        .equals(List.of("none", "track_notes", "all_ins", "computer_keyboard", "onscreen_keyboard")),
-                "instrument track: note sources");
-        assertTrue(
-                RoutingModule.sourceKinds(RoutingModule.trackSourceGroups("HYBRID"))
-                                .size()
-                        == 7,
-                "hybrid track: every v1 source");
-        assertTrue(
-                RoutingModule.sourceKinds(List.of("HARDWARE_AUDIO_SOURCES")).equals(List.of("none")),
-                "hardware audio is deferred");
-        assertTrue(RoutingModule.trackSourceGroups("GROUP").isEmpty(), "unknown native kind admits nothing");
-        JsonObject observed = json("{\"kind\":\"pre_fader\",\"track\":" + HostFixture.track(B) + ",\"name\":\"Pre\"}");
-        assertTrue(
-                RoutingModule.sameEntry(
-                        json("{\"kind\":\"pre_fader\",\"track\":" + HostFixture.track(B.toUpperCase(Locale.ROOT))
-                                + "}"),
-                        observed),
-                "CAS ignores UUID case and display name");
-        assertTrue(
-                !RoutingModule.sameEntry(
-                        json("{\"kind\":\"post_fader\",\"track\":" + HostFixture.track(B) + "}"), observed),
-                "CAS compares kind");
-        assertTrue(
-                !RoutingModule.sameEntry(
-                        json("{\"kind\":\"pre_fader\",\"track\":" + HostFixture.track(C) + "}"), observed),
-                "CAS compares the track id");
-        JsonObject other = json("{\"kind\":\"other\",\"name\":\"Out 1\",\"nativeType\":\"x\"}");
-        assertTrue(
-                RoutingModule.sameEntry(json("{\"kind\":\"other\",\"name\":\"Out 1\"}"), other),
-                "other compares exact name");
-        assertTrue(
-                !RoutingModule.sameEntry(json("{\"kind\":\"other\",\"name\":\"Out 2\"}"), other),
-                "other with another name differs");
-        assertTrue(
-                RoutingModule.sameEntry(json("{\"kind\":\"other\",\"name\":\"Out 1\",\"nativeType\":\"x\"}"), other),
-                "other copied verbatim matches");
-        assertTrue(
-                !RoutingModule.sameEntry(json("{\"kind\":\"other\",\"name\":\"Out 1\",\"nativeType\":\"y\"}"), other),
-                "same name on another native type differs");
-        assertTrue(
-                RoutingModule.sameEntry(json("{\"kind\":\"none\"}"), json("{\"kind\":\"none\",\"name\":null}")),
-                "none matches none");
-    }
-
-    @Test
     void getIsReadOnlyAndAllowsPlayingTransport() {
         Fixture f = new Fixture();
         f.host.transport.child("isPlaying").emit(true);
@@ -235,10 +177,10 @@ public final class RoutingModuleTest {
     @Test
     void preDispatchRefusalDoesNotQuarantine() {
         Fixture f = new Fixture();
-        f.adapter.refuse = Reason.KIND_MISMATCH;
+        f.adapter.reject = "output";
         HostOperation op = f.start("tracks.routing.set", outputTo(B));
         f.drain();
-        assertRpcError("kind_mismatch", op);
+        assertRpcError("routing_cycle", op);
         assertTrue(
                 !op.dispatched() && f.host.services.holds.list().isEmpty(),
                 "pre-dispatch refusal is not_applied and does not quarantine");
@@ -262,6 +204,7 @@ public final class RoutingModuleTest {
         RpcException changed = assertRpcError("target_changed", f.start("devices.sidechain.get", wrong));
         assertEquals(Refs.device(HostFixture.track(A), 0, "Compressor"), changed.current);
         JsonObject p = sidechain();
+        f.adapter.component = true;
         JsonObject result = f.call("devices.sidechain.set", p);
         assertTrue(f.adapter.writes == 1, "sidechain set reaches the adapter");
         assertEquals(p.getAsJsonObject("target"), result.getAsJsonObject("ref"), "the written component's ref");
@@ -277,6 +220,7 @@ public final class RoutingModuleTest {
     void sidechainSetMayRunWhilePlayingButNotWhileRecording() {
         Fixture playing = new Fixture();
         playing.observeDevice("Compressor");
+        playing.adapter.component = true;
         playing.host.transport.child("isPlaying").emit(true);
         playing.call("devices.sidechain.set", sidechain());
         assertEquals(1, playing.adapter.writes, "a playing transport admits a sidechain write");
@@ -345,7 +289,7 @@ public final class RoutingModuleTest {
     }
 
     private static void validated(String m, JsonObject p) {
-        RoutingModule.validateParams(m, HostBridge.checkSchema(HostFixture.SPECS, m, p));
+        RoutingModel.validateParams(m, HostBridge.checkSchema(HostFixture.SPECS, m, p));
     }
 
     @Test
@@ -383,7 +327,7 @@ public final class RoutingModuleTest {
 
     static final class Fixture {
         final HostFixture host = new HostFixture();
-        final Adapter adapter = new Adapter();
+        final FakeRoutingPort adapter = new FakeRoutingPort();
         final RoutingModule module = host.services.routing(HostFixture.SPECS, adapter);
 
         void observeDevice(String name) {
@@ -415,77 +359,75 @@ public final class RoutingModuleTest {
         }
     }
 
-    static final class Adapter implements RoutingModule.Access {
-        final Deque<Runnable> tasks = new ArrayDeque<>();
-        int calls, reads, writes;
-        boolean unknown, failAfterWrite, lastChoices;
-        Reason refuse;
-        RoutingModule.TrackRef lastSelf;
-        List<RoutingModule.TrackRef> lastBank;
-        Object lastDevice;
-
-        public void execute(Runnable work) {
-            tasks.add(work);
+    @Test
+    void hardwareInputsAreListedAndSetByTheirStableId() {
+        Fixture f = new Fixture();
+        JsonObject get = f.call("tracks.routing.get", with(target(), "\"includeChoices\":true"));
+        JsonObject bus = null;
+        for (JsonElement row : get.getAsJsonObject("input").getAsJsonArray("choices")) {
+            JsonObject entry = row.getAsJsonObject().getAsJsonObject("entry");
+            if (entry.get("kind").getAsString().equals("hardware_audio_input")) bus = entry;
         }
+        assertEquals(FakeRoutingPort.BUS.json(), bus, "an audio input bus is listed by id with its display name");
+        assertEquals(
+                json("{\"audio\":null,\"notes\":null}"),
+                get.getAsJsonObject("hardwareInputs"),
+                "both hardware kinds were listed");
+        assertTrue(
+                get.getAsJsonObject("input")
+                        .getAsJsonArray("kinds")
+                        .contains(new JsonPrimitive("hardware_audio_input")),
+                "an audio track's input takes hardware audio");
+        JsonObject p = target();
+        p.add("input", bus);
+        p.add("expect", json("{\"input\":{\"kind\":\"none\"}}"));
+        JsonObject result = f.call("tracks.routing.set", p);
+        assertEquals("applied", result.get("outcome").getAsString());
+        assertEquals(
+                bus, result.getAsJsonObject("fields").getAsJsonObject("input").get("readback"));
+        assertEquals(bus, result.getAsJsonObject("input").get("entry"), "the snapshot reads the bus back");
+        JsonObject again = target();
+        again.add(
+                "input",
+                json("{\"kind\":\"hardware_audio_input\",\"id\":\""
+                        + bus.get("id").getAsString().toUpperCase(Locale.ROOT) + "\"}"));
+        assertEquals(
+                "already_matched",
+                f.call("tracks.routing.set", again).get("outcome").getAsString(),
+                "the same id (any case, no display name) already matches");
+        assertEquals(1, f.adapter.writes);
+        JsonObject stale = target();
+        stale.add("input", json("{\"kind\":\"hardware_audio_input\",\"id\":\"" + C + "\"}"));
+        HostOperation refused = f.start("tracks.routing.set", stale);
+        f.drain();
+        assertRpcError("target_not_found", refused);
+        assertEquals(1, f.adapter.writes, "an id no longer listed writes nothing");
+    }
 
-        public JsonObject trackGet(
-                RoutingModule.TrackRef self, List<RoutingModule.TrackRef> bank, boolean choices, Runnable check) {
-            calls++;
-            reads++;
-            check.run();
-            lastSelf = self;
-            lastBank = bank;
-            lastChoices = choices;
-            return new JsonObject();
-        }
+    @Test
+    void aRenamedBusIsStillTheSameIdSoRewritingItAlreadyMatches() {
+        Fixture f = new Fixture();
+        f.adapter.inputs.put(A, RoutingEntry.hardware("hardware_audio_input", FakeRoutingPort.BUS.id, "Old name"));
+        JsonObject p = target();
+        p.add("input", FakeRoutingPort.BUS.json());
+        p.add(
+                "expect",
+                json("{\"input\":{\"kind\":\"hardware_audio_input\",\"id\":\"" + FakeRoutingPort.BUS.id
+                        + "\",\"name\":\"Older name\"}}"));
+        JsonObject result = f.call("tracks.routing.set", p);
+        assertEquals("already_matched", result.get("outcome").getAsString(), result.toString());
+        assertEquals(0, f.adapter.writes, "the stored display name differs, the bus is the same: nothing written");
+    }
 
-        public JsonObject trackSet(
-                RoutingModule.TrackRef self,
-                List<RoutingModule.TrackRef> bank,
-                JsonObject p,
-                Runnable check,
-                Runnable before) {
-            lastSelf = self;
-            lastBank = bank;
-            return write(check, before);
-        }
-
-        public JsonObject sidechainGet(
-                DeviceSources.Source device, List<RoutingModule.TrackRef> bank, boolean choices, Runnable check) {
-            calls++;
-            reads++;
-            check.run();
-            lastDevice = device;
-            JsonObject out = new JsonObject();
-            out.add("components", new JsonArray());
-            return out;
-        }
-
-        public JsonObject sidechainSet(
-                DeviceSources.Source device,
-                List<RoutingModule.TrackRef> bank,
-                JsonObject p,
-                Runnable check,
-                Runnable before) {
-            lastDevice = device;
-            JsonObject out = write(check, before);
-            JsonObject component = new JsonObject();
-            component.add("ref", p.getAsJsonObject("target"));
-            out.add("component", component);
-            return out;
-        }
-
-        JsonObject write(Runnable check, Runnable before) {
-            calls++;
-            check.run();
-            if (refuse != null) throw Errors.notApplied(refuse, "simulated refusal");
-            before.run();
-            writes++;
-            if (failAfterWrite) throw Errors.unknown(Reason.NATIVE_UNAVAILABLE, "simulated native failure");
-            JsonObject out = new JsonObject();
-            Results.stamp(out, unknown ? Outcome.UNKNOWN : Outcome.APPLIED, Verification.NATIVE_READBACK);
-            return out;
-        }
+    @Test
+    void aControllerNoteInputOnAnAudioTrackIsAKindMismatch() {
+        Fixture f = new Fixture();
+        JsonObject p = target();
+        p.add("input", FakeRoutingPort.KEYS.json());
+        HostOperation op = f.start("tracks.routing.set", p);
+        f.drain();
+        assertRpcError("kind_mismatch", op);
+        assertEquals(0, f.adapter.writes);
     }
 
     @Test

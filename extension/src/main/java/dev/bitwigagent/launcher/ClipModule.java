@@ -8,12 +8,12 @@ import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.HostLimits;
 import dev.bitwigagent.core.HostModule;
 import dev.bitwigagent.core.HostOperation;
+import dev.bitwigagent.core.MethodSpecs;
 import dev.bitwigagent.core.Outcome;
 import dev.bitwigagent.core.Params;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.RpcException;
-import dev.bitwigagent.core.SafetyObservation;
 import dev.bitwigagent.core.Scheduler;
 import dev.bitwigagent.core.ValueMatch;
 import dev.bitwigagent.core.Verification;
@@ -39,6 +39,7 @@ public final class ClipModule implements HostModule {
             "clips.copy",
             "clips.move",
             "clips.launch",
+            "clips.record",
             "clips.transpose",
             "clips.quantize",
             "clips.transform");
@@ -196,6 +197,9 @@ public final class ClipModule implements HostModule {
             case "clips.launch":
                 launch(op, p.getAsJsonObject("target"));
                 break;
+            case "clips.record":
+                record(op, p.getAsJsonObject("target"));
+                break;
             case "clips.transform":
                 transform(op, p.getAsJsonArray("targets"));
                 break;
@@ -249,6 +253,9 @@ public final class ClipModule implements HostModule {
                 throw Errors.notApplied(Reason.TARGET_EXISTS, "Insert only accepts an observed empty slot");
             state.guard(op, target);
             NativeNotes.Access access = notes.natives.access(op);
+            if (p.has("notes"))
+                NoteModule.refuseUnread(
+                        NotePlan.listed(p.getAsJsonArray("notes")), NoteModule.unread(access), access != null);
             if (access != null) {
                 insertNative(op, target, p, access);
                 return;
@@ -442,7 +449,7 @@ public final class ClipModule implements HostModule {
             InsertionPoint insertion = target.slot.api.replaceInsertionPoint();
             // Resolve everything first, then recheck the target, safety and deadline at the mutation boundary.
             state.guard(op, target);
-            transportSafety.requirePlaybackSafe();
+            transportSafety.recheck(op);
             if (target.slot.api.hasContent().get())
                 throw Errors.notApplied(Reason.TARGET_EXISTS, "Import only accepts an observed empty slot.");
             long before = target.slot.contentVersion;
@@ -480,10 +487,27 @@ public final class ClipModule implements HostModule {
             LauncherState.ready(target.slot);
             LauncherState.requireContent(target.slot);
             state.guard(op, target);
-            transportSafety.requirePlaybackSafe();
+            transportSafety.recheck(op);
             op.markDispatched();
             target.slot.api.launch();
             state.awaitPlayback(op, target, target.slot, state.clipRef(target));
+        });
+    }
+
+    /** Slot record on an armed track; recording itself is the user's explicit request, never implied. */
+    private void record(HostOperation op, JsonObject ref) {
+        state.targets.enterSlot(op, ref, false, at -> {
+            LauncherState.Target target = state.target(at);
+            LauncherState.ready(target.slot);
+            state.guard(op, target);
+            transportSafety.requireObserved();
+            if (!target.track.arm().get())
+                throw Errors.notApplied(
+                        Reason.UNSAFE_STATE,
+                        "The track is not observed armed, so the slot would not record; arm it with tracks.set arm=true. Nothing was sent.");
+            op.markDispatched();
+            target.slot.api.record();
+            state.awaitRecording(op, target, state.targets.slotRef(at));
         });
     }
 
@@ -495,7 +519,6 @@ public final class ClipModule implements HostModule {
             LauncherState.ready(target.slot);
             state.acquire(op);
             state.requireResolved(target.id(), target.scene());
-            SafetyObservation safety = transportSafety.stopped(op);
             ClipLauncherSlot api = target.slot.api;
             if (api.isPlaying().get()
                     || api.isPlaybackQueued().get()
@@ -503,7 +526,7 @@ public final class ClipModule implements HostModule {
                 throw Errors.notApplied(
                         Reason.UNSAFE_STATE, "Delete requires the clip to be neither playing, queued nor recording.");
             state.guard(op, target);
-            transportSafety.guardStopped(safety);
+            transportSafety.recheck(op);
             op.markDispatched();
             state.beginMutation(target, "clips.delete");
             long before = state.contentBefore();
@@ -674,7 +697,7 @@ public final class ClipModule implements HostModule {
                             key,
                             key.equals("launchMode") ? state.clip.launchMode() : state.clip.launchQuantization(),
                             p.get(key).getAsString());
-            SafetyObservation safety = nextAction || launch ? transportSafety.stopped(op) : null;
+            Runnable safety = nextAction || launch ? transportSafety.atLeast(op, MethodSpecs.Transport.STOPPED) : null;
             checkExpect(op, target, p.has("expect") ? p.getAsJsonObject("expect") : null, () -> {
                 JsonObject fields = new JsonObject(), changes = new JsonObject();
                 JsonObject[] settingsEvidence = new JsonObject[1];
@@ -803,7 +826,7 @@ public final class ClipModule implements HostModule {
             HostOperation op,
             LauncherState.Target target,
             JsonObject p,
-            SafetyObservation safety,
+            Runnable safety,
             JsonObject fields,
             Runnable finish) {
         state.cursorGuard(op, target);
@@ -863,13 +886,9 @@ public final class ClipModule implements HostModule {
     }
 
     private void launchFields(
-            HostOperation op,
-            LauncherState.Target target,
-            JsonObject p,
-            SafetyObservation safety,
-            Consumer<JsonObject> done) {
+            HostOperation op, LauncherState.Target target, JsonObject p, Runnable safety, Consumer<JsonObject> done) {
         state.cursorGuard(op, target);
-        transportSafety.guardStopped(safety);
+        safety.run();
         // Only differing fields are written; a written field counts only once its own observer fires after the write.
         long[] before = state.launchSequence.clone();
         Set<String> written = new HashSet<>();

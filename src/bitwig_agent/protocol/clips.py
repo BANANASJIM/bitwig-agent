@@ -9,12 +9,15 @@ from bitwig_agent.protocol.annotations import EDIT, RETRIGGER, STEER
 from bitwig_agent.protocol.base import (
     ENGINE,
     MAX_BEAT,
+    NOT_RECORDING,
     PROJECT_READY,
+    STOPPED,
     Nonempty,
     ReasonError,
     StatusArgs,
     StrictModel,
     ToolSpec,
+    drop_default,
     long_timeout,
     omitted,
     validate_local_path,
@@ -57,9 +60,90 @@ Velocity = Annotated[int, Field(ge=1, le=127, description="MIDI velocity 1..127.
 Duration = Annotated[float, Field(ge=DURATION_RESOLUTION, le=MAX_CLIP_BEATS)]
 
 
-class ClipNote(StrictModel):
-    """One note as notes.get reads it and clips.insert writes it."""
+Unit = Annotated[float, Field(ge=0, le=1)]
+Bipolar = Annotated[float, Field(ge=-1, le=1)]
+Occurrence = Literal[
+    "always",
+    "first",
+    "not_first",
+    "prev",
+    "not_prev",
+    "prev_channel",
+    "not_prev_channel",
+    "prev_key",
+    "not_prev_key",
+    "fill",
+    "not_fill",
+]
+EXPRESSIONS = ("timbre", "pressure", "pan", "gain", "transpose")
+FEATURES = (
+    "chance",
+    "velocitySpread",
+    "releaseVelocity",
+    "repeat",
+    "recurrence",
+    "occurrence",
+    "muted",
+    *EXPRESSIONS,
+)
 
+
+def nullable(description: str) -> Any:
+    """Absent keeps the note's value; explicit null turns the feature off (an expression back to neutral)."""
+    return Field(default=None, json_schema_extra=drop_default, description=description)
+
+
+class Repeat(StrictModel):
+    """Repeats (ratchets). Omitted members keep an enabled repeat's values without range and are 0 with range;
+    turning repeats on needs count."""
+
+    count: Annotated[int, Field(ge=-127, le=127)] = omitted(
+        description="Repeats: positive adds that many after the note (Bitwig shows count + 1); negative is Bitwig's "
+        "rate-based repeat; 0 is off."
+    )
+    curve: Bipolar = omitted(description="Timing curve of the repeats -1..1.")
+    velocityEnd: Bipolar = omitted(description="Velocity change toward the last repeat -1..1.")
+    velocityCurve: Bipolar = omitted(description="Curve of that velocity change -1..1.")
+
+
+class Recurrence(StrictModel):
+    """Plays only on some passes of a cycle of loop passes."""
+
+    length: int = Field(ge=1, le=8, description="Loop passes in the cycle, 1..8.")
+    mask: list[bool] = Field(min_length=1, max_length=8, description="Per pass of the cycle, whether the note plays.")
+
+    @model_validator(mode="after")
+    def validate_mask(self) -> Self:
+        if len(self.mask) != self.length:
+            raise ValueError(
+                f"recurrence.mask has {len(self.mask)} entries for length {self.length}: give one per pass"
+            )
+        return self
+
+
+class NoteFeatures(StrictModel):
+    """Operators and expressions of a note: present means on, null means off; notes.get lists only those not at default."""
+
+    chance: Unit | None = nullable("Chance 0..1 that the note plays (Bitwig rolls it per loop pass); 1 or null: off.")
+    velocitySpread: Unit | None = nullable("Random velocity range 0..1 around velocity; null: 0.")
+    releaseVelocity: Annotated[int, Field(ge=0, le=127)] | None = nullable("Note-off velocity 0..127; null: 100.")
+    repeat: Repeat | None = nullable("Repeats {count, curve, velocityEnd, velocityCurve}; null: off.")
+    recurrence: Recurrence | None = nullable("Recurrence {length 1..8, mask}; null: off.")
+    occurrence: Occurrence | None = nullable(
+        "Play condition: always, first, not_first, prev, not_prev, prev_channel, not_prev_channel, prev_key, "
+        "not_prev_key, fill, not_fill; null: off."
+    )
+    muted: bool | None = nullable("A muted note does not play; null: false.")
+    timbre: Bipolar | None = nullable("Expression at the note start -1..1; native only; null: 0.")
+    pressure: Unit | None = nullable("Expression at the note start 0..1; native only; null: 0.")
+    pan: Bipolar | None = nullable("Expression at the note start -1..1; native only; null: 0.")
+    gain: Unit | None = nullable("Expression at the note start 0..1 (0.5 = 0 dB); native only; null: 0.5.")
+    transpose: Annotated[float, Field(ge=-96, le=96)] | None = nullable(
+        "Expression at the note start in semitones -96..96; native only; null: 0."
+    )
+
+
+class ClipNoteFields(StrictModel):
     beat: NoteBeat
     pitch: Pitch
     velocity: Velocity
@@ -67,14 +151,20 @@ class ClipNote(StrictModel):
     channel: Channel = omitted()
 
 
-class NotePatch(StrictModel):
-    """One listed note of notes.set: a note at (channel, pitch, beat) gets the fields given; a new one needs all."""
+class ClipNote(NoteFeatures, ClipNoteFields):
+    """One note as notes.get reads it and clips.insert writes it."""
 
+
+class NotePatchFields(StrictModel):
     beat: NoteBeat
     pitch: Pitch
     velocity: Velocity = omitted(description="Required for a new note; omitted keeps an existing note's velocity.")
     duration: Duration = omitted(description="Required for a new note; omitted keeps an existing note's duration.")
     channel: Channel = omitted()
+
+
+class NotePatch(NoteFeatures, NotePatchFields):
+    """One listed note of notes.set: a note at (channel, pitch, beat) gets the fields given; a new one needs all."""
 
 
 class Span(NamedTuple):
@@ -197,6 +287,15 @@ def collision_problems(listed: list[Span], field: str) -> list[tuple[int, str]]:
     return found
 
 
+REPEAT_OFF = "repeat is off on this note: give repeat.count to turn it on"
+
+
+def repeat_without_count(note: Any) -> bool:
+    """A repeat that turns repeats on (a new note, or any listed note under a range) and names no count."""
+    repeat = getattr(note, "repeat", None)
+    return repeat is not None and "count" not in repeat.model_fields_set
+
+
 def note_violations(notes: list[Any], field: str, length: Decimal | None = None, range_: Any = None) -> list[str]:
     """Every rule the listed notes break on their own, in request order, with the extension's texts.
 
@@ -208,6 +307,7 @@ def note_violations(notes: list[Any], field: str, length: Decimal | None = None,
     for span in listed:
         at = f"{field}[{span.position}]"
         problems = (
+            f"{at} {REPEAT_OFF}" if range_ is not None and repeat_without_count(notes[span.position]) else None,
             length_problem(at, span, length) if length is not None else None,
             range_problem(at, span, range_) if isinstance(range_, NoteRange) else None,
         )
@@ -256,6 +356,10 @@ class ClipTargetArgs(StatusArgs):
     target: LauncherClipRef
 
 
+class ClipRecordArgs(StatusArgs):
+    target: SlotRef
+
+
 class ClipInsertArgs(StatusArgs):
     # Without the native binding the notes are written window by window: with notes the call waits longer.
     timeoutMs: int = long_timeout()
@@ -287,6 +391,16 @@ class ClipInsertArgs(StatusArgs):
         if "notes" in supplied:
             length = Decimal(str(self.loop.length if launcher else self.length))
             refuse_violations("notes", note_violations(self.notes, "notes", length))
+            refuse_violations(
+                "notes",
+                [f"notes[{i}] {REPEAT_OFF}" for i, note in enumerate(self.notes) if repeat_without_count(note)],
+            )
+            if not launcher and any(note.model_fields_set & set(FEATURES) for note in self.notes):
+                raise ReasonError(
+                    "unsupported_scope",
+                    "notes on an arranger clip take beat, pitch, velocity, duration and channel only: operators and "
+                    "expressions are written into launcher clips in this version",
+                )
         return self
 
 
@@ -444,7 +558,9 @@ CLIPS_GET_DESCRIPTION = (
     "playback or persistence proof."
 )
 NOTE_RULES = (
-    "A note is {beat, pitch, velocity 1..127, duration, channel (omitted = 0)}, the record notes.get reads. Beats and "
+    "A note is {beat, pitch, velocity 1..127, duration, channel (omitted = 0)}, the record notes.get reads, plus "
+    "operators (chance, velocitySpread, releaseVelocity, repeat, recurrence, occurrence, muted) and note expressions "
+    "(timbre, pressure, pan, gain, transpose; native path only), listed only when on or not default. Beats and "
     "durations are compared as Bitwig stores them (1/1048576 beat). No two notes on one channel, pitch and beat; no "
     "overlap on one channel and pitch. Every broken rule is refused at once, each with its index and a fix, and "
     "nothing is written. "
@@ -504,6 +620,16 @@ CLIPS_MOVE_DESCRIPTION = (
     "Arranger writes need a settled project and a stopped transport with recording/automation-write off; an unknown "
     "outcome refuses further arranger writes until you inspect arranger.list and ack the hold."
 )
+CLIPS_RECORD_DESCRIPTION = (
+    "Start recording into one launcher slot (Bitwig's slot record button), by slot ref from launcher.list. The "
+    "track must be observed armed (tracks.set arm=true), else unsafe_state with nothing sent; the slot may be empty "
+    "or hold a clip (Bitwig records over it or overdubs as its own settings say). It only starts recording and can "
+    "start playback: what arrives is whatever the track's input (tracks.routing.get) carries; nothing checks that "
+    "sound or notes arrive. End it with launcher.stop {target: the track} or transport.set playing=false. Outcome "
+    "applied: the slot was observed recording; sent: recording is queued (launch quantization); unknown: neither was "
+    "observed, never retry blindly. Allowed while recording or automation write is on."
+)
+
 CLIPS_LAUNCH_DESCRIPTION = (
     "Launch an existing launcher clip. Can start playback and produce audio. Recording and both automation-write "
     "flags must be observed false; modes are never silently disabled. Outcome applied means the clip was observed "
@@ -534,11 +660,11 @@ CLIPS_TRANSFORM_DESCRIPTION = (
 NOTES_GET_DESCRIPTION = (
     "Read the notes of one launcher clip: every note of every channel, in the record notes.set and clips.insert "
     "take, sorted by beat then pitch; channel is omitted when 0. range ({start, end, pitches?}) only limits the "
-    "output. Result: ref, loop, count (notes in the range), complete (false when the response cap cut the list: "
+    "output. Operators and expressions appear only when on or not default. Result: ref, loop, count (notes in the range), complete (false when the response cap cut the list: "
     "read the rest by range; on the public path also past the loop end or out of time, with incompleteReason), exact "
     "and notes. exact=true: read natively (Bitwig 6.1.4/6.1.7), no selection, onsets "
     "exact. exact=false: the public note grid, read on the 1/128-beat write grid (onsetResolution 0.0078125), one "
-    "onset per cell, the clip selected (a failure after that is unknown). format=grid returns the same notes as a "
+    "onset per cell, the clip selected (a failure after that is unknown); expressions are not read (unreadFields). format=grid returns the same notes as a "
     "read-only pitch x step text view with off-grid onsets listed exactly; it is never input: write with notes.set."
 )
 NOTES_SET_DESCRIPTION = (
@@ -546,7 +672,10 @@ NOTES_SET_DESCRIPTION = (
     "pitch, beat; inserted when absent, given fields updated when present) and nothing is removed. With range "
     '("all" or {start, end, pitches?}): the notes whose onset lies in it become exactly the listed ones (notes:[] '
     "clears it); every listed note must lie in it. The recipe for removing or moving notes: notes.get the range, "
-    "edit the list, notes.set the same range. A new note needs velocity and duration; a listed note may not "
+    "edit the list, notes.set the same range. null turns an operator off (an expression back to neutral). An omitted "
+    "operator or expression keeps the note's value without range; with range a listed note is the whole note "
+    "(unnamed operators off, expressions neutral; omitted velocity and duration still kept). A new note needs "
+    "velocity and duration; a listed note may not "
     "overlap a note left in place, and every written note must end within the clip loop. "
     + NOTE_RULES
     + NOTE_PATHS
@@ -572,8 +701,24 @@ SPECS: dict[str, ToolSpec] = {
                 "notes": [{"beat": 0, "pitch": 60, "velocity": 90, "duration": 1}],
             },
             {"to": {"track": TRACK_REF, "start": 16}, "length": 16, "name": "Verse"},
+            {
+                "to": SLOT_REF,
+                "loop": {"length": 1},
+                "name": "Hats",
+                "notes": [
+                    {
+                        "beat": 0.5,
+                        "pitch": 42,
+                        "velocity": 80,
+                        "duration": 0.25,
+                        "chance": 0.7,
+                        "repeat": {"count": 2, "curve": 0, "velocityEnd": -0.3, "velocityCurve": 0},
+                        "recurrence": {"length": 4, "mask": [False, False, False, True]},
+                    }
+                ],
+            },
         ),
-        requires=PROJECT_READY,
+        requires=PROJECT_READY + NOT_RECORDING,
         summary="Create a named MIDI clip in an empty launcher slot (to: slot ref, loop {length}) or on an instrument track's timeline (to {track, start}, length), with optional notes (beats on the 1/128 grid, any duration). Returns the new ref. A launcher create selects it. Unobserved: unknown, ack the hold, never retry.",
     ),
     "clips.import": ToolSpec(
@@ -581,7 +726,7 @@ SPECS: dict[str, ToolSpec] = {
         CLIPS_IMPORT_DESCRIPTION,
         False,
         examples=({"to": SLOT_REF, "path": "/absolute/path/audio.wav"},),
-        requires=PROJECT_READY,
+        requires=PROJECT_READY + NOT_RECORDING,
         summary="Import a local audio or .mid file into an empty launcher slot (to: slot ref); path is absolute and normalized. Never overwrites; applied means a slot content transition was observed, not the file's content. An unobserved insertion is unknown and holds the slot until you inspect it and ack; never retry.",
     ),
     "clips.set": ToolSpec(
@@ -603,28 +748,41 @@ SPECS: dict[str, ToolSpec] = {
         ),
         summary="Set fields of one clip. Launcher: name, color, loop, Next Action, launch fields; arranger: name, length. Runs next action, launch, clip fields in order; the first failure stops the rest. Next Action and launch need a stopped transport.",
     ),
-    "clips.delete": ToolSpec(ClipDeleteArgs, CLIPS_DELETE_DESCRIPTION, False, examples=({"target": CLIP_REF},)),
+    "clips.delete": ToolSpec(
+        ClipDeleteArgs, CLIPS_DELETE_DESCRIPTION, False, examples=({"target": CLIP_REF},), requires=STOPPED
+    ),
     "clips.copy": ToolSpec(
         ClipCopyArgs,
         CLIPS_COPY_DESCRIPTION,
         False,
         examples=({"from": CLIP_REF, "to": SLOT_REF}, {"from": CLIP_REF, "to": {"track": TRACK_REF, "start": 0}}),
         summary="Copy a launcher clip (from) to an empty slot of the same track or onto its arranger timeline (to). Returns the new clip's ref.",
+        requires=NOT_RECORDING,
     ),
     "clips.move": ToolSpec(
         ClipMoveArgs,
         CLIPS_MOVE_DESCRIPTION,
         False,
         examples=({"target": ARRANGER_CLIP_REF, "to": {"start": 32}},),
+        requires=STOPPED,
     ),
     "clips.launch": ToolSpec(
         ClipTargetArgs,
         CLIPS_LAUNCH_DESCRIPTION,
         False,
         examples=({"target": CLIP_REF},),
-        requires=ENGINE,
+        requires=ENGINE + NOT_RECORDING,
         annotations=RETRIGGER,
         summary="Launch a launcher clip; can start playback. Needs the engine active and recording/automation write off. applied: observed playing; sent: queued; unknown: not observed, stop the writer and never retry blindly.",
+    ),
+    "clips.record": ToolSpec(
+        ClipRecordArgs,
+        CLIPS_RECORD_DESCRIPTION,
+        False,
+        examples=({"target": SLOT_REF},),
+        requires=ENGINE,
+        annotations=EDIT,
+        summary="Start recording into a launcher slot of an armed track (else unsafe_state). applied: observed recording; sent: queued. Only starts recording; end it with launcher.stop or transport.set playing=false.",
     ),
     "clips.transpose": ToolSpec(
         ClipTransposeArgs,
@@ -658,7 +816,7 @@ SPECS: dict[str, ToolSpec] = {
         annotations=STEER,
         records="notes",
         views=("grid",),
-        summary="Read every note of a launcher clip, all channels, as records {beat, pitch, velocity, duration, channel?} that notes.set takes; range limits the output. exact=false means the public note grid (onsets snapped, clip selected).",
+        summary="Read every note of a launcher clip, all channels, as records {beat, pitch, velocity, duration, channel?, operators?} that notes.set takes; range limits the output. exact=false means the public note grid (onsets snapped, clip selected).",
     ),
     "notes.set": ToolSpec(
         NotesSetArgs,
@@ -672,7 +830,19 @@ SPECS: dict[str, ToolSpec] = {
                 "notes": [_NOTE | {"pitch": 42}],
             },
             {"target": CLIP_REF, "range": "all", "notes": []},
+            {
+                "target": CLIP_REF,
+                "notes": [
+                    {"beat": 0.5, "pitch": 42, "chance": 0.7, "velocitySpread": 0.2},
+                    {
+                        "beat": 3.5,
+                        "pitch": 38,
+                        "repeat": {"count": 3},
+                        "recurrence": {"length": 4, "mask": [False, False, False, True]},
+                    },
+                ],
+            },
         ),
-        summary="Write a launcher clip's notes. Without range: insert or update the listed notes, remove nothing. With range ('all' or {start, end, pitches?}): that region becomes exactly the listed notes. Replays are already_matched. Never retry unknown.",
+        summary="Write a launcher clip's notes. No range: insert or update the listed notes (omitted fields kept, null turns an operator off), remove nothing. With range ('all' or {start, end, pitches?}): that region becomes exactly the listed notes. Replays are already_matched. Never retry unknown.",
     ),
 }

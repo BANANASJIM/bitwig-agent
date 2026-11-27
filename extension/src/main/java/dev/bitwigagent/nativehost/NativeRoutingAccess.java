@@ -1,19 +1,16 @@
 package dev.bitwigagent.nativehost;
 
-import com.google.gson.*;
 import dev.bitwigagent.core.Errors;
-import dev.bitwigagent.core.HostLimits;
-import dev.bitwigagent.core.Outcome;
+import dev.bitwigagent.core.NativeProvenance;
 import dev.bitwigagent.core.Reason;
-import dev.bitwigagent.core.Refs;
-import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.RpcException;
-import dev.bitwigagent.core.Verification;
 import dev.bitwigagent.host.DeviceSources;
 import dev.bitwigagent.host.NativeReadContext;
-import dev.bitwigagent.routing.RoutingModule;
+import dev.bitwigagent.routing.RoutingEntry;
+import dev.bitwigagent.routing.RoutingPort;
 import java.lang.reflect.Method;
 import java.util.*;
+import java.util.function.Function;
 import java.util.stream.Stream;
 
 /**
@@ -26,9 +23,11 @@ import java.util.stream.Stream;
  * accept check {@code routing.sourceSelector.accepts(Object)}. Both setters silently ignore a cyclic or unchanged value
  * and do not check audio vs note, so kinds are enforced here and every write is read back by identity. Each write runs
  * inside one project transaction {@code project.begin(label,false)} … {@code project.end(false)}, as the GUI wraps it.
- * No UI selection is read or changed.
+ * Hardware inputs (an audio input bus, a controller's note input) go through {@link NativeHardwareInputs}, bound on
+ * first use. No UI selection is read or changed. Results are domain records; the plan of an edit is the domain's.
  */
-public final class NativeRoutingAccess implements RoutingModule.Access {
+public final class NativeRoutingAccess implements RoutingPort {
+    static final int MAX_COMPONENTS = 256;
     private final NativeHost.Access a;
     private final NativeReadContext context;
     private final DeviceSources.Native targets;
@@ -55,6 +54,7 @@ public final class NativeRoutingAccess implements RoutingModule.Access {
             inSet,
             inClear,
             inAccepts;
+    private final LazyBinding<NativeHardwareInputs> hardware = new LazyBinding<>("native_unavailable: ");
     private final Method busOwner,
             busName,
             descendants,
@@ -177,14 +177,47 @@ public final class NativeRoutingAccess implements RoutingModule.Access {
         a.execute(work);
     }
 
+    @Override
+    public NativeProvenance provenance() {
+        return a.nativeProvenance();
+    }
+
+    /** Public track types whose GUI shows an input chooser, with the native track kind (fP) each must report. */
+    private static final Map<String, String> INPUT_TRACK_TYPES =
+            Map.of("Audio", "AUDIO", "Instrument", "INSTRUMENT", "Hybrid", "HYBRID");
+
+    /** The input chooser's native kCk groups for a native track kind, as Bitwig's bhB.LzO derives them. */
+    static List<String> trackSourceGroups(String nativeTrackKind) {
+        switch (nativeTrackKind) {
+            case "AUDIO":
+                return List.of("HARDWARE_AUDIO_SOURCES", "TRACK_AUDIO_SOURCES");
+            case "INSTRUMENT":
+                return List.of("HARDWARE_NOTE_SOURCES", "TRACK_NOTE_SOURCES");
+            case "HYBRID":
+                return List.of(
+                        "HARDWARE_NOTE_SOURCES", "HARDWARE_AUDIO_SOURCES", "TRACK_AUDIO_SOURCES", "TRACK_NOTE_SOURCES");
+            default:
+                return List.of();
+        }
+    }
+
+    /** The hardware input bindings, bound on first use; null (with why) where this host lacks one of their keys. */
+    NativeHardwareInputs hardware() {
+        return hardwareError() == null ? hardware.get(() -> new NativeHardwareInputs(a)) : null;
+    }
+
+    private String hardwareError() {
+        return hardware.unavailable(() -> new NativeHardwareInputs(a));
+    }
+
     // ---- shared resolution ----
 
     /** A bank track resolved to its native track model and its channel: the track itself or a group's alias. */
     private final class Channel {
-        final RoutingModule.TrackRef ref;
+        final TrackRef ref;
         final Object track, channel;
 
-        Channel(RoutingModule.TrackRef ref) {
+        Channel(TrackRef ref) {
             this.ref = ref;
             track = resolver.resolve(
                     ref.proxy, ref.id, NativeTrackResolver.Kind.CHANNEL, NativeTrackResolver.Kind.GROUP);
@@ -256,70 +289,51 @@ public final class NativeRoutingAccess implements RoutingModule.Access {
         }
     }
 
-    private String name(Object bus) {
+    private String nameOf(Object bus) {
+        if (bus == null) return null;
         String value = (String) a.invoke(busName, bus);
         return value == null ? "" : value;
     }
 
-    /** A copyable entry {kind, track?}; only kind other carries its exact name and native type (its CAS identity). */
-    private JsonObject entry(String kind, Object channelModel, Object bus) {
-        JsonObject out = new JsonObject();
-        out.addProperty("kind", kind);
-        if (channelModel != null) {
-            JsonObject track = new JsonObject();
-            track.addProperty("kind", "track");
-            track.addProperty("id", resolver.identity(channelModel).toString());
-            out.add("track", track);
-        }
-        return out;
+    private String trackId(Object channelModel) {
+        return resolver.identity(channelModel).toString();
     }
 
-    private JsonElement nameOf(Object bus) {
-        return bus == null ? JsonNull.INSTANCE : new JsonPrimitive(name(bus));
-    }
-    /** A choice row: the copyable entry, its display name and Bitwig's accept check. */
-    private JsonObject choice(JsonObject entry, Object bus, boolean accepted) {
-        JsonObject row = new JsonObject();
-        row.add("entry", entry);
-        row.add("name", nameOf(bus));
-        row.addProperty("accepted", accepted);
-        return row;
+    private RoutingEntry other(Object bus) {
+        return RoutingEntry.other(nameOf(bus), bus.getClass().getName());
     }
 
     /** Classify a destination by native identity: a channel's own audio/note input or something else. */
-    private JsonObject describeDestination(Object bus) {
-        if (bus == null) return entry("none", null, null);
+    private RoutingEntry describeDestination(Object bus) {
+        if (bus == null) return RoutingEntry.none();
         a.requireModelThread(bus);
         if (audioDestination.isInstance(bus) || noteDestination.isInstance(bus)) {
             Object owning = a.invoke(busOwner, bus);
             boolean audio = audioDestination.isInstance(bus);
             if (owning != null && a.invoke(audio ? audioInput : noteInput, owning) == bus)
-                return entry(audio ? "track_audio_input" : "track_note_input", owning, bus);
+                return RoutingEntry.track(audio ? "track_audio_input" : "track_note_input", trackId(owning));
         }
-        JsonObject other = entry("other", null, bus);
-        other.addProperty("name", name(bus));
-        other.addProperty("nativeType", bus.getClass().getName());
-        return other;
+        return other(bus);
     }
 
-    /** Classify a source by native identity: a channel tap, a project note source, or something else. */
-    private JsonObject describeSource(Object bus, Object ports) {
-        if (bus == null) return entry("none", null, null);
+    /** Classify a source by native identity: a channel tap, a project note source, a hardware input, or other. */
+    private RoutingEntry describeSource(Object bus, Object ports) {
+        if (bus == null) return RoutingEntry.none();
         a.requireModelThread(bus);
         for (Object[] tap : new Object[][] {
             {preFader, pre, "pre_fader"}, {postFader, post, "post_fader"}, {trackNotes, notes, "track_notes"}
         }) {
             if (!((Class<?>) tap[0]).isInstance(bus)) continue;
             Object owning = a.invoke(busOwner, bus);
-            if (owning != null && a.invoke((Method) tap[1], owning) == bus) return entry((String) tap[2], owning, bus);
+            if (owning != null && a.invoke((Method) tap[1], owning) == bus)
+                return RoutingEntry.track((String) tap[2], trackId(owning));
         }
-        if (bus == a.invoke(allIns, ports)) return entry("all_ins", null, bus);
-        if (bus == a.invoke(keyboard, ports)) return entry("computer_keyboard", null, bus);
-        if (bus == a.invoke(onscreen, ports)) return entry("onscreen_keyboard", null, bus);
-        JsonObject other = entry("other", null, bus);
-        other.addProperty("name", name(bus));
-        other.addProperty("nativeType", bus.getClass().getName());
-        return other;
+        if (bus == a.invoke(allIns, ports)) return RoutingEntry.source("all_ins");
+        if (bus == a.invoke(keyboard, ports)) return RoutingEntry.source("computer_keyboard");
+        if (bus == a.invoke(onscreen, ports)) return RoutingEntry.source("onscreen_keyboard");
+        NativeHardwareInputs inputs = hardware();
+        RoutingEntry entry = inputs == null ? null : inputs.describe(bus);
+        return entry != null ? entry : other(bus);
     }
 
     private Channel find(Map<String, Channel> channels, String id) {
@@ -329,48 +343,55 @@ public final class NativeRoutingAccess implements RoutingModule.Access {
     }
 
     /** Every resolvable bank channel; unresolvable ones are reported, never guessed. */
-    private Map<String, Channel> channels(List<RoutingModule.TrackRef> bank, JsonArray unresolved) {
+    private Map<String, Channel> channels(List<TrackRef> bank, List<Unresolved> unresolved) {
         Map<String, Channel> out = new LinkedHashMap<>();
-        for (RoutingModule.TrackRef ref : bank) {
+        for (TrackRef ref : bank) {
             try {
                 out.put(ref.id, new Channel(ref));
             } catch (RpcException error) {
-                if (unresolved == null) throw error;
-                JsonObject row = new JsonObject();
-                row.add("ref", Refs.track(ref.id, ref.name));
-                row.addProperty("type", ref.type);
-                row.addProperty("reason", error.reason.wire());
-                row.addProperty("message", error.getMessage());
-                unresolved.add(row);
+                unresolved.add(new Unresolved(ref, error.reason, error.getMessage()));
             }
         }
         return out;
     }
 
-    /** The native destination for a requested output entry, or null for none. */
-    private Object destination(JsonObject request, Map<String, Channel> channels) {
-        String kind = request.get("kind").getAsString();
-        if (kind.equals("none")) return null;
-        Channel to = find(channels, RoutingModule.trackId(request));
-        if (to == null)
+    private Channel requireChannel(Map<String, Channel> channels, RoutingEntry request, String next) {
+        Channel found = find(channels, request.track);
+        if (found == null)
             throw Errors.notApplied(
                     Reason.TARGET_NOT_FOUND,
-                    "Destination track did not resolve to a native channel; refresh tracks.routing.get.",
-                    "tracks.routing.get");
-        Object bus = a.invoke(kind.equals("track_audio_input") ? audioInput : noteInput, to.channel);
+                    "The track of " + request + " did not resolve to a native channel; refresh " + next + ".",
+                    next);
+        return found;
+    }
+
+    /** The native destination for a requested output entry, or null for none. */
+    private Object destination(RoutingEntry request, Map<String, Channel> channels) {
+        if (request.kind.equals("none")) return null;
+        Channel to = requireChannel(channels, request, "tracks.routing.get");
+        Object bus = a.invoke(request.kind.equals("track_audio_input") ? audioInput : noteInput, to.channel);
         if (bus == null)
-            throw Errors.notApplied(Reason.UNSUPPORTED_SCOPE, "Destination track has no native " + kind + ".");
+            throw Errors.notApplied(Reason.UNSUPPORTED_SCOPE, "Destination track has no native " + request.kind + ".");
         a.requireModelThread(bus);
         return bus;
     }
 
-    /** The native source for a requested input/sidechain entry, or null for none. */
-    private Object source(JsonObject request, Map<String, Channel> channels, Object ports) {
-        String kind = request.get("kind").getAsString();
+    /** A resolved source target: a shared source bus (null for none) or a listed hardware input. */
+    private static final class Source {
+        final Object bus;
+        final NativeHardwareInputs.Input hardware;
+
+        Source(Object bus, NativeHardwareInputs.Input hardware) {
+            this.bus = bus;
+            this.hardware = hardware;
+        }
+    }
+
+    private Source source(RoutingEntry request, Map<String, Channel> channels, Object ports, String next) {
         Object bus;
-        switch (kind) {
+        switch (request.kind) {
             case "none":
-                return null;
+                return new Source(null, null);
             case "all_ins":
                 bus = a.invoke(allIns, ports);
                 break;
@@ -380,64 +401,112 @@ public final class NativeRoutingAccess implements RoutingModule.Access {
             case "onscreen_keyboard":
                 bus = a.invoke(onscreen, ports);
                 break;
+            case "hardware_audio_input":
+            case "hardware_note_input":
+                return new Source(null, hardwareInput(request));
             default: {
-                Channel from = find(channels, RoutingModule.trackId(request));
-                if (from == null)
-                    throw Errors.notApplied(
-                            Reason.TARGET_NOT_FOUND,
-                            "Source track did not resolve to a native channel; refresh the get.",
-                            "tracks.routing.get");
-                bus = a.invoke(kind.equals("pre_fader") ? pre : kind.equals("post_fader") ? post : notes, from.channel);
+                Channel from = requireChannel(channels, request, next);
+                bus = a.invoke(
+                        request.kind.equals("pre_fader") ? pre : request.kind.equals("post_fader") ? post : notes,
+                        from.channel);
             }
         }
         if (bus == null || !sourceBus.isInstance(bus))
-            throw Errors.notApplied(Reason.UNSUPPORTED_SCOPE, "No native " + kind + " source is available.");
+            throw Errors.notApplied(Reason.UNSUPPORTED_SCOPE, "No native " + request.kind + " source is available.");
         a.requireModelThread(bus);
-        return bus;
+        return new Source(bus, null);
     }
 
-    private JsonArray destinationChoices(Object chooser, Channel self, Map<String, Channel> channels) {
-        JsonArray out = new JsonArray();
-        out.add(choice(entry("none", null, null), null, true));
+    /** The listed hardware input a request names by id. */
+    private NativeHardwareInputs.Input hardwareInput(RoutingEntry request) {
+        NativeHardwareInputs inputs = hardware();
+        if (inputs == null)
+            throw Errors.notApplied(
+                    Reason.NATIVE_UNAVAILABLE, "Hardware input bindings are unavailable: " + hardwareError());
+        NativeHardwareInputs.Listing listing =
+                request.kind.equals("hardware_audio_input") ? inputs.audio() : inputs.notes();
+        if (listing.unavailable != null)
+            throw Errors.notApplied(
+                    Reason.UNSUPPORTED_SCOPE,
+                    "No " + request.kind + " can be listed (" + listing.unavailable + "); nothing was dispatched.");
+        for (NativeHardwareInputs.Input input : listing.inputs) if (request.matches(input.entry)) return input;
+        throw Errors.notApplied(
+                Reason.TARGET_NOT_FOUND,
+                "No " + request.kind + " has id " + request.id
+                        + " now; read tracks.routing.get with includeChoices for the current ids.",
+                "tracks.routing.get");
+    }
+
+    private boolean accepts(Method check, Object chooser, Object bus) {
+        return Boolean.TRUE.equals(a.invoke(check, chooser, bus));
+    }
+
+    private List<Choice> destinationChoices(Object chooser, Channel self, Map<String, Channel> channels) {
+        List<Choice> out = new ArrayList<>(List.of(new Choice(RoutingEntry.none(), null, true)));
         for (Channel to : channels.values()) {
             if (to.channel == self.channel) continue;
             for (String kind : List.of("track_audio_input", "track_note_input")) {
                 Object bus = a.invoke(kind.equals("track_audio_input") ? audioInput : noteInput, to.channel);
                 if (bus == null) continue;
-                out.add(choice(entry(kind, to.channel, bus), bus, (Boolean) a.invoke(outAccepts, chooser, bus)));
+                out.add(new Choice(
+                        RoutingEntry.track(kind, trackId(to.channel)), nameOf(bus), accepts(outAccepts, chooser, bus)));
             }
         }
         return out;
     }
 
-    private JsonArray sourceChoices(
-            Object chooser, Channel exclude, Map<String, Channel> channels, Object ports, List<String> kinds) {
-        JsonArray out = new JsonArray();
-        out.add(choice(entry("none", null, null), null, true));
-        for (String kind : List.of("all_ins", "computer_keyboard", "onscreen_keyboard")) {
-            if (!kinds.contains(kind)) continue;
-            Object bus = a.invoke(
-                    kind.equals("all_ins") ? allIns : kind.equals("computer_keyboard") ? keyboard : onscreen, ports);
-            if (bus == null) continue;
-            out.add(choice(entry(kind, null, bus), bus, (Boolean) a.invoke(inAccepts, chooser, bus)));
-        }
+    /**
+     * What a source chooser offers by its native groups, as Bitwig's menu groups them: project note sources (hardware
+     * note group), other tracks' taps (track groups) and, for a track input, the listed hardware inputs.
+     */
+    private List<Choice> sourceChoices(
+            Object chooser, Channel exclude, Map<String, Channel> channels, Object ports, List<String> groups) {
+        List<Choice> out = new ArrayList<>(List.of(new Choice(RoutingEntry.none(), null, true)));
+        if (groups.contains("HARDWARE_NOTE_SOURCES"))
+            for (String kind : List.of("all_ins", "computer_keyboard", "onscreen_keyboard")) {
+                Object bus = a.invoke(
+                        kind.equals("all_ins") ? allIns : kind.equals("computer_keyboard") ? keyboard : onscreen,
+                        ports);
+                if (bus != null)
+                    out.add(new Choice(RoutingEntry.source(kind), nameOf(bus), accepts(inAccepts, chooser, bus)));
+            }
         for (Channel from : channels.values()) {
             if (exclude != null && from.channel == exclude.channel) continue;
             for (String kind : List.of("pre_fader", "post_fader", "track_notes")) {
-                if (!kinds.contains(kind)) continue;
+                if (!groups.contains(kind.equals("track_notes") ? "TRACK_NOTE_SOURCES" : "TRACK_AUDIO_SOURCES"))
+                    continue;
                 Object bus = a.invoke(
                         kind.equals("pre_fader") ? pre : kind.equals("post_fader") ? post : notes, from.channel);
-                if (bus == null) continue;
-                out.add(choice(entry(kind, from.channel, bus), bus, (Boolean) a.invoke(inAccepts, chooser, bus)));
+                if (bus != null)
+                    out.add(new Choice(
+                            RoutingEntry.track(kind, trackId(from.channel)),
+                            nameOf(bus),
+                            accepts(inAccepts, chooser, bus)));
             }
         }
         return out;
     }
 
-    private static JsonArray strings(Collection<String> values) {
-        JsonArray out = new JsonArray();
-        values.forEach(out::add);
-        return out;
+    /** The hardware rows of a track input and why a kind is not listed (null: listed). */
+    private Hardware hardwareChoices(List<String> groups, List<Choice> out) {
+        String[] why = new String[2];
+        String[][] kinds = {{"HARDWARE_AUDIO_SOURCES", "audio"}, {"HARDWARE_NOTE_SOURCES", "notes"}};
+        for (int i = 0; i < kinds.length; i++) {
+            if (!groups.contains(kinds[i][0])) {
+                why[i] = "this_input_takes_no_hardware_" + kinds[i][1];
+                continue;
+            }
+            NativeHardwareInputs inputs = hardware();
+            if (inputs == null) {
+                why[i] = hardwareError();
+                continue;
+            }
+            NativeHardwareInputs.Listing listing = i == 0 ? inputs.audio() : inputs.notes();
+            why[i] = listing.unavailable;
+            for (NativeHardwareInputs.Input input : listing.inputs)
+                out.add(new Choice(input.entry, input.entry.name, true));
+        }
+        return new Hardware(why[0], why[1]);
     }
 
     // ---- tracks.routing ----
@@ -456,7 +525,7 @@ public final class NativeRoutingAccess implements RoutingModule.Access {
             if (!destinationSelector.isInstance(outputChooser))
                 throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Native channel has no destination selector.");
             a.requireModelThread(outputChooser);
-            String expectedKind = RoutingModule.INPUT_TRACK_TYPES.get(self.ref.type);
+            String expectedKind = INPUT_TRACK_TYPES.get(self.ref.type);
             Object chooser = null;
             String reason = null;
             if (expectedKind == null) reason = "no_input_chooser_for_track_type_" + self.ref.type;
@@ -471,287 +540,154 @@ public final class NativeRoutingAccess implements RoutingModule.Access {
             }
             inputChooser = chooser;
             inputUnavailable = reason;
-            inputGroups = chooser == null ? List.of() : RoutingModule.trackSourceGroups(nativeKind);
+            inputGroups = chooser == null ? List.of() : trackSourceGroups(nativeKind);
         }
 
-        String outputUnavailable() {
-            return "Master".equals(self.ref.type)
-                    ? "master_output_is_hardware_only_and_hardware_entries_are_deferred"
-                    : null;
+        boolean same() {
+            return self.same()
+                    && a.invoke(output, self.channel) == outputChooser
+                    && (inputChooser == null || a.invoke(input, self.channel) == inputChooser);
         }
     }
 
-    private JsonObject snapshot(
-            TrackView view, Object ports, Map<String, Channel> channels, boolean includeChoices, JsonArray unresolved) {
-        JsonObject out = new JsonObject();
-        out.addProperty("trackType", view.self.ref.type);
-        out.addProperty("nativeTrackKind", view.nativeKind);
-        out.addProperty("nativeRole", view.self.role());
-        JsonObject outputRow = new JsonObject();
+    private TrackRouting snapshot(
+            TrackView view, Object ports, Map<String, Channel> channels, boolean choices, List<Unresolved> unresolved) {
         Object currentOutput = a.invoke(outCurrent, view.outputChooser);
-        outputRow.add("entry", describeDestination(currentOutput));
-        outputRow.add("name", nameOf(currentOutput));
-        outputRow.add(
-                "kinds",
-                strings(
-                        view.outputUnavailable() == null
-                                ? List.of("none", "track_audio_input", "track_note_input")
-                                : List.of()));
-        outputRow.addProperty("writable", view.outputUnavailable() == null);
-        if (view.outputUnavailable() != null) outputRow.addProperty("reason", view.outputUnavailable());
-        if (includeChoices) outputRow.add("choices", destinationChoices(view.outputChooser, view.self, channels));
-        out.add("output", outputRow);
-        if (view.inputChooser == null) {
-            out.add("input", JsonNull.INSTANCE);
-            out.addProperty("inputUnavailableReason", view.inputUnavailable);
-        } else {
-            JsonObject inputRow = new JsonObject();
+        Chooser output = new Chooser(
+                describeDestination(currentOutput),
+                nameOf(currentOutput),
+                List.of(),
+                choices ? destinationChoices(view.outputChooser, view.self, channels) : List.of());
+        Chooser input = null;
+        Hardware hardware = new Hardware(null, null);
+        if (view.inputChooser != null) {
             Object currentInput = a.invoke(inCurrent, view.inputChooser);
-            inputRow.add("entry", describeSource(currentInput, ports));
-            inputRow.add("name", nameOf(currentInput));
-            List<String> kinds = RoutingModule.sourceKinds(view.inputGroups);
-            inputRow.add("kinds", strings(kinds));
-            inputRow.add("nativeSourceGroups", strings(view.inputGroups));
-            inputRow.addProperty("writable", true);
-            if (includeChoices)
-                inputRow.add("choices", sourceChoices(view.inputChooser, view.self, channels, ports, kinds));
-            out.add("input", inputRow);
+            List<Choice> offered = choices
+                    ? sourceChoices(view.inputChooser, view.self, channels, ports, view.inputGroups)
+                    : new ArrayList<>();
+            if (choices) hardware = hardwareChoices(view.inputGroups, offered);
+            input = new Chooser(describeSource(currentInput, ports), nameOf(currentInput), view.inputGroups, offered);
         }
-        if (unresolved != null && unresolved.size() > 0) out.add("unresolvedTracks", unresolved);
-        out.addProperty(
-                "coverage",
-                "tracks_of_the_" + HostLimits.TRACKS
-                        + "_track_window_only; hardware_and_device_output_entries_read_as_other_and_not_settable");
-        a.provenance(out);
-        out.addProperty("selectionSideEffect", "none");
-        return out;
+        return new TrackRouting(
+                view.self.ref.type,
+                view.nativeKind,
+                view.self.role(),
+                output,
+                input,
+                view.inputUnavailable,
+                unresolved,
+                hardware);
     }
 
     @Override
-    public JsonObject trackGet(
-            RoutingModule.TrackRef ref, List<RoutingModule.TrackRef> bank, boolean includeChoices, Runnable check) {
+    public TrackRouting readTrack(TrackRef ref, List<TrackRef> bank, boolean choices, Runnable check) {
         a.documentThread();
         check.run();
         Channel self = new Channel(ref);
         TrackView view = new TrackView(self);
         Scope scope = new Scope(self.channel, List.of(self.track), check);
-        a.requireModelThread(self.channel);
         Object ports = scope.ports();
-        JsonArray unresolved = includeChoices ? new JsonArray() : null;
-        Map<String, Channel> channels = includeChoices ? channels(bank, unresolved) : Map.of();
-        JsonObject out = snapshot(view, ports, channels, includeChoices, unresolved);
+        List<Unresolved> unresolved = new ArrayList<>();
+        Map<String, Channel> channels = choices ? channels(bank, unresolved) : Map.of();
+        TrackRouting out = snapshot(view, ports, channels, choices, unresolved);
         scope.guard(check);
         if (!self.same())
             throw Errors.notApplied(Reason.TARGET_CHANGED, "Native track changed during the routing read.");
         return out;
     }
 
-    /** One requested chooser change after every pre-write check passed. */
-    private static final class Change {
-        final String field;
-        final Object chooser, requested;
-        final boolean destination;
-        final JsonObject previous, request;
-        final boolean already;
+    /** One resolved chooser write: the chooser and what to put in it. */
+    private static final class Write {
+        final Object chooser, destination;
+        final boolean output;
+        final Source source;
 
-        Change(
-                String field,
-                Object chooser,
-                Object requested,
-                boolean destination,
-                JsonObject previous,
-                JsonObject request,
-                boolean already) {
-            this.field = field;
+        Write(Object chooser, boolean output, Object destination, Source source) {
             this.chooser = chooser;
-            this.requested = requested;
+            this.output = output;
             this.destination = destination;
-            this.previous = previous;
-            this.request = request;
-            this.already = already;
+            this.source = source;
         }
     }
 
+    private void apply(Write write) {
+        if (write.output) {
+            if (write.destination == null) a.invoke(outClear, write.chooser);
+            else a.invoke(outSet, write.chooser, write.destination);
+        } else if (write.source.hardware != null) hardware().set(write.chooser, write.source.hardware);
+        else if (write.source.bus == null) a.invoke(inClear, write.chooser);
+        else a.invoke(inSet, write.chooser, write.source.bus);
+    }
+
+    /** Write every resolved change in one project transaction, between the pre-write checks and the re-guard. */
+    private void write(
+            Scope scope, String label, List<Write> writes, Runnable check, Runnable beforeWrite, Runnable same) {
+        scope.guard(check);
+        same.run();
+        beforeWrite.run();
+        scope.transaction(label, () -> writes.forEach(this::apply));
+        scope.guard(check);
+        same.run();
+    }
+
     @Override
-    public JsonObject trackSet(
-            RoutingModule.TrackRef ref,
-            List<RoutingModule.TrackRef> bank,
-            JsonObject p,
+    public Edit<TrackRouting> editTrack(
+            TrackRef ref,
+            List<TrackRef> bank,
+            Function<TrackRouting, Change> plan,
             Runnable check,
             Runnable beforeWrite) {
         a.documentThread();
         check.run();
         Channel self = new Channel(ref);
         TrackView view = new TrackView(self);
-        Map<String, Channel> channels = channels(bank, new JsonArray());
-        List<Object> extra = new ArrayList<>(List.of(self.track));
-        Scope scope = new Scope(self.channel, extra, check);
+        Map<String, Channel> channels = channels(bank, new ArrayList<>());
+        Scope scope = new Scope(self.channel, List.of(self.track), check);
         Object ports = scope.ports();
-        List<Change> changes = new ArrayList<>();
-        if (p.has("output")) {
-            if (view.outputUnavailable() != null)
-                throw Errors.notApplied(
-                        Reason.UNSUPPORTED_SCOPE,
-                        "This track's output cannot be set in this version (" + view.outputUnavailable()
-                                + "); nothing was dispatched.");
-            JsonObject request = p.getAsJsonObject("output");
-            Object current = a.invoke(outCurrent, view.outputChooser);
-            JsonObject previous = describeDestination(current);
-            requireExpected(p, "output", previous);
-            String kind = request.get("kind").getAsString();
-            if (!kind.equals("none") && !RoutingModule.OUTPUT_GROUP.containsKey(kind))
-                throw Errors.notApplied(Reason.KIND_MISMATCH, "Output kind " + kind + " is not a destination kind.");
-            if (request.has("track") && RoutingModule.trackId(request).equalsIgnoreCase(ref.id))
-                throw Errors.notApplied(
-                        Reason.ROUTING_CYCLE, "A track cannot route its output to itself; nothing was dispatched.");
-            Object bus = destination(request, channels);
-            boolean already = bus == current;
-            if (!already && bus != null && !Boolean.TRUE.equals(a.invoke(outAccepts, view.outputChooser, bus)))
-                throw Errors.notApplied(
-                        Reason.ROUTING_CYCLE,
-                        "Bitwig's destination check rejects " + request
-                                + " (it would create a routing cycle); nothing was dispatched.");
-            changes.add(new Change("output", view.outputChooser, bus, true, previous, request, already));
+        TrackRouting before = snapshot(view, ports, Map.of(), false, List.of());
+        Change change = plan.apply(before);
+        if (change.isEmpty()) return new Edit<>(before, change, before, null);
+        List<Write> writes = new ArrayList<>();
+        for (Map.Entry<String, RoutingEntry> target : change.targets.entrySet()) {
+            boolean out = target.getKey().equals("output");
+            if (out) {
+                Object bus = destination(target.getValue(), channels);
+                if (bus != null && !accepts(outAccepts, view.outputChooser, bus))
+                    return new Edit<>(before, change, before, "output");
+                writes.add(new Write(view.outputChooser, true, bus, null));
+            } else {
+                Source source = source(target.getValue(), channels, ports, "tracks.routing.get");
+                if (source.bus != null && !accepts(inAccepts, view.inputChooser, source.bus))
+                    return new Edit<>(before, change, before, "input");
+                writes.add(new Write(view.inputChooser, false, null, source));
+            }
         }
-        if (p.has("input")) {
-            if (view.inputChooser == null)
-                throw Errors.notApplied(
-                        Reason.UNSUPPORTED_SCOPE,
-                        "This track has no input chooser in this version (" + view.inputUnavailable
-                                + "); nothing was dispatched.");
-            JsonObject request = p.getAsJsonObject("input");
-            Object current = a.invoke(inCurrent, view.inputChooser);
-            JsonObject previous = describeSource(current, ports);
-            requireExpected(p, "input", previous);
-            String kind = request.get("kind").getAsString();
-            if (!RoutingModule.sourceKinds(view.inputGroups).contains(kind))
-                throw Errors.notApplied(
-                        Reason.KIND_MISMATCH,
-                        "A " + self.ref.type + " track's input accepts " + RoutingModule.sourceKinds(view.inputGroups)
-                                + ", not " + kind + "; nothing was dispatched.");
-            if (request.has("track") && RoutingModule.trackId(request).equalsIgnoreCase(ref.id))
-                throw Errors.notApplied(
-                        Reason.ROUTING_CYCLE, "A track cannot be its own input; nothing was dispatched.");
-            Object bus = source(request, channels, ports);
-            boolean already = bus == current;
-            if (!already && bus != null && !Boolean.TRUE.equals(a.invoke(inAccepts, view.inputChooser, bus)))
-                throw Errors.notApplied(
-                        Reason.ROUTING_CYCLE,
-                        "Bitwig's source check rejects " + request
-                                + " (it would create a routing cycle); nothing was dispatched.");
-            changes.add(new Change("input", view.inputChooser, bus, false, previous, request, already));
-        }
-        if (changes.size() == 2
-                && changes.stream().noneMatch(change -> change.already || change.requested == null)
-                && changes.get(0).request.has("track")
-                && changes.get(1).request.has("track")
-                && RoutingModule.trackId(changes.get(0).request)
-                        .equalsIgnoreCase(RoutingModule.trackId(changes.get(1).request)))
-            throw Errors.notApplied(
-                    Reason.ROUTING_CYCLE,
-                    "output and input name the same track, which would loop through this track; Bitwig checks each against the current graph only, so this pair is refused (set them in two calls if one is meant to replace the other). Nothing changed.");
         Runnable same = () -> {
-            if (!self.same()
-                    || a.invoke(output, self.channel) != view.outputChooser
-                    || (view.inputChooser != null && a.invoke(input, self.channel) != view.inputChooser))
+            if (!view.same())
                 throw Errors.notApplied(
                         Reason.TARGET_CHANGED,
                         "Native track or its routing selectors changed around the routing write.");
         };
-        scope.guard(check);
-        same.run();
-        JsonObject fields = write(scope, changes, "Change Track Routing", check, beforeWrite, same, ports);
-        JsonObject out = snapshot(view, ports, Map.of(), false, null);
-        return finish(out, fields, changes);
-    }
-
-    /** Dispatch the changes in one project transaction, then read each chooser back by identity. */
-    private JsonObject write(
-            Scope scope,
-            List<Change> changes,
-            String label,
-            Runnable check,
-            Runnable beforeWrite,
-            Runnable same,
-            Object ports) {
-        boolean any = changes.stream().anyMatch(change -> !change.already);
-        if (any) {
-            beforeWrite.run();
-            scope.transaction(label, () -> {
-                for (Change change : changes) {
-                    if (change.already) continue;
-                    if (change.destination) {
-                        if (change.requested == null) a.invoke(outClear, change.chooser);
-                        else a.invoke(outSet, change.chooser, change.requested);
-                    } else if (change.requested == null) a.invoke(inClear, change.chooser);
-                    else a.invoke(inSet, change.chooser, change.requested);
-                }
-            });
-            scope.guard(check);
-            same.run();
-        }
-        JsonObject fields = new JsonObject();
-        for (Change change : changes) {
-            Object now = a.invoke(change.destination ? outCurrent : inCurrent, change.chooser);
-            fields.add(
-                    change.field,
-                    row(
-                            change.already
-                                    ? Outcome.ALREADY_MATCHED
-                                    : now == change.requested ? Outcome.APPLIED : Outcome.UNKNOWN,
-                            change.request,
-                            change.previous,
-                            change.destination ? describeDestination(now) : describeSource(now, ports)));
-        }
-        return fields;
-    }
-
-    /** One chooser's field: confirmed by reading the chooser back by identity, a mismatch is unknown. */
-    static JsonObject row(Outcome outcome, JsonObject request, JsonObject previous, JsonElement readback) {
-        JsonObject row = new JsonObject();
-        Results.stamp(row, outcome, Verification.NATIVE_READBACK);
-        row.add("requested", request);
-        row.add("previous", previous);
-        row.add("readback", readback);
-        if (outcome == Outcome.UNKNOWN) row.addProperty("reason", Reason.READBACK_MISMATCH.wire());
-        return row;
-    }
-
-    private JsonObject finish(JsonObject out, JsonObject fields, List<Change> changes) {
-        boolean any = changes.stream().anyMatch(change -> !change.already);
-        boolean unknown = false;
-        for (Map.Entry<String, JsonElement> field : fields.entrySet())
-            unknown |= Results.outcomeOf(field.getValue().getAsJsonObject()) == Outcome.UNKNOWN;
-        out.add("fields", fields);
-        Results.stamp(
-                out,
-                unknown ? Outcome.UNKNOWN : any ? Outcome.APPLIED : Outcome.ALREADY_MATCHED,
-                Verification.NATIVE_READBACK);
-        if (unknown) out.addProperty("reason", Reason.READBACK_MISMATCH.wire());
-        out.addProperty("nativeUndo", any);
-        out.addProperty("undoGroupingVerified", false);
-        a.provenance(out);
-        if (unknown)
-            out.addProperty(
-                    "next",
-                    "Never retry: inspect with a fresh get, then ack routing.quarantine; routing writes are refused until then.");
-        return out;
+        write(scope, "Change Track Routing", writes, check, beforeWrite, same);
+        return new Edit<>(before, change, snapshot(view, ports, Map.of(), false, List.of()), null);
     }
 
     // ---- devices.sidechain ----
 
-    private final class Component {
+    /** A device's routing component on the native side. */
+    private final class Part {
         final Object model, chooser;
         final int index;
-        final String host, kind, id, label, ownerId, unavailable;
+        final String kind, id, label, host, ownerId;
         final List<String> groups;
 
-        Component(Object model, Object device, int index) {
+        Part(Object model, Object device, int index) {
             this.model = model;
             this.index = index;
             a.requireModelThread(model);
-            chooser = a.invoke(selector, model);
-            if (chooser != null) a.requireModelThread(chooser);
+            Object found = a.invoke(selector, model);
+            if (found != null) a.requireModelThread(found);
+            chooser = found != null && sourceSelector.isInstance(found) ? found : null;
             Object grid = resolver.owner(model, moduleType), mod = resolver.owner(model, modulatorType);
             if (grid != null && resolver.owner(grid, deviceType) == device) {
                 host = "grid_module";
@@ -772,156 +708,91 @@ public final class NativeRoutingAccess implements RoutingModule.Access {
                                     : audioIn.isInstance(model) ? "audio_in" : "other";
             id = (String) a.invoke(componentId, model);
             label = (String) a.invoke(componentLabel, model);
-            List<String> found = new ArrayList<>();
+            List<String> kinds = new ArrayList<>();
             Object set = a.invoke(componentKinds, model);
-            if (set instanceof Set) for (Object value : (Set<?>) set) found.add(((Enum<?>) value).name());
-            groups = found;
-            String reason = null;
-            if (chooser == null || !sourceSelector.isInstance(chooser)) reason = "component_has_no_source_selector";
-            else if (kind.equals("audio_in") || kind.equals("other")) reason = "hardware_or_unknown_component_deferred";
-            unavailable = reason;
+            if (set instanceof Set) for (Object value : (Set<?>) set) kinds.add(((Enum<?>) value).name());
+            groups = kinds;
+        }
+
+        Component record(Object ports, Map<String, Channel> channels, boolean choices) {
+            Chooser source = null;
+            if (chooser != null) {
+                Object current = a.invoke(inCurrent, chooser);
+                source = new Chooser(
+                        describeSource(current, ports),
+                        nameOf(current),
+                        groups,
+                        choices ? sourceChoices(chooser, null, channels, ports, groups) : List.of());
+            }
+            return new Component(index, id, label, kind, host, ownerId, groups, source);
         }
     }
 
-    private List<Component> components(Object device) {
-        List<Component> out = new ArrayList<>();
+    private List<Part> parts(Object device) {
+        List<Part> out = new ArrayList<>();
         Iterator<?> found = ((Stream<?>) a.invoke(descendants, null, device, componentType, null)).iterator();
         int seen = 0;
         while (found.hasNext()) {
             Object model = found.next();
-            if (++seen > RoutingModule.MAX_COMPONENTS * 4)
+            if (++seen > MAX_COMPONENTS * 4)
                 throw Errors.notApplied(
                         Reason.OUT_OF_BOUNDS, "Device holds more routing components than this version reads.");
             if (!componentType.isInstance(model) || resolver.owner(model, deviceType) != device) continue;
-            if (out.size() >= RoutingModule.MAX_COMPONENTS)
+            if (out.size() >= MAX_COMPONENTS)
                 throw Errors.notApplied(
-                        Reason.OUT_OF_BOUNDS,
-                        "Device holds more than " + RoutingModule.MAX_COMPONENTS + " sidechain components.");
-            out.add(new Component(model, device, out.size()));
+                        Reason.OUT_OF_BOUNDS, "Device holds more than " + MAX_COMPONENTS + " sidechain components.");
+            out.add(new Part(model, device, out.size()));
         }
         return out;
     }
 
-    private JsonObject row(
-            JsonObject device, Component c, Object ports, Map<String, Channel> channels, boolean includeChoices) {
-        JsonObject out = new JsonObject();
-        out.add("ref", refOf(device, c));
-        out.addProperty("label", c.label);
-        out.addProperty("kind", c.kind);
-        out.addProperty("host", c.host);
-        out.add("nativeSourceGroups", strings(c.groups));
-        List<String> kinds = c.unavailable == null ? RoutingModule.sourceKinds(c.groups) : List.of();
-        out.add("kinds", strings(kinds));
-        out.addProperty("writable", c.unavailable == null);
-        if (c.unavailable != null) out.addProperty("reason", c.unavailable);
-        boolean selectable = c.chooser != null && sourceSelector.isInstance(c.chooser);
-        Object current = selectable ? a.invoke(inCurrent, c.chooser) : null;
-        out.add("source", selectable ? describeSource(current, ports) : JsonNull.INSTANCE);
-        out.add("sourceName", nameOf(current));
-        if (includeChoices && c.unavailable == null)
-            out.add("choices", sourceChoices(c.chooser, null, channels, ports, kinds));
-        return out;
-    }
-
     @Override
-    public JsonObject sidechainGet(
-            DeviceSources.Source source, List<RoutingModule.TrackRef> bank, boolean includeChoices, Runnable check) {
+    public Sidechains readSidechains(
+            DeviceSources.Source source, List<TrackRef> bank, boolean choices, Runnable check) {
         DeviceSources.Native.Capture device = targets.capture(source, check);
         Scope scope = new Scope(device.device, List.of(), check);
         Object ports = scope.ports();
-        List<Component> components = components(device.device);
-        JsonArray unresolved = includeChoices ? new JsonArray() : null;
-        Map<String, Channel> channels = includeChoices ? channels(bank, unresolved) : Map.of();
-        JsonObject out = new JsonObject();
-        JsonArray rows = new JsonArray();
-        for (Component c : components) rows.add(row(source.ref(), c, ports, channels, includeChoices));
-        out.add("components", rows);
-        out.addProperty("count", components.size());
-        if (unresolved != null && unresolved.size() > 0) out.add("unresolvedTracks", unresolved);
-        out.addProperty(
-                "coverage",
-                "routing_components_of_this_device_its_modulators_and_grid_modules; nested_devices_excluded");
-        a.provenance(out);
-        out.addProperty("selectionSideEffect", "none");
+        List<Unresolved> unresolved = new ArrayList<>();
+        Map<String, Channel> channels = choices ? channels(bank, unresolved) : Map.of();
+        List<Component> components = new ArrayList<>();
+        for (Part part : parts(device.device)) components.add(part.record(ports, channels, choices));
         scope.guard(check);
         targets.guard(device, check);
-        return out;
-    }
-
-    /** When the request carries expect.{key}, the entry read now must be that one; otherwise nothing is written. */
-    private static void requireExpected(JsonObject p, String key, JsonObject observed) {
-        if (!p.has("expect") || !p.getAsJsonObject("expect").has(key)) return;
-        if (!RoutingModule.sameEntry(p.getAsJsonObject("expect").getAsJsonObject(key), observed)) {
-            JsonObject differs = new JsonObject();
-            differs.add(key, observed);
-            throw Errors.expectMismatch("The current " + key + " differs from expect; nothing changed.", differs);
-        }
-    }
-
-    /** The sidechain ref of a component: its index and componentId, plus the modulator or Grid module that owns it. */
-    private static JsonObject refOf(JsonObject device, Component c) {
-        return Refs.sidechain(
-                device,
-                c.index,
-                c.id,
-                "modulator".equals(c.host) ? c.ownerId : null,
-                "grid_module".equals(c.host) ? c.ownerId : null);
+        return new Sidechains(components, unresolved);
     }
 
     @Override
-    public JsonObject sidechainSet(
+    public Edit<Component> editSidechain(
             DeviceSources.Source source,
-            List<RoutingModule.TrackRef> bank,
-            JsonObject p,
+            List<TrackRef> bank,
+            int index,
+            Function<Component, Change> plan,
             Runnable check,
             Runnable beforeWrite) {
         DeviceSources.Native.Capture device = targets.capture(source, check);
-        List<Component> components = components(device.device);
-        JsonObject ref = p.getAsJsonObject("target");
-        int index = ref.get("index").getAsInt();
-        if (index >= components.size())
-            throw Errors.targetNotFound(ref, "The device has no sidechain component at this index now.");
-        Component c = components.get(index);
-        JsonObject found = refOf(source.ref(), c);
-        if (!Refs.matches(ref, found, true))
-            throw Errors.targetChanged("Another sidechain component is at this index than the one read.", found);
-        if (c.unavailable != null)
-            throw Errors.notApplied(
-                    Reason.UNSUPPORTED_SCOPE,
-                    "Component " + c.index + " cannot be set in this version (" + c.unavailable
-                            + "); nothing was dispatched.");
-        Map<String, Channel> channels = channels(bank, new JsonArray());
-        Scope scope = new Scope(device.device, List.of(c.model, c.chooser), check);
-        Object ports = scope.ports();
-        JsonObject request = p.getAsJsonObject("source");
-        Object current = a.invoke(inCurrent, c.chooser);
-        JsonObject previous = describeSource(current, ports);
-        requireExpected(p, "source", previous);
-        String kind = request.get("kind").getAsString();
-        List<String> kinds = RoutingModule.sourceKinds(c.groups);
-        if (!kinds.contains(kind))
-            throw Errors.notApplied(
-                    Reason.KIND_MISMATCH,
-                    "This " + c.kind + " component accepts " + kinds + ", not " + kind + "; nothing was dispatched.");
-        Object bus = source(request, channels, ports);
-        boolean already = bus == current;
-        if (!already && bus != null && !Boolean.TRUE.equals(a.invoke(inAccepts, c.chooser, bus)))
-            throw Errors.notApplied(
-                    Reason.ROUTING_CYCLE,
-                    "Bitwig's source check rejects " + request
-                            + " (it would create a routing cycle); nothing was dispatched.");
-        List<Change> changes = List.of(new Change("source", c.chooser, bus, false, previous, request, already));
-        final Component chosen = c;
+        List<Part> parts = parts(device.device);
+        Object ports = new Scope(device.device, List.of(), check).ports();
+        Part part = index < parts.size() ? parts.get(index) : null;
+        Component before = part == null ? null : part.record(ports, Map.of(), false);
+        Change change = plan.apply(before);
+        if (change.isEmpty()) return new Edit<>(before, change, before, null);
+        Map<String, Channel> channels = channels(bank, new ArrayList<>());
+        Scope scope = new Scope(device.device, List.of(part.model, part.chooser), check);
+        Source target = source(change.targets.get("source"), channels, ports, "devices.sidechain.get");
+        if (target.bus != null && !accepts(inAccepts, part.chooser, target.bus))
+            return new Edit<>(before, change, before, "source");
         Runnable same = () -> {
-            if (a.invoke(selector, chosen.model) != chosen.chooser)
+            if (a.invoke(selector, part.model) != part.chooser)
                 throw Errors.notApplied(Reason.TARGET_CHANGED, "Component source selector changed during the write.");
             targets.guard(device, check);
         };
-        scope.guard(check);
-        same.run();
-        JsonObject fields = write(scope, changes, "Change Sidechain Source", check, beforeWrite, same, ports);
-        JsonObject out = new JsonObject();
-        out.add("component", row(source.ref(), c, ports, Map.of(), false));
-        return finish(out, fields, changes);
+        write(
+                scope,
+                "Change Sidechain Source",
+                List.of(new Write(part.chooser, false, null, target)),
+                check,
+                beforeWrite,
+                same);
+        return new Edit<>(before, change, part.record(ports, Map.of(), false), null);
     }
 }

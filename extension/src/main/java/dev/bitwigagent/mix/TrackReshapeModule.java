@@ -91,7 +91,6 @@ public final class TrackReshapeModule implements HostModule {
     @Override
     public void dispatch(HostOperation op, String method, JsonObject p) {
         scheduler.check(op);
-        transportSafety.recording(op);
         selection.requireFree();
         MixModule.Target target = mix.target(p.getAsJsonObject("target"), true);
         mix.guard(op, target);
@@ -113,7 +112,7 @@ public final class TrackReshapeModule implements HostModule {
         Access bound = access.get(op);
         Runnable check = () -> {
             scheduler.check(op);
-            transportSafety.requirePlaybackSafe();
+            transportSafety.recheck(op);
         };
         selection.acquire(op);
         bound.execute(() -> {

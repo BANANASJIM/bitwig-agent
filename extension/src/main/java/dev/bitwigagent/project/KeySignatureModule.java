@@ -143,7 +143,7 @@ public final class KeySignatureModule implements HostModule {
         scheduler.check(op);
         boolean write = method.equals(SET);
         if (write && holds.held(HOLD)) throw holds.blocked(HOLD, HOLD_TEXT, "Inspect project.key.get");
-        Runnable guard = write ? transportSafety.writeGuard(op, false) : () -> {};
+        Runnable guard = write ? () -> transportSafety.recheck(op) : () -> {};
         Access bridge = access.get(op);
         Runnable check = () -> {
             scheduler.check(op);

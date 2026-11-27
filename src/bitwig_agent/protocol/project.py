@@ -6,6 +6,7 @@ from pydantic import Field, model_validator
 
 from bitwig_agent.protocol.annotations import EDIT, SET, STEER
 from bitwig_agent.protocol.base import (
+    NOT_RECORDING,
     UTF16_BYTES_PER_UNIT,
     Nonempty,
     StatusArgs,
@@ -108,5 +109,6 @@ SPECS: dict[str, ToolSpec] = {
         PROJECT_KEY_SET_DESCRIPTION,
         False,
         examples=({"root": "D", "scale": "Minor"}, {"scale": 2741}),
+        requires=NOT_RECORDING,
     ),
 }

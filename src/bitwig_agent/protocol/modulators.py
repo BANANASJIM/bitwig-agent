@@ -4,7 +4,7 @@ from typing import Annotated, Literal, Self
 
 from pydantic import Field, model_validator
 
-from bitwig_agent.protocol.base import StatusArgs, StrictModel, ToolSpec, Uuid, omitted
+from bitwig_agent.protocol.base import STOPPED, StatusArgs, StrictModel, ToolSpec, Uuid, omitted
 from bitwig_agent.protocol.parameters import InitialParams
 from bitwig_agent.protocol.refs import DeviceRef, MappingParameterRef, ModulatorRef
 from bitwig_agent.protocol.values import Expect
@@ -197,9 +197,14 @@ SPECS: dict[str, ToolSpec] = {
         summary="Add one device modulator (typeName from modulators.describe, or typeId) to the root device `to`; params? {name: value} sets its controls and map? [{target, amount, outputId?, transfer?, enabled?}] maps it, in one call. On a failed later step finish with parameters.set / modulators.map on the returned ref; never re-insert. Needs a stopped transport.",
         wire=ModulatorsInsertArgs,
         wire_description=MODULATORS_INSERT_DESCRIPTION,
+        requires=STOPPED,
     ),
     "modulators.delete": ToolSpec(
-        ModulatorsDeleteArgs, MODULATORS_DELETE_DESCRIPTION, False, examples=({"target": MODULATOR_REF},)
+        ModulatorsDeleteArgs,
+        MODULATORS_DELETE_DESCRIPTION,
+        False,
+        examples=({"target": MODULATOR_REF},),
+        requires=STOPPED,
     ),
     "modulators.map": ToolSpec(
         ModulatorsMapArgs,
@@ -217,11 +222,13 @@ SPECS: dict[str, ToolSpec] = {
             },
         ),
         summary="Set a mapping from a modulator output to a control on the same device (upsert): source modulator ref, target a gridModule or modulator parameter ref, amount -1..1; an omitted transfer or enabled keeps an existing mapping's value. expect {amount} guards the current amount. Needs a stopped transport.",
+        requires=STOPPED,
     ),
     "modulators.unmap": ToolSpec(
         ModulatorsUnmapArgs,
         MODULATORS_UNMAP_DESCRIPTION,
         False,
         examples=({"source": MODULATOR_REF, "target": GRID_PARAMETER_REF, "expect": {"amount": 0.5}},),
+        requires=STOPPED,
     ),
 }

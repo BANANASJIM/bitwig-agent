@@ -12,7 +12,6 @@ import dev.bitwigagent.core.PortHandle;
 import dev.bitwigagent.core.Positions;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Results;
-import dev.bitwigagent.core.SafetyObservation;
 import dev.bitwigagent.core.Scheduler;
 import dev.bitwigagent.core.Verification;
 import dev.bitwigagent.host.SelectionLease;
@@ -182,7 +181,6 @@ public final class TrackLifecycleModule implements HostModule {
 
     private void group(HostOperation op, JsonObject p) {
         requireNoPending("grouping");
-        transportSafety.recording(op);
         selection.requireFree();
         Creation before = capture();
         if (!before.complete)
@@ -241,7 +239,7 @@ public final class TrackLifecycleModule implements HostModule {
         inserting = op;
         Runnable check = () -> {
             scheduler.check(op);
-            transportSafety.requirePlaybackSafe();
+            transportSafety.recheck(op);
         };
         access.execute(() -> {
             try {
@@ -378,7 +376,6 @@ public final class TrackLifecycleModule implements HostModule {
      * (DeleteableObject), verified by the bank's UUID set and count.
      */
     private void delete(HostOperation op, MixModule.Target target) {
-        SafetyObservation safety = transportSafety.stopped(op);
         if (!window.observed()) throw Errors.notApplied(Reason.NOT_READY, "Track bank has not reported its size yet.");
         mix.guard(op, target);
         int slot = window.trackSlot(target.id);
@@ -413,7 +410,7 @@ public final class TrackLifecycleModule implements HostModule {
                 children.add(trackRefs.ref(child.slot));
             }
         }
-        transportSafety.guardStopped(safety);
+        transportSafety.recheck(op);
         mix.guard(op, target);
         op.markDispatched();
         JsonObject deleted = new JsonObject();
@@ -449,7 +446,6 @@ public final class TrackLifecycleModule implements HostModule {
     /** Duplicate one channel track with Channel.duplicate; the copy is attributed like an insertion. */
     private void duplicate(HostOperation op, JsonObject p, MixModule.Target target) {
         requireNoPending("track duplication");
-        transportSafety.recording(op);
         mix.guard(op, target);
         Creation before = capture();
         if (!before.complete || !before.tree.complete)

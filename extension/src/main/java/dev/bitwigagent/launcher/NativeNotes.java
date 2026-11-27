@@ -39,6 +39,9 @@ public final class NativeNotes {
     public interface Access {
         void execute(Runnable work);
 
+        /** The record keys this host's bindings cannot read or write (a feature group that does not bind). */
+        List<String> unread();
+
         /** Resolves the slot's clip (track UUID, clip name and slot checked) and reads every note of it. */
         Observed read(Object slot, String trackId, String expectedName, Runnable check);
 

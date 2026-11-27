@@ -38,6 +38,11 @@ REF_MODELS = {model.__name__ for model in Ref.__subclasses__()}
 # for cross-field rules the two sides legitimately express differently.
 SKIPS: dict[tuple[str, str, str], str] = {
     (
+        "transport.set",
+        "clipLauncherAutomationWriteEnabled",
+        "optional",
+    ): "kept in the schema only to refuse it with unsupported_scope (no effect in Bitwig 6); both sides refuse it",
+    (
         "devices.insert",
         "insert.id",
         "accept",
@@ -60,6 +65,12 @@ SKIPS: dict[tuple[str, str, str], str] = {
     **{
         (m, "range.start", "accept"): "range.end must exceed range.start and is capped at the same bound"
         for m in ("notes.get", "notes.set")
+    },
+    **{
+        (m, f"notes.0.recurrence.{f}", "accept"): "recurrence.mask has one entry per pass, so a bound on length or "
+        "mask is reachable only with a matching partner; rejects still run"
+        for m in ("clips.insert", "notes.set")
+        for f in ("length", "mask")
     },
     **{
         (

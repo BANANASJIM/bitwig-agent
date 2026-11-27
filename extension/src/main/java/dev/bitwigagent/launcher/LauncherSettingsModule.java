@@ -7,9 +7,9 @@ import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.Holds;
 import dev.bitwigagent.core.HostLimits;
 import dev.bitwigagent.core.HostOperation;
+import dev.bitwigagent.core.MethodSpecs;
 import dev.bitwigagent.core.PortHandle;
 import dev.bitwigagent.core.Reason;
-import dev.bitwigagent.core.SafetyObservation;
 import dev.bitwigagent.core.Scheduler;
 import dev.bitwigagent.host.LauncherStructureLock;
 import dev.bitwigagent.host.TrackWindow;
@@ -92,7 +92,7 @@ public final class LauncherSettingsModule {
         ClipLauncherSlot slot = target.slot.api;
         if (!slot.hasContent().get() || slot.sceneIndex().get() != scene)
             throw Errors.notApplied(Reason.NOT_READY, "The slot proxy does not show the scene yet.");
-        SafetyObservation safety = write ? transportSafety.stopped(op) : null;
+        Runnable safety = write ? transportSafety.atLeast(op, MethodSpecs.Transport.STOPPED) : null;
         Access access = port.get(op);
         long epoch = epochs.get(index);
         holds.inFlight(PENDING, PENDING_HOLD);
@@ -102,7 +102,7 @@ public final class LauncherSettingsModule {
                 throw Errors.notApplied(
                         Reason.TARGET_CHANGED,
                         "The launcher track or scene window changed while the operation was queued");
-            if (write) transportSafety.guardStopped(safety);
+            if (write) safety.run();
         };
         try {
             access.execute(() -> {

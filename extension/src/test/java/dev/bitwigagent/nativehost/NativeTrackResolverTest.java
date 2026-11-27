@@ -74,6 +74,9 @@ public final class NativeTrackResolverTest {
         for (PortHandle<?> port : ports.all()) assertNotNull(port.get(op), "every port binds");
         assertNotNull(((NativeAutomationAccess) ports.automation().get(op)).text(), "display text binds on first use");
         assertNotNull(((NativeChainAccess) ports.chains().get(op)).layers(), "layer bindings bind on first use");
+        assertNotNull(((NativeRoutingAccess) ports.routing().get(op)).hardware(), "hardware inputs bind on first use");
+        assertEquals(
+                List.of(), ports.noteWrites().get(op).unread(), "note operators and expressions bind on first use");
         assertTrue(
                 !compared.isEmpty() && differ.isEmpty(), "the code binds each member with its table desc: " + differ);
         bind(runtime, NativeTrackResolver::new);

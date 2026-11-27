@@ -14,86 +14,30 @@ import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.Scheduler;
 import dev.bitwigagent.core.SharedData;
-import dev.bitwigagent.core.ValueMatch;
 import dev.bitwigagent.host.DeviceSources;
 import dev.bitwigagent.host.RequestSnapshot;
 import dev.bitwigagent.host.TrackRefs;
 import dev.bitwigagent.host.TrackWindow;
 import dev.bitwigagent.host.TransportSafety;
+import dev.bitwigagent.routing.RoutingPort.TrackRef;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Track input/output choosers and device sidechain sources through exact version-gated native bindings. Entries
- * address tracks of the observed track bank only; hardware and device-output entries are read as kind "other"
- * and cannot be requested in this version.
+ * Track input/output choosers and device sidechain sources through the {@link RoutingPort}: validation, bank and
+ * device targets, the declared transport requirement and the pending/quarantine holds. The domain rules and result
+ * shapes are {@link RoutingModel}'s; entries address tracks of the observed track bank and hardware inputs by id.
  */
 public final class RoutingModule implements HostModule {
     static final Set<String> METHODS =
             Set.of("tracks.routing.get", "tracks.routing.set", "devices.sidechain.get", "devices.sidechain.set");
-    static final Set<String> TRACK_KINDS =
-            Set.of("track_audio_input", "track_note_input", "pre_fader", "post_fader", "track_notes");
-    /** Native source-kind group (kCk) that admits each requestable source kind; "none" is always admitted. */
-    static final Map<String, String> SOURCE_GROUP = Map.of(
-            "pre_fader",
-            "TRACK_AUDIO_SOURCES",
-            "post_fader",
-            "TRACK_AUDIO_SOURCES",
-            "track_notes",
-            "TRACK_NOTE_SOURCES",
-            "all_ins",
-            "HARDWARE_NOTE_SOURCES",
-            "computer_keyboard",
-            "HARDWARE_NOTE_SOURCES",
-            "onscreen_keyboard",
-            "HARDWARE_NOTE_SOURCES");
-    /** The output chooser (Bitwig's bhF) enables every destination group for every track; v1 exposes the two track groups. */
-    public static final Map<String, String> OUTPUT_GROUP =
-            Map.of("track_audio_input", "TRACK_AUDIO_DESTINATIONS", "track_note_input", "TRACK_NOTE_DESTINATIONS");
-    /** Public track types whose GUI shows an input chooser, with the native track kind (fP) each must report. */
-    public static final Map<String, String> INPUT_TRACK_TYPES =
-            Map.of("Audio", "AUDIO", "Instrument", "INSTRUMENT", "Hybrid", "HYBRID");
-
-    public static final int MAX_COMPONENTS = 256;
-
-    public interface Access {
-        void execute(Runnable work);
-
-        JsonObject trackGet(TrackRef self, List<TrackRef> bank, boolean includeChoices, Runnable check);
-
-        JsonObject trackSet(
-                TrackRef self, List<TrackRef> bank, JsonObject params, Runnable check, Runnable beforeWrite);
-
-        JsonObject sidechainGet(
-                DeviceSources.Source device, List<TrackRef> bank, boolean includeChoices, Runnable check);
-
-        JsonObject sidechainSet(
-                DeviceSources.Source device,
-                List<TrackRef> bank,
-                JsonObject params,
-                Runnable check,
-                Runnable beforeWrite);
-    }
-
-    /** One observed bank track: public UUID, name, type and its proxy (the native side re-resolves and re-checks it). */
-    public static final class TrackRef {
-        public final String id, name, type;
-        public final Object proxy;
-
-        TrackRef(String id, String name, String type, Object proxy) {
-            this.id = id;
-            this.name = name;
-            this.type = type;
-            this.proxy = proxy;
-        }
-    }
 
     private final Scheduler scheduler;
     private final TrackWindow window;
     private final TrackRefs trackRefs;
     private final DeviceSources sources;
     private final TransportSafety transportSafety;
-    private final PortHandle<Access> access;
+    private final PortHandle<RoutingPort> access;
     private final Holds holds;
     private final MethodSpecs specs;
     private final AtomicLong epoch = new AtomicLong();
@@ -106,7 +50,7 @@ public final class RoutingModule implements HostModule {
             TrackRefs trackRefs,
             DeviceSources sources,
             TransportSafety transportSafety,
-            PortHandle<Access> access,
+            PortHandle<RoutingPort> access,
             Holds holds,
             MethodSpecs specs) {
         this.scheduler = scheduler;
@@ -132,83 +76,7 @@ public final class RoutingModule implements HostModule {
 
     @Override
     public void validate(String method, JsonObject p) {
-        validateParams(method, p);
-    }
-
-    /**
-     * What the schema cannot say: a routing write changes the output or the input, an expect compares only those, and
-     * an entry has a track exactly for the track kinds and a name exactly for kind other.
-     */
-    static void validateParams(String method, JsonObject p) {
-        if (method.equals("tracks.routing.get") || method.equals("devices.sidechain.get")) return;
-        ValueMatch.requireNamed(p);
-        if (method.equals("tracks.routing.set") && !p.has("output") && !p.has("input"))
-            throw Errors.invalid("Supply output, input or both.");
-        JsonObject expect = p.has("expect") ? p.getAsJsonObject("expect") : new JsonObject();
-        for (String key : expect.keySet())
-            if (!p.has(key)) throw Errors.invalid("expect." + key + " compares a field this call does not write.");
-        for (String key : List.of("output", "input", "source")) if (p.has(key)) entry(p.getAsJsonObject(key), key);
-        for (String key : expect.keySet()) entry(expect.getAsJsonObject(key), "expect." + key);
-    }
-
-    private static void entry(JsonObject entry, String where) {
-        String kind = entry.get("kind").getAsString();
-        boolean track = TRACK_KINDS.contains(kind), other = kind.equals("other");
-        if (entry.has("track") != track)
-            throw Errors.invalid(
-                    where + ": track is required for " + new TreeSet<>(TRACK_KINDS) + " and not allowed otherwise.");
-        if (entry.has("name") != other)
-            throw Errors.invalid(where + ": name is required for kind other and only then.");
-        if (entry.has("nativeType") && !other) throw Errors.invalid(where + ": nativeType is only for kind other.");
-    }
-
-    /** v1 requestable source kinds admitted by a native kCk group set (always including none). */
-    public static List<String> sourceKinds(Collection<String> nativeGroups) {
-        List<String> out = new ArrayList<>(List.of("none"));
-        for (String kind :
-                List.of("pre_fader", "post_fader", "track_notes", "all_ins", "computer_keyboard", "onscreen_keyboard"))
-            if (nativeGroups.contains(SOURCE_GROUP.get(kind))) out.add(kind);
-        return out;
-    }
-
-    /** The input chooser's native kCk groups for a native track kind, as Bitwig's bhB.LzO derives them. */
-    public static List<String> trackSourceGroups(String nativeTrackKind) {
-        switch (nativeTrackKind) {
-            case "AUDIO":
-                return List.of("HARDWARE_AUDIO_SOURCES", "TRACK_AUDIO_SOURCES");
-            case "INSTRUMENT":
-                return List.of("HARDWARE_NOTE_SOURCES", "TRACK_NOTE_SOURCES");
-            case "HYBRID":
-                return List.of(
-                        "HARDWARE_NOTE_SOURCES", "HARDWARE_AUDIO_SOURCES", "TRACK_AUDIO_SOURCES", "TRACK_NOTE_SOURCES");
-            default:
-                return List.of();
-        }
-    }
-
-    /** The id of an entry's track ref. */
-    public static String trackId(JsonObject entry) {
-        return entry.getAsJsonObject("track").get("id").getAsString();
-    }
-
-    /** Compare-and-set: same kind, and the same track id (track kinds) or exact name (kind other). */
-    public static boolean sameEntry(JsonObject expected, JsonObject observed) {
-        String kind = expected.get("kind").getAsString();
-        if (!kind.equals(observed.get("kind").getAsString())) return false;
-        if (TRACK_KINDS.contains(kind))
-            return observed.has("track") && trackId(expected).equalsIgnoreCase(trackId(observed));
-        if (kind.equals("other"))
-            return observed.has("name")
-                    && observed.get("name").isJsonPrimitive()
-                    && expected.get("name")
-                            .getAsString()
-                            .equals(observed.get("name").getAsString())
-                    && (!expected.has("nativeType")
-                            || observed.has("nativeType")
-                                    && expected.get("nativeType")
-                                            .getAsString()
-                                            .equals(observed.get("nativeType").getAsString()));
-        return true;
+        RoutingModel.validateParams(method, p);
     }
 
     @Override
@@ -236,15 +104,16 @@ public final class RoutingModule implements HostModule {
                     "Track UUID is absent from the current " + HostLimits.TRACKS + "-track window.");
         for (String key : List.of("output", "input", "source")) {
             if (!p.has(key) || !p.getAsJsonObject(key).has("track")) continue;
-            String other = trackId(p.getAsJsonObject(key));
+            String other =
+                    p.getAsJsonObject(key).getAsJsonObject("track").get("id").getAsString();
             if (bank.stream().noneMatch(track -> track.id.equals(other)))
                 throw Errors.notApplied(
                         Reason.OUTSIDE_WINDOW,
                         key + ".track is absent from the current " + HostLimits.TRACKS
                                 + "-track window; nothing changed.");
         }
-        Runnable safety = write ? transportSafety.writeGuard(op, !sidechain) : null;
-        Access bridge = access.get(op);
+        Runnable safety = () -> transportSafety.recheck(op);
+        RoutingPort bridge = access.get(op);
         long generation = epoch.get();
         Runnable check = () -> {
             scheduler.check(op);
@@ -266,20 +135,8 @@ public final class RoutingModule implements HostModule {
             bridge.execute(() -> {
                 try {
                     check.run();
-                    JsonObject result;
-                    switch (method) {
-                        case "tracks.routing.get":
-                            result = bridge.trackGet(target, bank, choices, check);
-                            break;
-                        case "tracks.routing.set":
-                            result = bridge.trackSet(target, bank, p, check, beforeWrite);
-                            break;
-                        case "devices.sidechain.get":
-                            result = bridge.sidechainGet(device, bank, choices, check);
-                            break;
-                        default:
-                            result = bridge.sidechainSet(device, bank, p, check, beforeWrite);
-                    }
+                    JsonObject result = run(bridge, method, p, target, device, bank, choices, check, beforeWrite);
+                    bridge.provenance().write(result);
                     scheduler.schedule(
                             op,
                             () -> {
@@ -309,6 +166,56 @@ public final class RoutingModule implements HostModule {
             throw error;
         }
         op.result.whenComplete((r, e) -> holds.release(PENDING));
+    }
+
+    /** One routing call on the document thread: read, or plan, write and read back through the port. */
+    private static JsonObject run(
+            RoutingPort port,
+            String method,
+            JsonObject p,
+            TrackRef target,
+            DeviceSources.Source device,
+            List<TrackRef> bank,
+            boolean choices,
+            Runnable check,
+            Runnable beforeWrite) {
+        switch (method) {
+            case "tracks.routing.get":
+                return RoutingModel.track(port.readTrack(target, bank, choices, check), choices);
+            case "tracks.routing.set": {
+                RoutingPort.Edit<RoutingPort.TrackRouting> edit = port.editTrack(
+                        target, bank, seen -> RoutingModel.planTrack(p, target.id, seen), check, beforeWrite);
+                if (edit.rejected != null) throw RoutingModel.rejected(edit.rejected, p.getAsJsonObject(edit.rejected));
+                Map<String, RoutingEntry> before = new LinkedHashMap<>(), after = new LinkedHashMap<>();
+                for (String key : List.of("output", "input")) {
+                    if (!p.has(key)) continue;
+                    before.put(key, chooser(edit.before, key).current);
+                    after.put(key, chooser(edit.after, key).current);
+                }
+                return RoutingModel.finish(RoutingModel.track(edit.after, false), p, before, after, edit.change);
+            }
+            case "devices.sidechain.get":
+                return RoutingModel.sidechains(
+                        device.ref(), port.readSidechains(device, bank, choices, check), choices);
+            default: {
+                int index = p.getAsJsonObject("target").get("index").getAsInt();
+                RoutingPort.Edit<RoutingPort.Component> edit = port.editSidechain(
+                        device, bank, index, c -> RoutingModel.planSidechain(p, device.ref(), c), check, beforeWrite);
+                if (edit.rejected != null) throw RoutingModel.rejected("source", p.getAsJsonObject("source"));
+                JsonObject out = new JsonObject();
+                out.add("component", RoutingModel.component(device.ref(), edit.after, false));
+                return RoutingModel.finish(
+                        out,
+                        p,
+                        Map.of("source", edit.before.chooser.current),
+                        Map.of("source", edit.after.chooser.current),
+                        edit.change);
+            }
+        }
+    }
+
+    private static RoutingPort.Chooser chooser(RoutingPort.TrackRouting routing, String key) {
+        return key.equals("output") ? routing.output : routing.input;
     }
 
     /** The top-level device a ref names (the sidechain ref's device for a write); devices inside chains are not read. */

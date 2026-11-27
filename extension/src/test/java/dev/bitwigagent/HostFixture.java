@@ -113,7 +113,8 @@ public final class HostFixture {
             slots.child("itemCount").data = HostLimits.SCENES;
             for (int s = 0; s < HostLimits.SCENES; s++) {
                 FakeHost clip = slots.item(s);
-                for (String key : List.of("hasContent", "isPlaying", "isPlaybackQueued", "isRecording"))
+                for (String key :
+                        List.of("hasContent", "isPlaying", "isPlaybackQueued", "isRecording", "isRecordingQueued"))
                     clip.child(key).data = false;
                 clip.child("name").data = "";
                 clip.child("sceneIndex").data = s;
@@ -188,6 +189,10 @@ public final class HostFixture {
         transport.child("metronomeVolume").child("displayedValue").data = "-12 dB";
         transport.child("isPunchInEnabled").data = false;
         transport.child("isPunchOutEnabled").data = false;
+        transport.child("isArrangerOverdubEnabled").data = false;
+        transport.child("isClipLauncherOverdubEnabled").data = false;
+        transport.child("automationWriteMode").data = "latch";
+        enumOptions(transport.child("automationWriteMode"), "latch", "touch", "write");
         transport.child("preRoll").data = "none";
         enumOptions(transport.child("preRoll"), "none", "one_bar", "two_bars", "four_bars");
         transport.child("defaultLaunchQuantization").data = "1";
@@ -361,6 +366,8 @@ public final class HostFixture {
         try {
             JsonObject filled = HostBridge.checkSchema(SPECS, method, params);
             module.validate(method, filled);
+            op.transport = SPECS.get(method).transport;
+            services.transportSafety.admit(op);
             module.dispatch(op, method, filled);
         } catch (RuntimeException error) {
             op.fail(error);
@@ -381,7 +388,7 @@ public final class HostFixture {
         try {
             JsonObject filled = HostBridge.checkSchema(SPECS, method, params);
             module.validate(method, filled);
-            services.enqueue(op, () -> module.dispatch(op, method, filled));
+            services.enqueue(op, module, method, filled);
         } catch (RuntimeException error) {
             op.result.completeExceptionally(error);
         }

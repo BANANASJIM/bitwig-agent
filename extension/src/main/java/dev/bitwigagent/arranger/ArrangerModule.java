@@ -8,11 +8,11 @@ import dev.bitwigagent.core.Holds;
 import dev.bitwigagent.core.HostLimits;
 import dev.bitwigagent.core.HostModule;
 import dev.bitwigagent.core.HostOperation;
+import dev.bitwigagent.core.MethodSpecs;
 import dev.bitwigagent.core.PortHandle;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Refs;
 import dev.bitwigagent.core.Results;
-import dev.bitwigagent.core.SafetyObservation;
 import dev.bitwigagent.core.Scheduler;
 import dev.bitwigagent.host.ProjectState;
 import dev.bitwigagent.host.TrackRefs;
@@ -20,6 +20,7 @@ import dev.bitwigagent.host.TrackWindow;
 import dev.bitwigagent.host.TransportSafety;
 import dev.bitwigagent.launcher.LauncherState;
 import dev.bitwigagent.launcher.Note;
+import dev.bitwigagent.launcher.NoteFeatures;
 import dev.bitwigagent.launcher.NoteModule;
 import java.math.BigDecimal;
 import java.util.*;
@@ -116,11 +117,22 @@ public final class ArrangerModule implements HostModule {
     @Override
     public void validate(String method, JsonObject p) {}
 
-    /** Notes are {beat, pitch, velocity, duration, channel}, canonical; beats are relative to the clip start. */
+    /**
+     * Notes are {beat, pitch, velocity, duration, channel}, canonical; beats are relative to the clip start. Operators
+     * and expressions are not written into arranger clips in this version.
+     */
     public static List<double[]> notes(JsonArray array, double length) {
         List<double[]> out = new ArrayList<>();
-        for (Note n : NoteModule.insertNotes(array, BigDecimal.valueOf(length)))
+        List<Note> notes = NoteModule.insertNotes(array, BigDecimal.valueOf(length));
+        for (JsonElement n : array)
+            if (NoteFeatures.named(n.getAsJsonObject()))
+                throw Errors.notApplied(
+                        Reason.UNSUPPORTED_SCOPE,
+                        "notes on an arranger clip take beat, pitch, velocity, duration and channel only: operators"
+                                + " and expressions are written into launcher clips in this version");
+        for (Note n : notes) {
             out.add(new double[] {n.beatValue(), n.pitch, n.velocity, n.durationValue(), n.channel});
+        }
         return out;
     }
 
@@ -283,7 +295,7 @@ public final class ArrangerModule implements HostModule {
         }
         String where = ids.length == 1 ? "track " + ids[0] : ids.length + " tracks";
         if (write) op.inspect = dev.bitwigagent.core.Refs.read("clip:arranger");
-        SafetyObservation safety = write ? transportSafety.stopped(op) : null;
+        Runnable safety = write ? transportSafety.atLeast(op, MethodSpecs.Transport.STOPPED) : null;
         Access bridge = access.get(op);
         Runnable check = () -> {
             scheduler.check(op);
@@ -293,7 +305,7 @@ public final class ArrangerModule implements HostModule {
                 throw Errors.notApplied(
                         Reason.TARGET_CHANGED,
                         "The track or scene window changed while the arranger operation was queued.");
-            if (write) transportSafety.guardStopped(safety);
+            if (write) safety.run();
         };
         Runnable beforeWrite = () -> {
             check.run();

@@ -20,7 +20,7 @@ import dev.bitwigagent.mix.TrackReshapeModule;
 import dev.bitwigagent.project.KeySignatureModule;
 import dev.bitwigagent.project.ProjectModule;
 import dev.bitwigagent.render.RenderModule;
-import dev.bitwigagent.routing.RoutingModule;
+import dev.bitwigagent.routing.RoutingPort;
 import java.util.List;
 import java.util.function.Function;
 
@@ -38,7 +38,7 @@ public final class NativePorts {
 
     private final Function<HostOperation, NativeHost> gate;
     private final PortHandle<NativeGridAdapter> grid = port("", NativeGridAdapter::new);
-    private final PortHandle<RoutingModule.Access> routing =
+    private final PortHandle<RoutingPort> routing =
             port("Exact routing descriptors unavailable: ", NativeRoutingAccess::new);
     private final PortHandle<LauncherSettingsModule.Access> launcherSettings =
             port("Exact launcher settings descriptors unavailable: ", NativeLauncherSettingsAccess::new);
@@ -90,7 +90,7 @@ public final class NativePorts {
         return grid::get;
     }
 
-    public PortHandle<RoutingModule.Access> routing() {
+    public PortHandle<RoutingPort> routing() {
         return routing;
     }
 

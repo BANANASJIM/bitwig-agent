@@ -260,6 +260,10 @@ TARGET = {"trackId": TRACK, "deviceIndex": 0, "expectedDeviceName": "Poly Grid"}
 
 PROJECT_READY = ("projectReady",)
 ENGINE = ("engine",)
+NOT_RECORDING = ("notRecording",)
+"""Recording and both automation-write modes observed off, at enqueue and at dispatch; playback may run."""
+STOPPED = ("stopped",)
+"""NOT_RECORDING and the transport observed stopped."""
 
 
 @dataclass(frozen=True)

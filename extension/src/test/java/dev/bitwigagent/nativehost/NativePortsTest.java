@@ -101,10 +101,22 @@ public final class NativePortsTest {
         assertEquals("Exact thing unavailable: IllegalStateException: q3", unchecked.getMessage());
         assertSame(unchecked, assertThrows(RpcException.class, () -> broken.get(npe)));
         assertEquals(1, calls[0], "an unchecked error from binding code is kept like a reflective one");
+        LazyBinding<Object> missing = new LazyBinding<>("");
+        LazyBinding.Bind<Object> noKey = () -> {
+            throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Bitwig 9.9 has no native binding for note.chance.");
+        };
+        assertEquals("Bitwig 9.9 has no native binding for note.chance.", missing.unavailable(noKey));
+        assertSame(missing.unavailable(noKey), missing.unavailable(noKey), "a missing key is kept, not retried");
+        assertNull(new LazyBinding<>("").unavailable(() -> "bound"), "a binding that binds has no reason");
         LazyBinding<Object> busy = new LazyBinding<>("");
         assertRpcError(
                 Reason.BUSY.wire(),
                 () -> busy.get(() -> {
+                    throw Errors.notApplied(Reason.BUSY, "later");
+                }));
+        assertRpcError(
+                Reason.BUSY.wire(),
+                () -> busy.unavailable(() -> {
                     throw Errors.notApplied(Reason.BUSY, "later");
                 }));
         Object value = new Object();

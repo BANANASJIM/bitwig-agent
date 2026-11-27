@@ -219,7 +219,7 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
             scheduler.schedule(
                     operation,
                     () -> {
-                        preflight(method);
+                        preflight(method, operation);
                         module.dispatch(operation, method, copy);
                     },
                     0);
@@ -229,11 +229,16 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
         return operation.result;
     }
 
-    /** Structure writes need a settled project; launches need an active engine. Test seam. */
-    void preflight(String method) {
+    /**
+     * What a method declares in its requires: structure writes need a settled project, launches an active engine, and
+     * the declared transport state is admitted from the enqueue observation and now. Test seam.
+     */
+    void preflight(String method, HostOperation operation) {
         MethodSpecs.Spec spec = specs.get(method);
         if (spec.projectWrite) projectState.requireReady();
         if (spec.engineRequired) projectState.requireEngineActive(method);
+        operation.transport = spec.transport;
+        transportSafety.admit(operation);
     }
 
     /** Forward the host's output-update boundary once per domain, not once per RPC method. */

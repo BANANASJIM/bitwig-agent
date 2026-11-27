@@ -45,4 +45,15 @@ final class LazyBinding<T> {
         }
         return value;
     }
+
+    /** Why it cannot bind (running {@code bind} now if it has not been tried), or null when it binds. */
+    String unavailable(Bind<T> bind) {
+        try {
+            get(bind);
+            return null;
+        } catch (RpcException error) {
+            if (error != failure) throw error;
+            return failure.getMessage();
+        }
+    }
 }

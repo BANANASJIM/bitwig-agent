@@ -1,10 +1,12 @@
 package dev.bitwigagent;
 
 import com.bitwig.extension.controller.api.*;
+import com.google.gson.JsonObject;
 import dev.bitwigagent.arranger.ArrangerModule;
 import dev.bitwigagent.arranger.MarkerModule;
 import dev.bitwigagent.automation.AutomationModule;
 import dev.bitwigagent.core.Holds;
+import dev.bitwigagent.core.HostModule;
 import dev.bitwigagent.core.HostOperation;
 import dev.bitwigagent.core.MethodSpecs;
 import dev.bitwigagent.core.PortHandle;
@@ -51,6 +53,7 @@ import dev.bitwigagent.project.ProjectModule;
 import dev.bitwigagent.recovery.AckModule;
 import dev.bitwigagent.render.RenderModule;
 import dev.bitwigagent.routing.RoutingModule;
+import dev.bitwigagent.routing.RoutingPort;
 import dev.bitwigagent.transport.TransportModule;
 import java.util.function.LongSupplier;
 
@@ -103,6 +106,15 @@ public final class TestServices {
     public void enqueue(HostOperation operation, Runnable dispatch) {
         operation.safetyAtEnqueue = transportSafety.observation();
         scheduler.schedule(operation, dispatch, 0);
+    }
+
+    /** Queue a validated request as the bridge does: the method's declared transport state is admitted first. */
+    public void enqueue(HostOperation operation, HostModule module, String method, JsonObject params) {
+        operation.transport = HostFixture.SPECS.get(method).transport;
+        enqueue(operation, () -> {
+            transportSafety.admit(operation);
+            module.dispatch(operation, method, params);
+        });
     }
 
     public ArrangerModule arranger(ArrangerModule.Access access) {
@@ -290,7 +302,7 @@ public final class TestServices {
                 launcher);
     }
 
-    public RoutingModule routing(MethodSpecs specs, RoutingModule.Access access) {
+    public RoutingModule routing(MethodSpecs specs, RoutingPort access) {
         return new RoutingModule(
                 scheduler, window, trackRefs, sources, transportSafety, port(access, natives.routing()), holds, specs);
     }

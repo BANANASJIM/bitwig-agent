@@ -110,6 +110,7 @@ INSPECT: dict[str, str] = {
     "clips.move": "arranger.list",
     "clips.set": "clips.get",
     "clips.launch": "clips.get",
+    "clips.record": "launcher.list",
     "clips.transpose": "clips.get",
     "clips.quantize": "clips.get",
     "clips.transform": "clips.get",
