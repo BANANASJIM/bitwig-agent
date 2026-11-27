@@ -157,7 +157,7 @@ class Executor:
                 self.ledger.applied["inserted"] += 1
                 self.ledger.unreached["inserted"] -= 1
                 fresh.append(name)
-        self.ledger.steps.append({"op": "insert", "count": len(chunk), "outcome": result["outcome"]})
+        self.ledger.steps.append({"op": "insert", "count": len(chunk)})
         return fresh
 
     async def _name_inserted(self, fresh: list[str], result: dict[str, Any]) -> None:
@@ -253,7 +253,7 @@ class Executor:
                 for e in entries
                 if e.get("displayMismatch")
             ]
-            self.ledger.steps.append({"op": "params", "count": len(chunk), "outcome": result["outcome"]})
+            self.ledger.steps.append({"op": "params", "count": len(chunk)})
             verify("grid.parameters.set", result)
 
     async def _wire(self) -> None:
@@ -288,5 +288,5 @@ class Executor:
             self.ledger.applied["connections"] += sum(1 for e in done if e["from"])
             self.ledger.applied["disconnected"] += sum(1 for e in done if not e["from"])
             self.ledger.matched["connections"] += sum(1 for e in entries if e.get("outcome") == "already_matched")
-            self.ledger.steps.append({"op": "connections", "count": len(chunk), "outcome": result["outcome"]})
+            self.ledger.steps.append({"op": "connections", "count": len(chunk)})
             verify("grid.connections.set", result)

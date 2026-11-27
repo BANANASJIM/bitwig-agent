@@ -15,6 +15,7 @@ from bitwig_agent.errors import BridgeError, bridge_error, unknown_result
 from bitwig_agent.grid import apply as grid_apply
 from bitwig_agent.grid import bundled, display, execute, layout, problems, raw_scales, values
 from bitwig_agent.protocol import TOOLS, validate_call
+from bitwig_agent.protocol.base import leaf_rule_holds
 from bitwig_agent.protocol.grid import DEVICE as EXAMPLE_DEVICE
 from bitwig_agent.protocol.recipes import BASS_MODULES, BASS_SPEC, BASS_TWEAK
 from bitwig_agent.protocol.topics import TOPICS
@@ -26,6 +27,7 @@ def test_fresh_build_then_idempotent_reapply_writes_nothing():
     result = apply_grid(host, SPEC)
     assert result["outcome"] == "applied"
     assert result["verification"] == "native_readback"
+    assert leaf_rule_holds(result)
     assert result["applied"] == {
         "inserted": 5,
         "renamed": 5,
