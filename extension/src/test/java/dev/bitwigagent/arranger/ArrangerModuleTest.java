@@ -5,6 +5,7 @@ import static dev.bitwigagent.TestJson.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 import com.google.gson.*;
+import dev.bitwigagent.FakeHost;
 import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.Holds;
 import dev.bitwigagent.core.HostModule;
@@ -94,6 +95,7 @@ public final class ArrangerModuleTest {
             JsonObject lastArgs, lastRef;
             final List<String> ops = new ArrayList<>();
             final List<JsonObject> argsSeen = new ArrayList<>();
+            final List<JsonObject> listed = new ArrayList<>(List.of(row(8, 4, "Verse")));
 
             @Override
             public void execute(Runnable work) {
@@ -115,7 +117,7 @@ public final class ArrangerModuleTest {
                 out.addProperty("trackId", f.trackId);
                 out.addProperty("lane", "main");
                 JsonArray rows = new JsonArray();
-                rows.add(row(8, 4, "Verse"));
+                for (JsonObject row : listed) rows.add(row.deepCopy());
                 out.add("clips", rows);
                 out.add("clip", clip == null ? JsonNull.INSTANCE : clip);
                 return out;
@@ -203,6 +205,79 @@ public final class ArrangerModuleTest {
         assertEquals(arrangerClip(x.f.track(), 8, "Verse"), row.get("ref"));
         assertFalse(row.has("clipIndex"), "an index is no identity");
         assertEquals(4.0, row.get("length").getAsDouble());
+    }
+
+    @Test
+    void listWithoutATargetReadsEveryLaneSortedByStartWithMarkersTempoAndBars() {
+        Fixture x = new Fixture("Instrument");
+        x.lane.listed.add(0, x.lane.row(6, 2, "Fill"));
+        x.lane.listed.add(x.lane.row(0, 4, "Intro"));
+        x.f.base.transport.child("timeSignature").emit("3/4");
+        FakeHost marker = x.f.base
+                .host
+                .child("createArranger")
+                .child("createCueMarkerBank")
+                .item(0);
+        marker.child("exists").data = true;
+        marker.child("name").data = "drop";
+        marker.child("position").data = 12.0;
+        JsonObject result = x.call("arranger.list", new JsonObject());
+        assertEquals(1, x.lane.lists, "one lane per audio/instrument track");
+        List<String> order = new ArrayList<>();
+        for (JsonElement row : result.getAsJsonArray("clips"))
+            order.add(row.getAsJsonObject().get("name").getAsString()
+                    + "@"
+                    + row.getAsJsonObject().get("bar").getAsDouble());
+        assertEquals(List.of("Intro@1.0", "Fill@3.0", "Verse@3.6666666666666665"), order, "start order, 3/4 bars");
+        assertEquals(
+                arrangerClip(x.f.track(), 0, "Intro"),
+                result.getAsJsonArray("clips").get(0).getAsJsonObject().get("ref"));
+        assertEquals(3, result.get("count").getAsInt());
+        assertEquals(
+                "drop",
+                result.getAsJsonArray("markers")
+                        .get(0)
+                        .getAsJsonObject()
+                        .get("name")
+                        .getAsString());
+        assertEquals(120.0, result.get("tempo").getAsDouble());
+        assertEquals("3/4", result.get("timeSignature").getAsString());
+        assertTrue(result.has("window") && result.has("markersComplete"));
+    }
+
+    @Test
+    void anUnobservedTimeSignatureAndTempoAreNullNotGuessed() {
+        Fixture x = new Fixture("Instrument");
+        x.f.base.transport.child("timeSignature").notifyInitial = false;
+        x.f.base.transport.child("tempo").child("value").notifyInitial = false;
+        x.f.modules.put("arranger.list", x.f.services.arranger(x.lane));
+        JsonObject result = x.call("arranger.list", new JsonObject());
+        JsonObject row = result.getAsJsonArray("clips").get(0).getAsJsonObject();
+        assertTrue(row.get("bar").isJsonNull() && row.get("start").getAsDouble() == 8, "no bar without a signature");
+        assertTrue(
+                result.get("timeSignature").isJsonNull() && result.get("tempo").isJsonNull());
+    }
+
+    @Test
+    void listWithoutATargetSkipsTracksWithoutAClipLane() {
+        Fixture x = new Fixture("Group");
+        JsonObject result = x.call("arranger.list", new JsonObject());
+        assertEquals(0, x.lane.lists, "group, effect and master tracks have no main clip lane");
+        assertEquals(0, result.getAsJsonArray("clips").size());
+    }
+
+    @Test
+    void aTargetedListIsSortedByStart() {
+        Fixture x = new Fixture("Audio");
+        x.lane.listed.add(x.lane.row(0, 4, "Intro"));
+        JsonObject result = x.call("arranger.list", params("target", x.f.track()));
+        assertEquals(
+                "Intro",
+                result.getAsJsonArray("clips")
+                        .get(0)
+                        .getAsJsonObject()
+                        .get("name")
+                        .getAsString());
     }
 
     @Test
