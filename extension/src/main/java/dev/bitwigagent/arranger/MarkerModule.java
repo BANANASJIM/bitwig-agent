@@ -130,6 +130,11 @@ public final class MarkerModule implements HostModule {
         return out;
     }
 
+    /** The markers.list result for the current observations. */
+    JsonObject list() {
+        return describe(read());
+    }
+
     private static JsonObject ref(Snapshot snap, int rank) {
         Marker marker = snap.markers.get(rank);
         return Refs.marker(rank, marker.name, marker.beat);

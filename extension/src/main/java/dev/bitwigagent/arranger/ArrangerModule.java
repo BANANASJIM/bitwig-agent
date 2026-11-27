@@ -10,6 +10,7 @@ import dev.bitwigagent.core.HostModule;
 import dev.bitwigagent.core.HostOperation;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Refs;
+import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.SafetyObservation;
 import dev.bitwigagent.core.Scheduler;
 import dev.bitwigagent.host.NativeRuntime;
@@ -28,6 +29,7 @@ import java.util.function.Consumer;
 /** Arranger timeline clips on a track's main clip lane through exact version-gated native bindings. */
 public final class ArrangerModule implements HostModule {
     static final Set<String> METHODS = Set.of("arranger.list");
+    private static final Set<String> LANE_TYPES = Set.of("Audio", "Instrument", "Hybrid");
 
     public interface Access {
         void execute(Runnable work);
@@ -71,6 +73,8 @@ public final class ArrangerModule implements HostModule {
     private final TransportSafety transportSafety;
     private final NativeRuntime natives;
     private final Holds holds;
+    private final MarkerModule markers;
+    private final Transport transport;
     private final AtomicLongArray epochs = new AtomicLongArray(HostLimits.TRACKS);
     private Access access;
     private static final String PENDING = "arranger.pending", QUARANTINE = "arranger.quarantine";
@@ -83,6 +87,8 @@ public final class ArrangerModule implements HostModule {
             TransportSafety transportSafety,
             NativeRuntime natives,
             Holds holds,
+            MarkerModule markers,
+            Transport transport,
             Access access) {
         this.scheduler = scheduler;
         this.window = window;
@@ -91,7 +97,11 @@ public final class ArrangerModule implements HostModule {
         this.transportSafety = transportSafety;
         this.natives = natives;
         this.holds = holds;
+        this.markers = markers;
+        this.transport = transport;
         this.access = access;
+        transport.tempo().value().markInterested();
+        transport.timeSignature().markInterested();
         for (int i = 0; i < HostLimits.TRACKS; i++) {
             final int index = i;
             Track track = window.at(i);
@@ -127,16 +137,54 @@ public final class ArrangerModule implements HostModule {
     @Override
     public void dispatch(HostOperation op, String method, JsonObject p) {
         scheduler.check(op);
-        JsonObject target = p.getAsJsonObject("target");
-        int index = trackRefs.resolve(target, false);
-        JsonObject trackRef = trackRefs.ref(index);
+        List<Integer> slots = new ArrayList<>();
+        if (p.has("target")) slots.add(trackRefs.resolve(p.getAsJsonObject("target"), false));
+        else {
+            if (!window.observed())
+                throw Errors.notApplied(Reason.NOT_READY, "Track bank has not reported its size yet.");
+            for (int i = 0; i < HostLimits.TRACKS; i++)
+                if (window.at(i).exists().get()
+                        && LANE_TYPES.contains(window.at(i).trackType().get())) slots.add(i);
+        }
+        int[] indexes = slots.stream().mapToInt(Integer::intValue).toArray();
+        JsonObject[] refs = new JsonObject[indexes.length];
+        for (int i = 0; i < indexes.length; i++) refs[i] = trackRefs.ref(indexes[i]);
         run(
                 op,
-                index,
+                indexes,
                 -1,
                 false,
                 (bridge, track, id, check, beforeWrite) -> bridge.list(track, id, check),
-                result -> op.result.complete(shaped(result, trackRef)));
+                results -> op.result.complete(timeline(results, refs)));
+    }
+
+    /** Every listed lane's rows in track order, each lane sorted by start, with markers, tempo and bar positions. */
+    private JsonObject timeline(List<JsonObject> results, JsonObject[] refs) {
+        JsonObject out = new JsonObject();
+        JsonArray rows = new JsonArray();
+        String signature = transport.timeSignature().get();
+        String[] parts = signature.split("/");
+        double barBeats = Integer.parseInt(parts[0]) * 4.0 / Integer.parseInt(parts[1]);
+        for (int i = 0; i < results.size(); i++) {
+            JsonObject lane = shaped(results.get(i), refs[i]);
+            List<JsonObject> clips = new ArrayList<>();
+            for (JsonElement row : lane.remove("clips").getAsJsonArray()) clips.add(row.getAsJsonObject());
+            clips.sort(Comparator.comparingDouble(c -> c.get("start").getAsDouble()));
+            for (JsonObject clip : clips) {
+                clip.addProperty("bar", 1 + clip.get("start").getAsDouble() / barBeats);
+                rows.add(clip);
+            }
+            for (Map.Entry<String, JsonElement> e : lane.entrySet()) out.add(e.getKey(), e.getValue());
+        }
+        out.add("clips", rows);
+        out.addProperty("count", rows.size());
+        JsonObject marked = markers.list();
+        out.add("markers", marked.get("markers"));
+        out.add("markersComplete", marked.get("observationsComplete"));
+        out.addProperty("tempo", transport.tempo().value().getRaw());
+        out.addProperty("timeSignature", signature);
+        out.add("window", Results.window(window.offset(), HostLimits.TRACKS, window.total()));
+        return out;
     }
 
     /** A new arranger MIDI clip; the track is resolved here. */
@@ -158,12 +206,12 @@ public final class ArrangerModule implements HostModule {
         JsonObject current = trackRefs.ref(index);
         run(
                 op,
-                index,
+                new int[] {index},
                 -1,
                 true,
                 (bridge, track, id, check, beforeWrite) ->
                         bridge.create(track, id, clipStart, clipLength, name, list, channel, check, beforeWrite),
-                result -> done.accept(shaped(result, current)));
+                results -> done.accept(shaped(results.get(0), current)));
     }
 
     /** The launcher clip in {@code source}'s slot, copied onto the same track's timeline. */
@@ -173,12 +221,12 @@ public final class ArrangerModule implements HostModule {
         String name = source.slot.api.name().get();
         run(
                 op,
-                index,
+                new int[] {index},
                 source.at.offset,
                 true,
                 (bridge, track, id, check, beforeWrite) ->
                         bridge.copyFromLauncher(track, source.slot.api, id, name, clipStart, check, beforeWrite),
-                result -> done.accept(shaped(result, source.at.trackRef)));
+                results -> done.accept(shaped(results.get(0), source.at.trackRef)));
     }
 
     /** An edit of the arranger clip {@code ref} names: move, resize, rename or delete. */
@@ -187,11 +235,11 @@ public final class ArrangerModule implements HostModule {
         JsonObject trackRef = trackRefs.ref(index);
         run(
                 op,
-                index,
+                new int[] {index},
                 -1,
                 true,
                 (bridge, track, id, check, beforeWrite) -> bridge.edit(track, ref, kind, args, check, beforeWrite),
-                result -> done.accept(shaped(result, trackRef)));
+                results -> done.accept(shaped(results.get(0), trackRef)));
     }
 
     /** The access result with arranger clip rows as refs plus values; indexes are no identity. */
@@ -226,7 +274,8 @@ public final class ArrangerModule implements HostModule {
         return out;
     }
 
-    private void run(HostOperation op, int index, int offset, boolean write, Call call, Consumer<JsonObject> done) {
+    private void run(
+            HostOperation op, int[] indexes, int offset, boolean write, Call call, Consumer<List<JsonObject>> done) {
         if (holds.held(PENDING)) throw Errors.notApplied(Reason.BUSY, "Another native arranger operation is pending.");
         if (write && holds.held(QUARANTINE))
             throw holds.blocked(
@@ -234,15 +283,23 @@ public final class ArrangerModule implements HostModule {
                     "An earlier arranger clip write has an unknown outcome; arranger writes are refused.",
                     "Inspect arranger.list");
         if (write) projectState.requireReady();
-        Track track = window.at(index);
-        String id = track.channelId().get();
+        Track[] tracks = new Track[indexes.length];
+        String[] ids = new String[indexes.length];
+        long[] epoch = new long[indexes.length];
+        for (int i = 0; i < indexes.length; i++) {
+            tracks[i] = window.at(indexes[i]);
+            ids[i] = tracks[i].channelId().get();
+            epoch[i] = epochs.get(indexes[i]);
+        }
+        String where = ids.length == 1 ? "track " + ids[0] : ids.length + " tracks";
         if (write) op.inspect = dev.bitwigagent.core.Refs.read("clip:arranger");
         SafetyObservation safety = write ? transportSafety.stopped(op) : null;
         if (access == null) access = NativeArrangerAccess.bind(natives.get(op).access());
-        long epoch = epochs.get(index);
         Runnable check = () -> {
             scheduler.check(op);
-            if (epochs.get(index) != epoch || offset >= 0 && window.sceneOffset() != offset)
+            boolean moved = offset >= 0 && window.sceneOffset() != offset;
+            for (int i = 0; i < indexes.length; i++) moved |= epochs.get(indexes[i]) != epoch[i];
+            if (moved)
                 throw Errors.notApplied(
                         Reason.TARGET_CHANGED,
                         "The track or scene window changed while the arranger operation was queued.");
@@ -251,26 +308,29 @@ public final class ArrangerModule implements HostModule {
         Runnable beforeWrite = () -> {
             check.run();
             op.markDispatched();
-            holds.place(
-                    QUARANTINE, "An arranger clip write on track " + id + " has an unknown outcome until read back.");
+            holds.place(QUARANTINE, "An arranger clip write on " + where + " has an unknown outcome until read back.");
         };
         Access bridge = access;
-        holds.inFlight(PENDING, "A native arranger operation on track " + id + " is running.");
+        holds.inFlight(PENDING, "A native arranger operation on " + where + " is running.");
         try {
             bridge.execute(() -> {
                 try {
                     check.run();
-                    JsonObject result = call.run(bridge, track, id, check, beforeWrite);
+                    List<JsonObject> results = new ArrayList<>();
+                    for (int i = 0; i < indexes.length; i++)
+                        results.add(Errors.withInspect(
+                                call.run(bridge, tracks[i], ids[i], check, beforeWrite), op.inspect));
                     scheduler.schedule(
                             op,
                             () -> {
                                 check.run();
-                                if (!window.trackMatches(id, track))
-                                    throw Errors.notApplied(
-                                            Reason.TARGET_CHANGED, "Track target changed after native access.");
+                                for (int i = 0; i < indexes.length; i++)
+                                    if (!window.trackMatches(ids[i], tracks[i]))
+                                        throw Errors.notApplied(
+                                                Reason.TARGET_CHANGED, "Track target changed after native access.");
                                 if (write) holds.release(QUARANTINE);
                                 holds.release(PENDING);
-                                done.accept(Errors.withInspect(result, op.inspect));
+                                done.accept(results);
                             },
                             0);
                 } catch (RuntimeException | Error error) {

@@ -809,6 +809,23 @@ public final class MixModule implements HostModule {
         return out;
     }
 
+    /** The tracks.list mix columns of a bank slot; null while unobserved. */
+    void columns(int slot, JsonObject row) {
+        State state = states[slot];
+        for (int i : new int[] {VOLUME, PAN})
+            row.add(FIELDS[i], Results.unit(value(state, i), text(state.meta(FIELDS[i] + "Display")), null));
+        for (int i = 3; i <= 5; i++) row.add(FIELDS[i], value(state, i));
+        JsonArray sends = new JsonArray();
+        for (int i = 0; i < HostLimits.SENDS; i++) {
+            String prefix = "send" + i + ".";
+            if (!state.meta(prefix + "exists").equals(new JsonPrimitive(true))) continue;
+            JsonObject send = new JsonObject();
+            for (String key : List.of("name", "display", "enabled")) send.add(key, state.meta(prefix + key));
+            sends.add(send);
+        }
+        row.add("sends", sends);
+    }
+
     private JsonObject snapshot(Target target) {
         State state = target.state;
         JsonObject ref = ref(target);
