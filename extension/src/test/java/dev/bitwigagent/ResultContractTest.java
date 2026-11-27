@@ -10,6 +10,7 @@ import dev.bitwigagent.core.HostModule;
 import dev.bitwigagent.core.HostOperation;
 import dev.bitwigagent.core.Refs;
 import dev.bitwigagent.core.Results;
+import dev.bitwigagent.project.FakeKeySignature;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
@@ -46,6 +47,8 @@ final class ResultContractTest {
 
     private static final Map<String, Example> EXAMPLES = Map.of(
             "transport.set", new Example(TestServices::transportModule, "{\"tempo\":133}"),
+            "project.key.set",
+                    new Example(s -> s.keySignature(new FakeKeySignature()), "{\"root\":\"D\",\"scale\":\"Minor\"}"),
             "tracks.set", new Example(TestServices::mix, "{" + TRACK_B + ",\"name\":\"Renamed\",\"mute\":true}"),
             "tracks.sends.set",
                     new Example(

@@ -14,6 +14,8 @@ bitwig-agent-install
 bitwig-agent-install --mcp-config
 ```
 
+`audio analyze` (and the level report of `audio capture` / `grid probe`) needs the optional `audio` extra, numpy + scipy + soundfile: `pipx install 'bitwig-agent[audio]'` (or `pipx inject bitwig-agent numpy scipy soundfile` for an existing installation). Without it those tools answer `unsupported_platform` naming the install command; everything else works.
+
 The first installer command changes your user extension directory; run it only when you intend to install/replace that extension. The second only prints MCP configuration. Neither starts Bitwig or enables the controller.
 
 `pipx run` instead runs a command in a cached, disposable environment without a persistent installation. It is useful for a one-off **offline** discovery command:
@@ -42,7 +44,7 @@ cd bitwig-agent
 makepkg -si
 ```
 
-This builds the Python component from release source and packages the matching prebuilt Java extension. Runtime dependencies come from pacman; there is no runtime pipx/private-venv requirement. `makepkg` may request privilege for dependency/package installation through pacman; **never run makepkg itself as root**.
+This builds the Python component from release source and packages the matching prebuilt Java extension. Runtime dependencies come from pacman; there is no runtime pipx/private-venv requirement. For `audio analyze` install the optional dependencies `python-numpy python-scipy python-soundfile`. `makepkg` may request privilege for dependency/package installation through pacman; **never run makepkg itself as root**.
 
 Maintainers can also build the mirrored recipe in the source repository's [`packaging/aur`](https://github.com/BANANASJIM/bitwig-agent/tree/main/packaging/aur) directory. The published AUR repository contains only the recipe, generated metadata and license.
 

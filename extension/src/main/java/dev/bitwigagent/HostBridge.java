@@ -48,6 +48,7 @@ import dev.bitwigagent.mix.TrackLifecycleModule;
 import dev.bitwigagent.mix.TrackListModule;
 import dev.bitwigagent.project.ContextModule;
 import dev.bitwigagent.project.DiscoveryModule;
+import dev.bitwigagent.project.KeySignatureModule;
 import dev.bitwigagent.project.ProjectModule;
 import dev.bitwigagent.recovery.AckModule;
 import dev.bitwigagent.recovery.JobsModule;
@@ -102,6 +103,7 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
         register(new DeviceChainModule(scheduler, window, trackRefs, sources, chains, transportSafety));
         register(new ActionModule(scheduler, application, projectState, selection));
         register(projectModule);
+        register(new KeySignatureModule(scheduler, project, transportSafety, natives, holds, null));
         TransportModule transportModule =
                 new TransportModule(transport, application, scheduler, transportSafety, projectState);
         register(transportModule);

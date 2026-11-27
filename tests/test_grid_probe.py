@@ -268,6 +268,20 @@ def test_inactive_engine_refuses_before_any_cable_is_touched(rig):
     assert host.conns == host.original
 
 
+def test_missing_audio_extra_refuses_before_any_cable_is_touched(rig, monkeypatch):
+    host, _ = rig
+
+    def missing():
+        raise pipewire.bridge_error("unsupported_platform", f"numpy is missing: {pipewire.AUDIO_EXTRA}")
+
+    monkeypatch.setattr(pipewire, "load_analysis", missing)
+    with pytest.raises(BridgeError) as e:
+        probe(host)
+    assert e.value.error["reason"] == "unsupported_platform"
+    assert host.sets() == []
+    assert host.conns == host.original
+
+
 def test_probe_bands_mode_reports_balance_and_spectral_peaks(rig):
     host, _ = rig
     out = probe(host, mode="bands", windowSeconds=0.5)

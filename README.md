@@ -31,6 +31,8 @@ bitwig-agent-install
 
 This installs the Python tools, then downloads and verifies the matching extension before copying it into your Bitwig Extensions directory. Changed existing bytes are backed up; identical bytes are left untouched.
 
+For offline audio analysis (`audio analyze`, and the levels `audio capture` reports) install the optional extra instead: `pipx install 'bitwig-agent[audio]'` (numpy, scipy, soundfile).
+
 See [one-off runs, upgrades and offline installation](https://github.com/BANANASJIM/bitwig-agent/blob/main/INSTALL.md).
 
 #### Arch Linux / AUR

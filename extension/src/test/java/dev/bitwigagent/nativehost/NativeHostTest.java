@@ -16,9 +16,11 @@ import java.net.URL;
 import java.net.URLClassLoader;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.function.Executable;
 
 /** Shared-domain error translation tests, not a substitute for native binding acceptance. */
 public final class NativeHostTest {
@@ -100,6 +102,14 @@ public final class NativeHostTest {
             assertTrue(ran[0], "execute dispatches through the table's asyncExec binding");
             access.documentThread();
             access.requireModelThread(executor(loader));
+            // A key absent from this version's table fails only the feature that uses it.
+            for (Executable missing : List.<Executable>of(
+                    () -> access.type("app.missing"),
+                    () -> access.name("app.missing"),
+                    () -> access.exactMethod("app.missing", void.class, false)))
+                assertEquals(
+                        "native_unavailable",
+                        assertThrows(RpcException.class, missing).reason.wire());
             NativeHost other = new NativeHost(host.getConstructor().newInstance(), "0.0.1", () -> {}, hosts, name -> {
                 throw new AssertionError("a hash mismatch must close the gate before any binding");
             });

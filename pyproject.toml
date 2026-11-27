@@ -33,6 +33,10 @@ Repository = "https://github.com/BANANASJIM/bitwig-agent"
 Issues = "https://github.com/BANANASJIM/bitwig-agent/issues"
 Releases = "https://github.com/BANANASJIM/bitwig-agent/releases"
 
+[project.optional-dependencies]
+# audio.analyze (and the level report of audio.capture / grid.probe)
+audio = ["numpy>=2,<3", "scipy>=1.15,<2", "soundfile>=0.13,<1"]
+
 [tool.hatch.build.targets.sdist]
 # Downstream recipes contain the released sdist's checksum, not source inputs.
 exclude = ["/packaging"]
@@ -70,6 +74,10 @@ python_version = "3.11"
 strict = true
 files = ["src/bitwig_agent"]
 
+[[tool.mypy.overrides]]
+module = ["scipy.*", "soundfile"]  # no type information published
+ignore_missing_imports = true
+
 [tool.pixi.workspace]
 channels = ["conda-forge"]
 platforms = ["linux-64", "linux-aarch64", "osx-64", "osx-arm64", "win-64"]
@@ -92,6 +100,7 @@ mypy = "==2.4.1"
 pytest = ">=8.3,<9"
 pytest-cov = "==7.1.0"
 ruff = "==0.17.6"
+pyloudnorm = "==0.2.0"  # test-only loudness reference
 
 [tool.pixi.feature.native-music.dependencies]
 numpy = ">=2,<3"
