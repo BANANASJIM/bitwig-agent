@@ -42,6 +42,17 @@ Any duplicate at the configured CPD token threshold fails lint. `git config blam
 
 The default checks do not launch Bitwig. See [VERIFICATION.md](VERIFICATION.md) for layer boundaries. CI ([workflow](.github/workflows/ci.yml)) runs: `Lint` (`pixi run lint`); `Java tests and fixture` (`pixi run test-java`, `pixi run fixture`); the Python matrix (`py311`, `py314`, `py311-mcp-min`) running `test`; `Check` (`pixi run check`) on Linux arm64 (blocking; x64 is covered by the jobs above) and, on `main` only, Windows and macOS runners (informational); `Package` (distribution build, `smoke-dist`, `validate-skills`); and a reachable-history secret scan. Arch packaging is a separate downstream check ([`aur.yml`](.github/workflows/aur.yml), on release). None claims to build against or test a live proprietary host. Consult actual workflow output rather than treating configured jobs as passing evidence.
 
+## Mapping a new Bitwig release
+
+Native bindings use obfuscated host names that change with every Bitwig release and platform. `scripts/remap` maps the bound symbols from one `bitwig.jar` to another (a new release, or the same release on another platform) offline: it parses class files as data and never loads or runs host code.
+
+```sh
+pixi run remap -- OLD/bitwig.jar NEW/bitwig.jar --harness run.txt --extra extra.tsv \
+    --map map.json --report map.md --classes classmap.json
+```
+
+Use absolute paths (the task runs from the repository root). The symbol inventory is a harness log plus a hand-written list of symbols the harness cannot see; both formats are described in `scripts/remap/inventory.py`. Each member is matched inside its own declaring class, because obfuscated names are not consistent across classes. Every symbol gets a status (`exact`, `confident`, `uncertain`, `unmapped`), its evidence and a body comparison (`identical`, `renamed-only`, `no-body`, `changed`); the report lists everything that is not `exact`, changed bodies and structural checks. `--no-order` repeats the run without declaration-order anchoring as a control. The report contains symbol names and jar hashes only. Never commit a Bitwig jar or decompiled code: the tests build tiny synthetic class files instead.
+
 ## Code style
 
 The tools decide formatting, types, duplicate code, the `protocol/` import direction and warnings: run `pixi run fmt`, then `pixi run check`. Fix the cause; a suppression needs a reason the tool cannot infer. Everything below is judgment the tools cannot check. When rules conflict, earlier wins:
