@@ -51,12 +51,21 @@ class RoutingEntry(StrictModel):
         kind: str
 
     track: TrackRef = omitted(description=ROUTING_TRACK)
-    id: Annotated[str, Field(min_length=1, max_length=256)] = omitted(description=HARDWARE_ID)
 
     @model_validator(mode="after")
     def validate_track(self) -> Self:
         if ("track" in self.model_fields_set) != (self.kind in ROUTING_TRACK_KINDS):
             raise ValueError(f"track is required for {sorted(ROUTING_TRACK_KINDS)} and not allowed otherwise")
+        return self
+
+
+class HardwareEntry(RoutingEntry):
+    """An entry that may name a hardware input by its stable id."""
+
+    id: Annotated[str, Field(min_length=1, max_length=256)] = omitted(description=HARDWARE_ID)
+
+    @model_validator(mode="after")
+    def validate_id(self) -> Self:
         if ("id" in self.model_fields_set) != (self.kind in HARDWARE_KINDS):
             raise ValueError(f"id is required for {sorted(HARDWARE_KINDS)} and not allowed otherwise")
         return self
@@ -68,7 +77,7 @@ class OutputEntry(RoutingEntry):
     )
 
 
-class NamedEntry(RoutingEntry):
+class NamedEntry(HardwareEntry):
     """An entry that may carry the display name a get reported beside a hardware id, so it can be copied verbatim."""
 
     name: str = omitted(
@@ -121,7 +130,7 @@ class ExpectedOutputEntry(ObservedEntry):
     kind: Literal["none", "track_audio_input", "track_note_input", "other"]
 
 
-class ExpectedInputEntry(ObservedEntry):
+class ExpectedInputEntry(HardwareEntry, ObservedEntry):
     kind: Literal[
         "none",
         "pre_fader",
@@ -252,6 +261,11 @@ SPECS: dict[str, ToolSpec] = {
             },
             {
                 "target": EXAMPLE_TRACK,
+                "input": {"kind": "none"},
+                "expect": {"input": {"kind": "hardware_audio_input", "id": EXAMPLE_BUS, "name": "Stereo 1"}},
+            },
+            {
+                "target": EXAMPLE_TRACK,
                 "input": {"kind": "all_ins"},
                 "expect": {
                     "input": {
@@ -300,6 +314,11 @@ SPECS: dict[str, ToolSpec] = {
                 "target": EXAMPLE_SIDECHAIN,
                 "source": {"kind": "pre_fader", "track": EXAMPLE_OTHER},
                 "expect": {"source": {"kind": "none"}},
+            },
+            {
+                "target": EXAMPLE_SIDECHAIN,
+                "source": {"kind": "none"},
+                "expect": {"source": {"kind": "hardware_audio_input", "id": EXAMPLE_BUS, "name": "Stereo 1"}},
             },
             {
                 "target": {**EXAMPLE_SIDECHAIN, "index": 1, "modulatorId": "abcdef01-2345-6789-abcd-0123456789ab"},
