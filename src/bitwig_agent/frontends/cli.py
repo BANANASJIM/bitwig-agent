@@ -51,7 +51,8 @@ BATCH_HELP = "\n".join(
         "params is optional; blank lines are skipped. Every line is validated before the first call is sent.",
         "stdout gets one result line per finished call. It stops at the first error (stderr, prefixed with",
         "the line number) or the first outcome outside applied|already_matched|sent (that result is printed),",
-        "and exits with that call's code. Nothing is retried or run in parallel.",
+        'prints {"outcome":"not_applied","reason":"not_reached"} for each later line, and exits with that',
+        "call's code. Nothing is retried or run in parallel.",
         "Example:",
         "  jq -c '.tracks[] | {method:\"tracks.set\",params:{target:.ref,mute:true}}' t.json | bitwig-agent batch",
     ]
@@ -207,7 +208,8 @@ def overview() -> str:
             "  one per line (scope, total, window are not output; the default JSON keeps them).",
             '  A partial list adds one {"warning"} line to stderr and still exits 0.',
             'Batch: bitwig-agent batch [-|@file] runs JSON Lines {"method":"a.b","params":{}} in order and',
-            "  stops at the first error or outcome not in applied|already_matched|sent.",
+            "  stops at the first error or outcome not in applied|already_matched|sent; each later line prints",
+            '  {"outcome":"not_applied","reason":"not_reached"}.',
             "",
             "Exit codes:",
             *(f"  {line}" for line in EXIT_TABLE),
@@ -504,9 +506,10 @@ async def batch(rest: list[str], inputs: Inputs, progress: Progress) -> Output:
         refused = check(method, params)
         if refused is not None:
             return failure(at_line(number, refused))
-    for number, method, params in calls:
+    for index, (number, method, params) in enumerate(calls):
         envelope = await run(method, params, progress)
         if isinstance(envelope, Error):
+            not_reached(len(calls) - index - 1, progress)
             return Output(
                 stdout="".join(progress.stdout),
                 stderr=failure(at_line(number, envelope)).stderr,
@@ -514,11 +517,19 @@ async def batch(rest: list[str], inputs: Inputs, progress: Progress) -> Output:
             )
         try:
             progress.put(text_line(envelope.result))
+            if envelope.failed:
+                not_reached(len(calls) - index - 1, progress)
         except BrokenPipeError:
             return pipe_closed(method, number, progress)
         if envelope.failed:
             break
     return Output(stdout="".join(progress.stdout), code=exit_code(envelope))
+
+
+def not_reached(count: int, progress: Progress) -> None:
+    """One line per call a stopped batch never sent, as the host batch reports its unreached entries."""
+    for _ in range(count):
+        progress.put(text_line({"outcome": "not_applied", "reason": "not_reached"}))
 
 
 def is_resource(path: str) -> bool:

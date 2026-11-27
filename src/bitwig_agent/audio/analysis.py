@@ -9,7 +9,7 @@ import sys
 import zlib
 from array import array
 from itertools import accumulate, pairwise
-from statistics import median
+from statistics import fmean, median
 from typing import Any
 
 from bitwig_agent.audio import loudness
@@ -131,7 +131,10 @@ def level(x: array[Any], rate: int, window_seconds: float) -> dict[str, Any]:
     rows = []
     for i in range(0, len(x), size):
         seg = x[i : i + size]
-        rows.append({"t": round(i / rate, 3), "peak": round(max(map(abs, seg)), 4), "rms": round(_rms(seg), 4)})
+        r = _rms(seg)
+        rows.append(
+            {"t": round(i / rate, 3), "peak": round(max(map(abs, seg)), 4), "rms": round(r, 4), "rmsDb": _db(r)}
+        )
     quiet = sum(1 for r in rows if r["rms"] < QUIET_RMS)
     return {
         "peak": round(peak, 4),
@@ -658,9 +661,14 @@ def analyze(args: dict[str, Any]) -> dict[str, Any]:
     body = x[int(skip * rate) :]
     shift = int(skip * rate) / rate
     if mode == "level":
-        out = level(body, rate, args.get("windowSeconds", 0.5))
+        seconds = max(_window_seconds(args, 0.5), len(body) / rate / MAX_WINDOWS)
+        out = level(body, rate, seconds)
         for row in out["windows"]:
             row["t"] = round(row["t"] + shift, 3)
+        if "reference" in args:
+            _compare(out, args["reference"], skip, len(body) / rate, seconds)
+        if "windowBeats" in args:
+            _beat_windows(out, args["bpm"])
         return {**base, **out}
     if mode == "probe":
         return {**base, **probe(x, rate, skip)}
@@ -679,6 +687,38 @@ def analyze(args: dict[str, Any]) -> dict[str, Any]:
         **base,
         **mono_pitch(x, rate, find_onsets(x, rate, threshold, skip, args.get("method", "flux")), args.get("bpm")),
     }
+
+
+def _window_seconds(args: dict[str, Any], default: float) -> float:
+    if "windowBeats" in args:
+        return float(args["windowBeats"] * 60 / args["bpm"])
+    return float(args.get("windowSeconds", default))
+
+
+def _beat_windows(out: dict[str, Any], bpm: float) -> None:
+    out["windowBeats"] = round(out["windowSeconds"] * bpm / 60, 3)
+    for row in out["windows"]:
+        row["beat"] = round(row["t"] * bpm / 60, 3)
+
+
+def _compare(out: dict[str, Any], path: str, skip: float, seconds: float, window_seconds: float) -> None:
+    """Per-window RMS difference against the same span of a reference WAV, in dB."""
+    rate, _, ref = read_wav(path)
+    begin = int(skip * rate)
+    other = level(ref[begin : begin + int(seconds * rate)], rate, window_seconds)["windows"]
+    deltas = []
+    for i, row in enumerate(out["windows"]):
+        row["referenceRmsDb"] = other[i]["rmsDb"] if i < len(other) else None
+        both = row["rmsDb"] is not None and row["referenceRmsDb"] is not None
+        row["deltaDb"] = round(row["rmsDb"] - row["referenceRmsDb"], 2) if both else None
+        if both:
+            deltas.append(row["deltaDb"])
+    out["reference"] = path
+    out["summary"] = (
+        {"meanDeltaDb": round(fmean(deltas), 2), "minDeltaDb": min(deltas), "maxDeltaDb": max(deltas)}
+        if deltas
+        else None
+    )
 
 
 def loudness_mode(args: dict[str, Any]) -> dict[str, Any]:
@@ -722,7 +762,9 @@ def analyze_bands(args: dict[str, Any]) -> dict[str, Any]:
         "durationSeconds": round(len(left) / rate, 3),
         "analyzedChannel": 0,
     }
-    out.update(bands(body, rate, args.get("windowSeconds", 8.0), args.get("key"), start / rate))
+    out.update(bands(body, rate, _window_seconds(args, 8.0), args.get("key"), start / rate))
+    if "windowBeats" in args:
+        _beat_windows(out, args["bpm"])
     out["stereoCorrelation"] = stereo_correlation(left, right, start)
     if args.get("spectrogramPath"):
         out["spectrogram"] = spectrogram(body, rate, args["spectrogramPath"])

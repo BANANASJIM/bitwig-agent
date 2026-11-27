@@ -24,7 +24,7 @@ Meters and peak readings are observations, not loudness, tonal balance or hearin
 4. `bitwig-agent audio analyze` the file; `audio analyze --help` lists the modes (silence and clipping, onsets, pitch, loudness, spectrum, a scope for logic or CV signals). Pick the mode that answers your question.
 5. `bitwig-agent audio route --mode=restore` when finished, or Bitwig stays muted for the user.
 
-Skip warm-up with `skipSeconds`. Pitch analysis is for monophonic, fundamental-dominant material only; an empty `silent` result usually means the route or signal path, not the analysis. Analysis is measurement: it cannot say a sound is good, so report "No audio audition performed" unless someone listened.
+To check an effect over time (does the sidechain duck on every beat?), capture the same span with and without it and compare: `audio analyze --mode=level --bpm=128 --windowBeats=1 --reference=/tmp/dry.wav` gives each beat's `deltaDb` and a `summary`. Skip warm-up with `skipSeconds`. Pitch analysis is for monophonic, fundamental-dominant material only; an empty `silent` result usually means the route or signal path, not the analysis. Analysis is measurement: it cannot say a sound is good, so report "No audio audition performed" unless someone listened.
 
 ## Bounce and export
 

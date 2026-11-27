@@ -44,6 +44,7 @@ RESULT_NAMES = {
     "parentPid",
     "waylandDisplay",
     "isError",
+    "deltaDb",
 }
 
 

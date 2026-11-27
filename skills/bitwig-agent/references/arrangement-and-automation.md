@@ -7,6 +7,7 @@ Fields and limits: `<path> --help`. These are production recommendations and Bit
 - Orient before editing
 - Launcher and Arranger
 - Arrange and capture
+- Arrange from a section table
 - Record and edit audio
 - Automation: three questions
 
@@ -30,6 +31,34 @@ The Launcher is for trying combinations and the Arranger for fixed placement. Ea
 2. Overlaps are refused, not overwritten: lay sections end to end and read the lane back.
 3. Before capturing a launcher performance check the recording start, existing material, record arms, automation writing and the alias-capture option.
 4. Afterwards read the arranger clips and return tracks to Arranger control before judging the linear arrangement. `markers insert` makes form and export range explicit.
+
+## Arrange from a section table
+
+Write the section table in your own notes first; it is a draft, not a tool input:
+
+```
+intro  bars 1-8    Pad
+verse  bars 9-24   Drums A, Bass A, Pad
+drop   bars 25-32  Drums B, Bass B, Pad
+```
+
+Then send it as one `batch`, one call per line, positions in beats (4/4: bar 9 is beat 32). Clip refs come from `launcher list`, track refs from `tracks list`:
+
+```sh
+bitwig-agent batch <<'EOF'
+{"method":"markers.insert","params":{"beat":0,"name":"intro"}}
+{"method":"markers.insert","params":{"beat":32,"name":"verse"}}
+{"method":"markers.insert","params":{"beat":96,"name":"drop"}}
+{"method":"clips.copy","params":{"from":<pad clip ref>,"to":{"track":<Pad track ref>,"start":0}}}
+{"method":"clips.copy","params":{"from":<drums A clip ref>,"to":{"track":<Drums track ref>,"start":32}}}
+{"method":"clips.copy","params":{"from":<bass A clip ref>,"to":{"track":<Bass track ref>,"start":32}}}
+EOF
+```
+
+- To fill a section with one clip, copy it once and lengthen that copy with `clips set` `length`, not N copies. `clips.set` needs the new arranger clip ref the copy returned, so send the lengths as a second batch: `{"method":"clips.set","params":{"target":<new arranger clip ref>,"length":64}}`.
+- The same material in several places is one `clips.copy` per place.
+- The batch continues past `sent` and stops at the first error or at the first outcome that is neither `applied`, `already_matched` nor `sent`; every finished call printed one line and each line it never sent printed `{"outcome":"not_applied","reason":"not_reached"}`. Fix the cause and resend only the `not_reached` lines.
+- Verify against the table by reading, not by writing again: one `arranger list` (no target) returns every track's clips sorted by `start`, with `length`, `bar` and the markers.
 
 ## Record and edit audio
 
