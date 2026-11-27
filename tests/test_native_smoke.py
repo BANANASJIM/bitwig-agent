@@ -225,7 +225,9 @@ def test_probe_failure_latches_before_a_caught_failure_can_continue(monkeypatch,
     assert dispatched == ([] if failure_stage == "target" else ["status"])
     assert guard.stopped
     if failure_stage == "decode":
-        records = [json.loads(line) for line in (tmp_path / "mcp-results.jsonl").read_text().splitlines()]
+        records = [
+            json.loads(line) for line in (tmp_path / "mcp-results.jsonl").read_text(encoding="utf-8").splitlines()
+        ]
         assert records[0]["response"]["structuredContent"] is None
         assert [part["text"] for part in records[0]["response"]["content"]] == ["{", "原始尾部 Ω"]
     with pytest.raises(native_smoke.NativeRunStopped):

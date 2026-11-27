@@ -174,7 +174,11 @@ def link_problems(path: Path) -> list[str]:
         file = (path.parent / target).resolve() if target else path
         if not file.exists():
             found.append(f"{path.name}: {target} is missing")
-        elif anchor and file.suffix == ".md" and anchor not in {slug(h) for h in HEADING.findall(file.read_text())}:
+        elif (
+            anchor
+            and file.suffix == ".md"
+            and anchor not in {slug(h) for h in HEADING.findall(file.read_text(encoding="utf-8"))}
+        ):
             found.append(f"{path.name}: {target}#{anchor} has no such heading")
     return found
 
@@ -210,14 +214,14 @@ def test_reasons_fields_and_enum_values_in_prose_exist(path: Path):
 
 
 def test_the_skill_names_no_removed_entry_point_or_field():
-    text = "\n".join(path.read_text() for path in FILES)
+    text = "\n".join(path.read_text(encoding="utf-8") for path in FILES)
     assert sorted(set(STALE.findall(text))) == []
     assert not re.search(r'version:\s*"0\.4', text)
 
 
 def test_every_reference_is_reachable_from_skill_md():
     entry = SKILL / "SKILL.md"
-    linked = {(entry.parent / target).resolve() for target, _ in LINK.findall(entry.read_text())}
+    linked = {(entry.parent / target).resolve() for target, _ in LINK.findall(entry.read_text(encoding="utf-8"))}
     references = {path.resolve() for path in (SKILL / "references").glob("*.md")}
     assert references <= linked, sorted(path.name for path in references - linked)
 
@@ -228,8 +232,12 @@ def test_local_links_and_anchors_resolve(path: Path):
 
 
 def test_long_references_open_with_a_contents_section():
-    long = [path for path in (SKILL / "references").glob("*.md") if len(path.read_text().splitlines()) > 100]
-    missing = [path.name for path in long if "## Contents" not in "\n".join(path.read_text().splitlines()[:16])]
+    long = [
+        path for path in (SKILL / "references").glob("*.md") if len(path.read_text(encoding="utf-8").splitlines()) > 100
+    ]
+    missing = [
+        path.name for path in long if "## Contents" not in "\n".join(path.read_text(encoding="utf-8").splitlines()[:16])
+    ]
     assert not missing
 
 
@@ -267,5 +275,5 @@ def test_the_checker_rejects_what_the_cli_does_not_have():
 
 def test_the_link_checker_rejects_a_missing_heading_and_file(tmp_path):
     page = tmp_path / "a.md"
-    page.write_text("# Top\n\n[ok](#top) [bad](#nope) [gone](b.md)\n")
+    page.write_text("# Top\n\n[ok](#top) [bad](#nope) [gone](b.md)\n", encoding="utf-8")
     assert link_problems(page) == ["a.md: #nope has no such heading", "a.md: b.md is missing"]

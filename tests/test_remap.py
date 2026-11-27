@@ -248,8 +248,8 @@ def jars(tmp_path):
         lambda n: CLASSES.get(n, n),
         lambda owner, name: MEMBERS.get((owner, name), name),
     )
-    (tmp_path / "run.txt").write_text(HARNESS)
-    (tmp_path / "extra.tsv").write_text(EXTRA)
+    (tmp_path / "run.txt").write_text(HARNESS, encoding="utf-8")
+    (tmp_path / "extra.tsv").write_text(EXTRA, encoding="utf-8")
     return tmp_path
 
 
@@ -296,15 +296,15 @@ def test_without_order_anchoring_order_only_members_stay_uncertain(jars):
 
 def test_cli_writes_map_report_and_class_map(jars, capsys):
     notes = jars / "notes.md"
-    notes.write_text("Reviewed by hand.\n")
+    notes.write_text("Reviewed by hand.\n", encoding="utf-8")
     args = [str(jars / n) for n in ("old.jar", "new.jar")]
     args += ["--harness", str(jars / "run.txt"), "--extra", str(jars / "extra.tsv"), "--notes", str(notes)]
     args += ["--map", str(jars / "map.json"), "--report", str(jars / "map.md"), "--classes", str(jars / "cls.json")]
     assert main(args) == 0
-    symbols = json.loads((jars / "map.json").read_text())["symbols"]
-    report = (jars / "map.md").read_text()
+    symbols = json.loads((jars / "map.json").read_text(encoding="utf-8"))["symbols"]
+    report = (jars / "map.md").read_text(encoding="utf-8")
     assert symbols["b.cD()V"]["new"] == "q.zz()V"
-    assert json.loads((jars / "cls.json").read_text())["map"]["h"] == "w"
+    assert json.loads((jars / "cls.json").read_text(encoding="utf-8"))["map"]["h"] == "w"
     assert "Reviewed by hand." in report
     assert "**uncertain** `f.xA()V`" in report
     assert "`d.kL(I)I` -> `s.uu(I)I` [changed]" in report

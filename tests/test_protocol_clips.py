@@ -427,7 +427,7 @@ def test_a_range_reports_every_listed_note_outside_it():
     assert "is empty" in message("notes.set", {"target": CLIP_REF, "notes": []})
 
 
-SHARED_VECTORS = json.loads((Path(__file__).parent / "fixtures/note_rules.json").read_text())
+SHARED_VECTORS = json.loads((Path(__file__).parent / "fixtures/note_rules.json").read_text(encoding="utf-8"))
 
 
 @pytest.mark.parametrize("case", SHARED_VECTORS, ids=lambda case: case["name"])

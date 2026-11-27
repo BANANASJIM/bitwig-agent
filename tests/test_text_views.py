@@ -358,6 +358,6 @@ def test_the_timeline_is_a_pure_function_of_the_rows(spans, signature):
 
 
 def test_the_protocol_examples_are_what_the_views_print():
-    protocol = (Path(__file__).resolve().parents[1] / "PROTOCOL.md").read_text()
+    protocol = (Path(__file__).resolve().parents[1] / "PROTOCOL.md").read_text(encoding="utf-8")
     assert f"```\n{notes_grid.render(clip_result(DRUMS))}```" in protocol
     assert f"```\n{arranger_timeline.render(SONG)}```" in protocol
