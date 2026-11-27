@@ -88,6 +88,33 @@ public final class DisplayScale {
         return new Quantity(big / small, RATIO_UNIT, tolerance(leftBig ? left : right) / small);
     }
 
+    private static final Pattern BARE = Pattern.compile("^\\s*[+\\-−]?\\s*(\\d+(?:[.,]\\d+)?|[.,]\\d+)\\s*$");
+
+    /** Whether two display texts are numbers in different units ("800 Hz" and "-6 dB"); false when either has none. */
+    public static boolean otherUnit(String a, String b) {
+        Quantity x = quantity(a), y = quantity(b);
+        return x != null && y != null && !x.unit.equals(y.unit);
+    }
+
+    /**
+     * Whether a requested display text reads as the one the host shows for it: numbers in the same unit, or plain
+     * numbers, equal to the coarser of the two texts' resolutions; any other text only when it is the same text.
+     */
+    public static boolean reads(String requested, String shown) {
+        Quantity x = quantity(requested), y = quantity(shown);
+        if (x != null && y != null)
+            return x.unit.equals(y.unit) && Math.abs(x.value - y.value) <= Math.max(x.resolution, y.resolution);
+        if (BARE.matcher(requested).matches() && BARE.matcher(shown).matches())
+            return Math.abs(number(requested) - number(shown)) <= Math.max(tolerance(requested), tolerance(shown));
+        return requested.trim().equalsIgnoreCase(shown.trim());
+    }
+
+    private static double number(String bare) {
+        Matcher m = NUMBER.matcher(bare);
+        m.find();
+        return signed(m);
+    }
+
     /** Numeric value in dB or signed percent (negative = left); NaN when the text is not understood. */
     public static double parse(Kind kind, String text) {
         if (text == null) return Double.NaN;

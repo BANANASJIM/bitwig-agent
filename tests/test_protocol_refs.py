@@ -63,7 +63,7 @@ VARIANTS = members(AnyRef)
 # Section 1.3 of the P2 method table: accepted owners, and the method a refused owner is sent to.
 OWNER_MATRIX: dict[Any, tuple[set[str], dict[str, str]]] = {
     SetParameterRef: ({"device", "remotePage", "modulator"}, {"gridModule": "grid.apply", "track": "tracks.set"}),
-    AutomationParameterRef: ({"track", "gridModule"}, {}),
+    AutomationParameterRef: ({"track", "gridModule", "device"}, {"remotePage": "parameters.list"}),
     MappingParameterRef: ({"gridModule", "modulator"}, {}),
     RemoteSlotParameterRef: ({"gridModule"}, {}),
 }

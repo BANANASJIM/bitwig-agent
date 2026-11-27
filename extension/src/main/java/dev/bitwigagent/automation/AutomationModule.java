@@ -1,17 +1,20 @@
 package dev.bitwigagent.automation;
 
-import com.bitwig.extension.callback.*;
 import com.bitwig.extension.controller.api.*;
 import com.google.gson.*;
+import dev.bitwigagent.automation.AutomationLane.Observed;
 import dev.bitwigagent.core.BoundedJson;
 import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.Holds;
 import dev.bitwigagent.core.HostModule;
 import dev.bitwigagent.core.HostOperation;
-import dev.bitwigagent.core.RangeEdit;
+import dev.bitwigagent.core.Outcome;
 import dev.bitwigagent.core.Reason;
+import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.SafetyObservation;
 import dev.bitwigagent.core.Scheduler;
+import dev.bitwigagent.core.ValueInput;
+import dev.bitwigagent.core.Verification;
 import dev.bitwigagent.device.ParameterResolver;
 import dev.bitwigagent.host.DeviceSources;
 import dev.bitwigagent.host.NativeRuntime;
@@ -20,126 +23,76 @@ import dev.bitwigagent.host.TrackEpochs;
 import dev.bitwigagent.host.TrackWindow;
 import dev.bitwigagent.host.TransportSafety;
 import dev.bitwigagent.nativehost.NativeAutomationAccess;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.util.*;
+import java.util.function.Function;
 
-/** Arranger automation points on a track's automation lane for volume, pan or a Grid module parameter (version-gated). */
+/** Arranger automation points on a track's automation lane for any automatable parameter ref (version-gated). */
 public final class AutomationModule implements HostModule {
     static final Set<String> METHODS = Set.of("automation.points.get", "automation.points.set");
-    public static final int MAX_READ = 1024, MAX_LANE = 65536;
 
-    /**
-     * One canonical automation point: beat on a 2^-20 grid, value and curve on a 1e-9 grid, so a point read back and
-     * written again is equal by construction.
-     */
-    public static final class Point {
-        static final double BEAT_GRID = 1 << 20, VALUE_GRID = 1e9;
-        public final double beat, value, curve;
-        public final boolean linear;
-
-        public Point(double beat, double value, boolean linear, double curve) {
-            this.beat = beat(beat);
-            this.value = Math.rint(value * VALUE_GRID) / VALUE_GRID;
-            this.linear = linear;
-            this.curve = Math.rint(curve * VALUE_GRID) / VALUE_GRID;
-        }
-
-        static double beat(double beat) {
-            return Math.rint(beat * BEAT_GRID) / BEAT_GRID;
-        }
-
-        String interpolation() {
-            return linear ? "linear" : "hold";
-        }
-
-        JsonObject json() {
-            JsonObject out = new JsonObject();
-            out.addProperty("beat", beat);
-            out.addProperty("value", value);
-            out.addProperty("interpolation", interpolation());
-            out.addProperty("curve", curve);
-            return out;
-        }
-
-        @Override
-        public boolean equals(Object other) {
-            if (!(other instanceof Point)) return false;
-            Point o = (Point) other;
-            return beat == o.beat && value == o.value && linear == o.linear && curve == o.curve;
-        }
-
-        @Override
-        public int hashCode() {
-            return Objects.hash(beat, value, linear, curve);
-        }
-    }
-
-    /** A requested point; {@code linear} is null when interpolation is omitted. */
-    public static final class Request {
-        public final double beat, value;
-        public final Boolean linear;
-
-        public Request(double beat, double value, Boolean linear) {
-            this.beat = Point.beat(beat);
-            this.value = value;
-            this.linear = linear;
-        }
-    }
-
-    /** Points are identified by beat and compared canonically. */
-    public static final RangeEdit.Kind<Point> KIND = new RangeEdit.Kind<>() {
-        public Object key(Point point) {
-            return point.beat;
-        }
-
-        public boolean same(Point a, Point b) {
-            return a.equals(b);
-        }
-    };
-
-    /**
-     * The point a request writes: it keeps what it omits (interpolation, curve) from the point at its beat; a new point
-     * is linear with curve 0.
-     */
-    static Point written(Point observed, Request listed) {
-        boolean linear = listed.linear != null ? listed.linear : observed == null || observed.linear;
-        return new Point(listed.beat, listed.value, linear, observed == null ? 0 : observed.curve);
-    }
-
-    /** Which parameter's lane: a track's volume or pan, or a Grid module parameter of one of its devices. */
+    /** Which parameter's lane: a track's volume or pan, a Grid module parameter, or a device's direct parameter. */
     public static final class Target {
-        public final String kind, parameterId;
-        public final UUID moduleId;
+        public final Kind kind;
+        /** The root device the parameter is on or below; null for a track's own parameter. */
         public final DeviceSources.Source device;
+        /** The parameter ref, as the request gave it. */
+        public final JsonObject ref;
 
-        Target(String kind, DeviceSources.Source device, UUID moduleId, String parameterId) {
+        public enum Kind {
+            VOLUME,
+            PAN,
+            GRID,
+            DEVICE
+        }
+
+        Target(Kind kind, DeviceSources.Source device, JsonObject ref) {
             this.kind = kind;
             this.device = device;
-            this.moduleId = moduleId;
-            this.parameterId = parameterId;
+            this.ref = ref;
         }
 
-        public boolean grid() {
-            return kind.equals("grid");
+        public UUID moduleId() {
+            return UUID.fromString(ref.getAsJsonObject("owner").get("id").getAsString());
+        }
+
+        public String parameterId() {
+            return ref.get("id").getAsString();
         }
     }
 
+    /** The native lane of one target; the adapter only reads and writes points, every rule is the caller's. */
     public interface Access {
         void execute(Runnable work);
-        /** range is null for the whole lane, else {start, end} inclusive. */
-        JsonObject get(Object trackProxy, String trackId, Target target, double[] range, Runnable check);
 
-        /** {@code expectedHash} is null when the request has no expect; range is null without one, else as range(). */
-        JsonObject set(
+        /** The lane now, with each of {@code displays} resolved on its parameter. */
+        Observed read(Object trackProxy, String trackId, Target target, List<String> displays, Runnable check);
+
+        /**
+         * In one transaction: reads the lane, asks {@code plan} what to write and, unless that is empty, runs
+         * {@code beforeWrite}, creates the lane when missing, deletes and inserts, then reads the lane again.
+         */
+        Edited edit(
                 Object trackProxy,
                 String trackId,
                 Target target,
-                String expectedHash,
-                List<Request> points,
-                double[] range,
+                List<String> displays,
+                Function<Observed, AutomationPlan.Write> plan,
                 Runnable check,
                 Runnable beforeWrite);
+    }
+
+    /** What an edit saw: the lane before, the plan's write, and the lane after it (the same lane when nothing was written). */
+    public static final class Edited {
+        final Observed before, after;
+        final AutomationPlan.Write write;
+        final boolean created;
+
+        public Edited(Observed before, AutomationPlan.Write write, Observed after, boolean created) {
+            this.before = before;
+            this.write = write;
+            this.after = after;
+            this.created = created;
+        }
     }
 
     private final Scheduler scheduler;
@@ -195,180 +148,78 @@ public final class AutomationModule implements HostModule {
         if (method.equals("automation.points.set")) points(p);
     }
 
-    /** The whole lane as a range: {@code range:"all"}. */
-    public static final double[] ALL = {Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY};
-
-    /** What the schema cannot say: the range is ordered. Bounds snap to the beat grid; {@code "all"} is {@link #ALL}. */
+    /** What the schema cannot say: the range is ordered. Bounds snap to the beat grid; {@code "all"} is ALL. */
     static double[] range(JsonObject p) {
         if (!p.has("range")) return null;
-        if (p.get("range").isJsonPrimitive()) return ALL;
+        if (p.get("range").isJsonPrimitive()) return AutomationLane.ALL;
         JsonObject r = p.getAsJsonObject("range");
-        double start = Point.beat(r.get("start").getAsDouble()),
-                end = Point.beat(r.get("end").getAsDouble());
+        double start = AutomationLane.Point.beat(r.get("start").getAsDouble()),
+                end = AutomationLane.Point.beat(r.get("end").getAsDouble());
         if (start > end) throw Errors.invalid("range.start must not exceed range.end");
         return new double[] {start, end};
     }
 
     /** Requested points: beats strictly increasing and inside range when one is given, both on the beat grid. */
-    static List<Request> points(JsonObject p) {
+    static List<AutomationPlan.Request> points(JsonObject p) {
         double[] range = range(p);
-        List<Request> out = new ArrayList<>();
+        List<AutomationPlan.Request> out = new ArrayList<>();
         for (JsonElement item : p.getAsJsonArray("points")) {
             JsonObject n = item.getAsJsonObject();
-            double beat = Point.beat(n.get("beat").getAsDouble());
+            double beat = AutomationLane.Point.beat(n.get("beat").getAsDouble());
             if (!out.isEmpty() && beat <= out.get(out.size() - 1).beat)
                 throw Errors.invalid("point beats must be strictly increasing on the 2^-20 beat grid");
-            if (range != null && (beat < range[0] || beat > range[1]))
-                throw Errors.invalid("every point must lie inside range");
-            out.add(new Request(
+            if (!AutomationLane.inRange(beat, range)) throw Errors.invalid("every point must lie inside range");
+            ValueInput value = ValueInput.parse("points[].value", n.get("value"));
+            boolean display = value.form == ValueInput.Form.DISPLAY;
+            out.add(new AutomationPlan.Request(
                     beat,
-                    n.get("value").getAsDouble(),
+                    display ? null : value.normalized("points[].value"),
+                    display ? value.text : null,
                     n.has("interpolation")
                             ? n.get("interpolation").getAsString().equals("linear")
-                            : null));
+                            : null,
+                    n.has("curve") ? n.get("curve").getAsDouble() : null));
         }
         return out;
     }
 
-    // ---- host-free lane logic shared by the native access -----------------------------------------------------
-
-    public static boolean inRange(double beat, double[] range) {
-        return range == null || (beat >= range[0] && beat <= range[1]);
-    }
-
-    /** SHA-256 over every point's exact beat, value, interpolation and curve, in lane order. */
-    public static String hash(List<Point> points) {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            for (Point point : points)
-                digest.update((point.beat + "," + point.value + "," + point.interpolation() + "," + point.curve + "\n")
-                        .getBytes(StandardCharsets.UTF_8));
-            StringBuilder out = new StringBuilder(64);
-            for (byte b : digest.digest()) {
-                out.append(Character.forDigit((b >>> 4) & 15, 16));
-                out.append(Character.forDigit(b & 15, 16));
-            }
-            return out.toString();
-        } catch (java.security.NoSuchAlgorithmException error) {
-            throw new IllegalStateException(error);
-        }
-    }
-
-    /**
-     * The range rule on one lane as native steps: the natives to delete, then each new point with its index in the final
-     * lane, ascending. {@code natives.get(i)} is the native object of {@code current.get(i)}.
-     */
-    public static final class Edit<N> {
-        public final RangeEdit.Change<Point> change;
-        public final List<Point> desired, insert = new ArrayList<>();
-        public final List<Integer> at = new ArrayList<>();
-        public final List<N> delete = new ArrayList<>(), kept = new ArrayList<>();
-
-        public Edit(List<N> natives, List<Point> current, List<Request> requested, double[] range) {
-            Map<Double, Point> byBeat = new HashMap<>();
-            for (Point point : current) byBeat.putIfAbsent(point.beat, point);
-            List<Point> listed = new ArrayList<>();
-            for (Request request : requested) listed.add(written(byBeat.get(request.beat), request));
-            change = RangeEdit.plan(current, listed, range == null ? null : p -> inRange(p.beat, range), KIND);
-            desired = RangeEdit.apply(current, change);
-            desired.sort(Comparator.comparingDouble(point -> point.beat));
-            Map<Point, N> nativeOf = new IdentityHashMap<>();
-            for (int i = 0; i < current.size(); i++) nativeOf.put(current.get(i), natives.get(i));
-            for (Point point : change.remove) delete.add(nativeOf.get(point));
-            for (RangeEdit.Update<Point> update : change.update) delete.add(nativeOf.get(update.before));
-            for (int i = 0; i < desired.size(); i++) {
-                N kept = nativeOf.get(desired.get(i));
-                if (kept != null) this.kept.add(kept);
-                else {
-                    insert.add(desired.get(i));
-                    at.add(i);
-                }
-            }
-        }
-
-        /** Nothing to write; a lane holding only Bitwig's base point counts as cleared. */
-        public boolean matched(List<Point> current) {
-            return change.isEmpty() || withoutBasePoint(current, desired).equals(desired);
-        }
-
-        public JsonObject summary(boolean applied) {
-            JsonObject out = new JsonObject();
-            out.addProperty("inserted", applied ? change.insert.size() : 0);
-            out.addProperty("updated", applied ? change.update.size() : 0);
-            out.addProperty("removed", applied ? change.remove.size() : 0);
-            out.addProperty("unchanged", change.unchanged);
-            return out;
-        }
-    }
-
-    /** Exact readback of canonical points: same count, order, beats, values, interpolation and curve. */
-    public static void verify(List<Point> expected, List<Point> actual) {
-        if (actual.size() != expected.size())
-            throw Errors.unknown(
-                    Reason.READBACK_MISMATCH,
-                    "Native lane holds " + actual.size() + " points after the write, expected " + expected.size()
-                            + "; inspect automation.points.get before another write.");
-        for (int i = 0; i < expected.size(); i++)
-            if (!expected.get(i).equals(actual.get(i)))
-                throw Errors.unknown(
-                        Reason.READBACK_MISMATCH,
-                        "Native point " + i + " reads back as " + actual.get(i).json() + ", expected "
-                                + expected.get(i).json() + "; inspect automation.points.get before another write.");
-    }
-
-    public static void requireExpected(List<Point> current, String expectedHash) {
-        if (expectedHash == null || hash(current).equals(expectedHash)) return;
-        JsonObject observed = new JsonObject();
-        observed.addProperty("pointsHash", hash(current));
-        throw Errors.expectMismatch("The lane's pointsHash differs from expect; nothing was written.", observed);
-    }
-
-    /**
-     * Bitwig keeps a base point at beat 0 when the last points of a lane are deleted: a lane that should be empty and
-     * holds exactly one point at beat 0 counts as cleared. Nothing else is excused.
-     */
-    public static List<Point> withoutBasePoint(List<Point> lane, List<Point> wanted) {
-        boolean base = wanted.isEmpty() && lane.size() == 1 && lane.get(0).beat == 0;
-        return base ? List.of() : lane;
-    }
-
-    /** Lane summary into {@code out}: whole-lane count and hash, plus the points inside range (bounded). */
-    public static JsonObject lane(JsonObject out, boolean exists, List<Point> all, double[] range) {
-        JsonObject lane = new JsonObject();
-        lane.addProperty("exists", exists);
-        lane.addProperty("count", all.size());
-        lane.addProperty("pointsHash", hash(all));
-        out.add("lane", lane);
-        if (range == ALL) out.addProperty("range", "all");
-        else if (range != null) {
-            JsonObject r = new JsonObject();
-            r.addProperty("start", range[0]);
-            r.addProperty("end", range[1]);
-            out.add("range", r);
-        }
-        JsonArray rows = new JsonArray();
-        int inRange = 0;
-        for (Point point : all) {
-            if (!inRange(point.beat, range)) continue;
-            inRange++;
-            if (rows.size() < MAX_READ) rows.add(point.json());
-        }
-        out.add("points", rows);
-        out.addProperty("pointsInRange", inRange);
-        out.addProperty("truncated", inRange > rows.size());
-        out.addProperty("selectionSideEffect", "none");
-        return out;
-    }
-
-    /**
-     * The lane owner of a resolved parameter: a track's volume or pan, or a Grid module parameter of a root device (a
-     * device inside a chain is unsupported_scope when its ref is resolved).
-     */
-    private static Target target(ParameterResolver.Resolved resolved) {
+    /** The lane owner of a resolved parameter: a track's volume or pan, a Grid module parameter, or a device parameter. */
+    private static Target target(ParameterResolver.Resolved resolved, JsonObject ref) {
         if (resolved instanceof ParameterResolver.TrackParameter)
-            return new Target(((ParameterResolver.TrackParameter) resolved).id, null, null, null);
-        ParameterResolver.ModuleParameter module = (ParameterResolver.ModuleParameter) resolved;
-        return new Target("grid", module.device, module.ownerId, module.id);
+            return new Target(
+                    ((ParameterResolver.TrackParameter) resolved).id.equals("volume")
+                            ? Target.Kind.VOLUME
+                            : Target.Kind.PAN,
+                    null,
+                    ref);
+        return new Target(
+                resolved instanceof ParameterResolver.ModuleParameter ? Target.Kind.GRID : Target.Kind.DEVICE,
+                resolved.device(),
+                ref);
+    }
+
+    /** The read result: the lane as observed. */
+    static JsonObject read(Observed lane, double[] range) {
+        return AutomationLane.json(new JsonObject(), lane, range);
+    }
+
+    /** The write result: verified against the plan when it wrote, already_matched when it had nothing to write. */
+    static JsonObject written(Edited edited, double[] range) {
+        boolean applied = !edited.write.empty;
+        if (applied) AutomationPlan.verify(edited.write, edited.after);
+        JsonObject out = AutomationLane.json(
+                Results.outcome(applied ? Outcome.APPLIED : Outcome.ALREADY_MATCHED, Verification.NATIVE_READBACK),
+                edited.after,
+                range);
+        JsonObject before = new JsonObject();
+        before.addProperty("count", edited.before.points.size());
+        before.addProperty("pointsHash", AutomationLane.hash(edited.before.points));
+        out.add("previous", before);
+        out.add("summary", edited.write.summary(applied));
+        out.addProperty("laneCreated", edited.created);
+        out.addProperty("nativeUndo", applied);
+        out.addProperty("undoGroupingVerified", false);
+        return out;
     }
 
     // ---- dispatch ---------------------------------------------------------------------------------------------
@@ -386,10 +237,9 @@ public final class AutomationModule implements HostModule {
                     "Inspect automation.points.get");
         JsonObject ref = p.getAsJsonObject("target");
         ParameterResolver.Resolved resolved = resolver.resolve(ref);
-        Target target = target(resolved);
-        int index = resolved instanceof ParameterResolver.TrackParameter
-                ? ((ParameterResolver.TrackParameter) resolved).slot
-                : target.device.track.slot;
+        Target target = target(resolved, ref);
+        int index =
+                target.device == null ? ((ParameterResolver.TrackParameter) resolved).slot : target.device.track.slot;
         Track track = window.at(index);
         String id = track.channelId().get();
         RequestSnapshot snapshot = resolved.snapshot();
@@ -418,21 +268,19 @@ public final class AutomationModule implements HostModule {
             bridge.execute(() -> {
                 try {
                     check.run();
-                    JsonObject result = write
-                            ? bridge.set(
-                                    track,
-                                    id,
-                                    target,
-                                    p.has("expect")
-                                            ? p.getAsJsonObject("expect")
-                                                    .get("pointsHash")
-                                                    .getAsString()
-                                            : null,
-                                    points(p),
-                                    range,
-                                    check,
-                                    beforeWrite)
-                            : bridge.get(track, id, target, range, check);
+                    JsonObject result;
+                    if (write) {
+                        AutomationPlan plan = new AutomationPlan(
+                                p.has("expect")
+                                        ? p.getAsJsonObject("expect")
+                                                .get("pointsHash")
+                                                .getAsString()
+                                        : null,
+                                points(p),
+                                range);
+                        result = written(
+                                bridge.edit(track, id, target, plan.displays(), plan, check, beforeWrite), range);
+                    } else result = read(bridge.read(track, id, target, List.of(), check), range);
                     String serialized = BoundedJson.serialize(
                             result,
                             240000,

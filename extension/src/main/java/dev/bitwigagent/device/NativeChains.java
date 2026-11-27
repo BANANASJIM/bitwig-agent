@@ -12,6 +12,7 @@ import dev.bitwigagent.host.NativeRuntime;
 import dev.bitwigagent.nativehost.NativeChainAccess;
 import dev.bitwigagent.nativehost.NativeHost;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
 import java.util.function.Consumer;
@@ -157,22 +158,19 @@ public final class NativeChains {
         }
     }
 
-    /** One document-thread pass from the verified root device. */
-    final class Walk {
-        final HostOperation op;
+    /**
+     * Finds chains, devices and direct parameters below one native root device, comparing every ref on the way. It
+     * only reads; it holds no request state, so any document-thread pass that has the root can use it.
+     */
+    public static class Finder {
         final Access a;
-        final Runnable check;
         private final JsonObject rootRef;
         private final Object root;
 
-        private Walk(HostOperation op, Access a, Root context) {
-            this.op = op;
+        public Finder(Access a, Object root, JsonObject rootRef) {
             this.a = a;
-            check = op.dispatched() ? () -> scheduler.check(op) : context.check;
-            a.documentThread();
-            check.run();
-            rootRef = context.ref;
-            root = a.root(context.source, check);
+            this.root = root;
+            this.rootRef = rootRef;
         }
 
         /** The native device a device ref names: the verified root, or a device found inside a chain. */
@@ -243,6 +241,45 @@ public final class NativeChains {
             return new Device(chain, device, index, name, Refs.device(chain.ref, index, name));
         }
 
+        /** The direct parameter a device-owned parameter ref names, on the root or a device inside a chain. */
+        public Object parameter(JsonObject ref) {
+            JsonObject deviceRef = ref.getAsJsonObject("owner");
+            Object device;
+            JsonObject owner;
+            if (nested(deviceRef)) {
+                Device found = device(deviceRef, false);
+                device = found.device;
+                owner = found.ref;
+            } else {
+                requireRoot(deviceRef);
+                device = root;
+                owner = rootRef;
+            }
+            String id = ref.get("id").getAsString();
+            Object parameter = Arrays.asList(a.parameterIds(device)).contains(id) ? a.parameter(device, id) : null;
+            if (parameter == null) throw Errors.targetNotFound(ref, "The device has no such parameter now.");
+            String name = a.parameterName(parameter);
+            JsonObject current = Refs.parameter(owner, id, name == null || name.isEmpty() ? null : name);
+            if (!Refs.matches(ref, current, true)) throw Refs.parameterChanged(ref, current);
+            return parameter;
+        }
+    }
+
+    /** One document-thread pass from the verified root device. */
+    final class Walk extends Finder {
+        final HostOperation op;
+        final Runnable check;
+
+        private Walk(HostOperation op, Access a, Root context) {
+            this(op, a, context, op.dispatched() ? () -> scheduler.check(op) : context.check);
+        }
+
+        private Walk(HostOperation op, Access a, Root context, Runnable check) {
+            super(a, enter(a, context.source, check), context.ref);
+            this.op = op;
+            this.check = check;
+        }
+
         /** The chain's devices as read now, in order. */
         List<Object> now(Chain chain) {
             return a.devices(chain.chain);
@@ -259,6 +296,13 @@ public final class NativeChains {
             guard.run();
             op.markDispatched();
         }
+    }
+
+    /** On the document thread, after the request's check: the native root device. */
+    private static Object enter(Access a, DeviceSources.Source source, Runnable check) {
+        a.documentThread();
+        check.run();
+        return a.root(source, check);
     }
 
     /** What a request resolved on the controller thread before going native. */

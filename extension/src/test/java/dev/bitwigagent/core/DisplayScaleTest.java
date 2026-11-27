@@ -48,6 +48,23 @@ public final class DisplayScaleTest {
     }
 
     @Test
+    void aRequestedDisplayReadsAsTheShownOneToTheCoarserResolution() {
+        assertTrue(DisplayScale.reads("800 Hz", "800 Hz"));
+        assertTrue(DisplayScale.reads("6.8 kHz", "6.80 kHz"), "units scale and digits differ");
+        assertTrue(DisplayScale.reads("-6.04 dB", "-6.0 dB"), "within the shown text's resolution");
+        assertFalse(DisplayScale.reads("-6.2 dB", "-6.0 dB"), "beyond both resolutions");
+        assertFalse(DisplayScale.reads("800 Hz", "800 ms"), "another unit");
+        assertTrue(DisplayScale.reads("2", "2.00"), "plain numbers");
+        assertFalse(DisplayScale.reads("2.1", "2.00"));
+        assertTrue(DisplayScale.reads(" off", "Off "), "text compares as text");
+        assertFalse(DisplayScale.reads("Off", "0.0 dB"), "text against a number");
+        assertFalse(DisplayScale.reads("2", "2.00 Hz"), "a plain number against a quantity");
+        assertTrue(DisplayScale.otherUnit("800 Hz", "-6 dB"));
+        assertFalse(DisplayScale.otherUnit("800 Hz", "1.2 kHz"), "kHz is hertz");
+        assertFalse(DisplayScale.otherUnit("800 Hz", "Off"), "text has no unit");
+    }
+
+    @Test
     void aQuantityIsANumberInABaseUnitWithTheResolutionOfItsLastDigit() {
         DisplayScale.Quantity hertz = DisplayScale.quantity("800 Hz");
         assertEquals("hz", hertz.unit);
