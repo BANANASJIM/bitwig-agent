@@ -61,7 +61,7 @@ public final class MethodSpecs {
                 defaultPort,
                 maxClipLength,
                 responseGraceMs;
-        public final double beatGrid, durationResolution, normalizedTolerance;
+        public final double beatGrid, durationResolution, normalizedTolerance, maxCurve;
 
         private Limits(JsonObject object) {
             trackWindow = integer(object, "trackWindow");
@@ -79,6 +79,7 @@ public final class MethodSpecs {
             beatGrid = object.get("beatGrid").getAsDouble();
             durationResolution = object.get("durationResolution").getAsDouble();
             normalizedTolerance = object.get("normalizedTolerance").getAsDouble();
+            maxCurve = object.get("maxCurve").getAsDouble();
             if (Math.min(Math.min(trackWindow, sceneWindow), Math.min(deviceWindow, sendWindow)) < 1
                     || Math.min(remotePageSlots, minTimeoutMs) < 1
                     || parameterResolution < 2
@@ -89,7 +90,8 @@ public final class MethodSpecs {
                     || responseGraceMs < 2
                     || !(beatGrid > 0)
                     || !(durationResolution > 0)
-                    || !(normalizedTolerance > 0)) throw new IllegalStateException("limits must be positive");
+                    || !(normalizedTolerance > 0)
+                    || !(maxCurve > 0)) throw new IllegalStateException("limits must be positive");
         }
     }
 

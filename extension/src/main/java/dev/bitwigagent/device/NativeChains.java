@@ -89,6 +89,49 @@ public final class NativeChains {
 
         /** The result's nativeVersion and nativeJarSha256. */
         void provenance(JsonObject out);
+
+        /** The chain's mixer volume, pan and mute: direct parameters as {@link #parameter} returns them. */
+        Mixer mixer(Object chain);
+
+        /** Solos or unsolos the chain alone; other chains keep their solo state. */
+        void solo(Object chain, boolean on);
+
+        /** The index of the active chain when the device is a Selector, otherwise null. */
+        Integer activeChain(Object device);
+
+        void activeChain(Object device, int index);
+
+        /** What a new chain of this device is: a layer or Selector chain, a Drum Machine pad's chain, or none. */
+        Container container(Object device);
+
+        /** Appends an empty chain to a {@link Container#CHAINS} device; one Undo step of its own. */
+        void addChain(Object device);
+
+        /** The chain of the Drum Machine pad for this MIDI pitch, or null when the pad has none. */
+        Object padChain(Object device, int pitch);
+
+        /** Gives the pad for this MIDI pitch an empty chain; one Undo step of its own. */
+        void createPadChain(Object device, int pitch);
+    }
+
+    /** What chains.insert adds to a device. */
+    public enum Container {
+        CHAINS,
+        PADS,
+        NONE
+    }
+
+    /** A chain's mixer as read now: the three parameters and the solo state. */
+    public static final class Mixer {
+        public final Object volume, pan, mute;
+        public final boolean solo;
+
+        public Mixer(Object volume, Object pan, Object mute, boolean solo) {
+            this.volume = volume;
+            this.pan = pan;
+            this.mute = mute;
+            this.solo = solo;
+        }
     }
 
     private final Scheduler scheduler;
@@ -128,16 +171,23 @@ public final class NativeChains {
 
     // ---------------------------------------------------------------- walking from the root
 
-    /** One chain found by a walk: its ref as read now and its devices at that moment. */
+    /** One chain found by a walk: its ref as read now, its devices at that moment, its device and position there. */
     static final class Chain {
-        final Object chain;
+        final Object chain, owner;
         final JsonObject ref;
         final List<Object> devices;
+        final int position;
 
         Chain(Object chain, JsonObject ref, List<Object> devices) {
+            this(chain, ref, devices, null, -1);
+        }
+
+        Chain(Object chain, JsonObject ref, List<Object> devices, Object owner, int position) {
             this.chain = chain;
             this.ref = ref;
             this.devices = devices;
+            this.owner = owner;
+            this.position = position;
         }
     }
 
@@ -204,7 +254,11 @@ public final class NativeChains {
             List<Chain> out = new ArrayList<>(found.size());
             for (Object chain : found)
                 out.add(new Chain(
-                        chain, Refs.chain(parent, a.chainId(chain).toString(), a.chainName(chain)), a.devices(chain)));
+                        chain,
+                        Refs.chain(parent, a.chainId(chain).toString(), a.chainName(chain)),
+                        a.devices(chain),
+                        owner,
+                        out.size()));
             return out;
         }
 

@@ -893,6 +893,17 @@ public final class LauncherFake {
         notes.putAll(moved);
     }
 
+    /** One launcher clip "Riff" in scene 0 with three channel-0 notes. */
+    public static LauncherFake riff() {
+        LauncherFake f = new LauncherFake();
+        f.slots[0].content = true;
+        f.slots[0].name = "Riff";
+        f.put(0, 0, 0, 60, 100, 4);
+        f.put(0, 0, 8, 64, 90, 4);
+        f.put(0, 0, 3, 67, 80, 2);
+        return f;
+    }
+
     void put(int scene, int channel, int step, int pitch, int velocity, double duration) {
         notes.put(key(scene, channel, step, pitch), new Note(velocity, duration));
     }

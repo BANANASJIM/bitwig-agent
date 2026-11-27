@@ -125,6 +125,37 @@ final class AutomationPlanTest {
         assertEquals("unsupported_unit", garbled.reason.wire(), "text the host cannot parse");
     }
 
+    /** One display request on a lane whose parameter resolves {@code text} as given. */
+    static double resolved(String text, AutomationLane.Parsed parsed, String bottom, String top) {
+        Observed lane =
+                new Observed(false, List.of(), Map.of(text, parsed), n -> n == 0 ? bottom : top, new JsonObject());
+        return AutomationPlan.value(lane, shown(0, text));
+    }
+
+    @Test
+    void displaysInPercentRatioAndMinusInfinity() {
+        assertEquals(0.5, resolved("50 %", new AutomationLane.Parsed(50, 0.5, 50, "50.0 %"), "0.00 %", "100 %"));
+        assertEquals(0.5, resolved("50", new AutomationLane.Parsed(50, 0.5, 50, "50.0 %"), "0.00 %", "100 %"), "bare");
+        assertEquals(0.25, resolved("4:1", new AutomationLane.Parsed(4, 0.25, 4, "1:4.00"), "1:1.00", "1:16.0"));
+        double inf = Double.NEGATIVE_INFINITY;
+        assertEquals(
+                0,
+                resolved("-inf dB", new AutomationLane.Parsed(inf, 0, inf, "-inf dB"), "-inf dB", "+6.0 dB"),
+                "minus infinity on a range whose floor is minus infinity");
+        RpcException floor = assertThrows(
+                RpcException.class,
+                () -> resolved("-inf dB", new AutomationLane.Parsed(inf, 0, -60, "-60.0 dB"), "-60.0 dB", "+6.0 dB"));
+        assertEquals("out_of_bounds", floor.reason.wire(), "minus infinity past a finite floor");
+        assertTrue(AutomationPlan.outside(inf, -60)
+                && AutomationPlan.outside(-60, inf)
+                && !AutomationPlan.outside(inf, inf));
+        assertEquals(
+                (-6 - AutomationFake.MIN) / (AutomationFake.MAX - AutomationFake.MIN),
+                plan(List.of(), null, shown(0, "-6")).desired.get(0).value,
+                1e-9,
+                "a bare number is read in the unit the parameter shows");
+    }
+
     @Test
     void expectComparesTheWholeLaneHash() {
         List<Point> points = List.of(p(0, 0.2, true));

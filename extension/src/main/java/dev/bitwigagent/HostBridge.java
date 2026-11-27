@@ -14,6 +14,7 @@ import dev.bitwigagent.core.MethodSpecs;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Scheduler;
 import dev.bitwigagent.core.SchemaValidator;
+import dev.bitwigagent.device.ChainModule;
 import dev.bitwigagent.device.DeviceChainModule;
 import dev.bitwigagent.device.DeviceListModule;
 import dev.bitwigagent.device.DeviceModule;
@@ -101,6 +102,7 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
         register(new DiscoveryModule(host, application, transport, window, projectState, specs, holds, domains));
         register(new DeviceListModule(window, trackRefs, chains));
         register(new DeviceChainModule(scheduler, window, trackRefs, sources, chains, transportSafety));
+        register(new ChainModule(scheduler, chains, transportSafety));
         register(new ActionModule(scheduler, application, projectState, selection));
         register(projectModule);
         register(new KeySignatureModule(scheduler, project, transportSafety, natives, holds, null));

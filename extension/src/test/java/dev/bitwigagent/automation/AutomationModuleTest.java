@@ -13,6 +13,7 @@ import dev.bitwigagent.ScheduledTasks;
 import dev.bitwigagent.core.Holds;
 import dev.bitwigagent.core.HostOperation;
 import dev.bitwigagent.core.Refs;
+import dev.bitwigagent.core.RpcException;
 import java.lang.reflect.*;
 import java.util.*;
 import java.util.concurrent.*;
@@ -109,6 +110,38 @@ public final class AutomationModuleTest {
         JsonArray many = new JsonArray();
         for (int i = 0; i <= 1024; i++) many.add(point(i, 0.5, "hold"));
         bad("automation.points.set", set(many));
+    }
+
+    @Test
+    void remoteControlAndModulatorRefsAreRefusedInJavaToo() {
+        JsonObject device = Refs.device(TRACK, 0, "Poly Grid");
+        RpcException remote = assertThrows(
+                RpcException.class,
+                () -> AutomationModule.kind(Refs.parameter(Refs.remotePage(device, 0, "Main"), "0", "Cutoff")));
+        assertTrue(
+                remote.reason.wire().equals("unsupported_scope")
+                        && "parameters.list".equals(remote.next)
+                        && !remote.unknown,
+                remote.getMessage());
+        RpcException modulator = assertThrows(
+                RpcException.class,
+                () -> AutomationModule.kind(Refs.parameter(Refs.modulator(device, MODULE, "LFO"), "RATE", null)));
+        assertTrue(modulator.reason.wire().equals("unsupported_scope") && modulator.next == null);
+        Fixture f = new Fixture(false);
+        JsonObject p = new JsonObject();
+        p.add("target", Refs.parameter(Refs.remotePage(device, 0, "Main"), "0", null));
+        HostOperation op = new HostOperation(f.host.tasks.after(5000));
+        assertThrows(RpcException.class, () -> f.module.dispatch(op, "automation.points.get", p));
+        assertEquals(0, f.lane.reads, "refused before any resolution or native access");
+    }
+
+    @Test
+    void curveIsRangeCheckedInJava() {
+        JsonObject curve = point(0, 0.5, "hold");
+        curve.addProperty("curve", 1.5);
+        assertRpcError("invalid_params", () -> AutomationModule.points(set(points(curve))));
+        curve.addProperty("curve", Double.NaN);
+        assertRpcError("invalid_params", () -> AutomationModule.points(set(points(curve))));
     }
 
     @Test

@@ -34,6 +34,8 @@ MAX_CLIP_BEATS = 4096
 # Bitwig 6.1.4 stores a note duration to this step (native readback: 0.225 reads back as 0.22500038146972656).
 DURATION_RESOLUTION_DIVISOR = 1 << 20
 DURATION_RESOLUTION = 1 / DURATION_RESOLUTION_DIVISOR
+# Bitwig clamps an automation point's curve to this magnitude (inspected 6.1.4/6.1.7 JAR).
+MAX_CURVE = 1.0
 
 
 def mebibytes(size: int) -> str:
@@ -57,4 +59,5 @@ def bundle_limits() -> dict[str, int | float]:
         "durationResolution": DURATION_RESOLUTION,
         "maxClipLength": MAX_CLIP_BEATS,
         "responseGraceMs": RESPONSE_GRACE_MS,
+        "maxCurve": MAX_CURVE,
     }

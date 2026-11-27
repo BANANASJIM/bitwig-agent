@@ -6,10 +6,12 @@ import dev.bitwigagent.automation.AutomationLane.Observed;
 import dev.bitwigagent.core.BoundedJson;
 import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.Holds;
+import dev.bitwigagent.core.HostLimits;
 import dev.bitwigagent.core.HostModule;
 import dev.bitwigagent.core.HostOperation;
 import dev.bitwigagent.core.Outcome;
 import dev.bitwigagent.core.Reason;
+import dev.bitwigagent.core.Refs;
 import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.SafetyObservation;
 import dev.bitwigagent.core.Scheduler;
@@ -159,6 +161,14 @@ public final class AutomationModule implements HostModule {
         return new double[] {start, end};
     }
 
+    /** A point's curve, within what Bitwig stores. */
+    private static double curve(double curve) {
+        if (!(Math.abs(curve) <= HostLimits.LIMITS.maxCurve))
+            throw Errors.invalid("points[].curve must be from -" + HostLimits.LIMITS.maxCurve + " to "
+                    + HostLimits.LIMITS.maxCurve + ".");
+        return curve;
+    }
+
     /** Requested points: beats strictly increasing and inside range when one is given, both on the beat grid. */
     static List<AutomationPlan.Request> points(JsonObject p) {
         double[] range = range(p);
@@ -178,24 +188,33 @@ public final class AutomationModule implements HostModule {
                     n.has("interpolation")
                             ? n.get("interpolation").getAsString().equals("linear")
                             : null,
-                    n.has("curve") ? n.get("curve").getAsDouble() : null));
+                    n.has("curve") ? curve(n.get("curve").getAsDouble()) : null));
         }
         return out;
     }
 
-    /** The lane owner of a resolved parameter: a track's volume or pan, a Grid module parameter, or a device parameter. */
-    private static Target target(ParameterResolver.Resolved resolved, JsonObject ref) {
-        if (resolved instanceof ParameterResolver.TrackParameter)
-            return new Target(
-                    ((ParameterResolver.TrackParameter) resolved).id.equals("volume")
-                            ? Target.Kind.VOLUME
-                            : Target.Kind.PAN,
-                    null,
-                    ref);
-        return new Target(
-                resolved instanceof ParameterResolver.ModuleParameter ? Target.Kind.GRID : Target.Kind.DEVICE,
-                resolved.device(),
-                ref);
+    /**
+     * Which lane a parameter ref names, by its owner kind: a track's volume or pan, a Grid module parameter or a
+     * device's direct parameter. A Remote Control maps a device parameter and a modulator parameter has no lane here:
+     * both are unsupported_scope before anything is resolved.
+     */
+    static Target.Kind kind(JsonObject ref) {
+        switch (Refs.kind(ref.getAsJsonObject("owner"))) {
+            case "track":
+                return ref.get("id").getAsString().equals("volume") ? Target.Kind.VOLUME : Target.Kind.PAN;
+            case "gridModule":
+                return Target.Kind.GRID;
+            case "device":
+                return Target.Kind.DEVICE;
+            case "remotePage":
+                throw Errors.notApplied(
+                        Reason.UNSUPPORTED_SCOPE,
+                        "automation.points does not take a Remote Control; target the device parameter it maps.",
+                        "parameters.list");
+            default:
+                throw Errors.notApplied(
+                        Reason.UNSUPPORTED_SCOPE, "automation.points does not take a modulator parameter.");
+        }
     }
 
     /** The read result: the lane as observed. */
@@ -236,8 +255,9 @@ public final class AutomationModule implements HostModule {
                     "An earlier automation point write has an unknown outcome; automation writes are refused.",
                     "Inspect automation.points.get");
         JsonObject ref = p.getAsJsonObject("target");
+        Target.Kind kind = kind(ref);
         ParameterResolver.Resolved resolved = resolver.resolve(ref);
-        Target target = target(resolved, ref);
+        Target target = new Target(kind, resolved.device(), ref);
         int index =
                 target.device == null ? ((ParameterResolver.TrackParameter) resolved).slot : target.device.track.slot;
         Track track = window.at(index);

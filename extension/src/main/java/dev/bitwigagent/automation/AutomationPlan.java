@@ -124,8 +124,9 @@ public final class AutomationPlan implements Function<Observed, AutomationPlan.W
     static double value(Observed lane, Request request) {
         if (request.display == null) return request.value;
         Parsed parsed = lane.parsed.get(request.display);
+        // The parser ignores a foreign unit, so such a number lands anywhere, often past the range: unit first.
         if (!parsed.parsed || DisplayScale.otherUnit(request.display, parsed.shown)) throw unsupported(lane, request);
-        if (Math.abs(parsed.restored - parsed.plain) > PLAIN_TOLERANCE * Math.max(1, Math.abs(parsed.plain)))
+        if (outside(parsed.plain, parsed.restored))
             throw Errors.notApplied(
                     Reason.OUT_OF_BOUNDS,
                     "{display: \"" + request.display + "\"} lies outside the parameter's range " + span(lane) + ".");
@@ -146,6 +147,16 @@ public final class AutomationPlan implements Function<Observed, AutomationPlan.W
 
     /** Relative difference at which a parsed value no longer survives the value range's clamp. */
     static final double PLAIN_TOLERANCE = 1e-9;
+
+    /**
+     * Whether the value range clamped a parsed value: it did not come back. An infinite value ("-inf dB") survives
+     * only on a range whose end is that same infinity.
+     */
+    static boolean outside(double plain, double restored) {
+        if (plain == restored) return false;
+        if (Double.isInfinite(plain) || Double.isInfinite(restored)) return true;
+        return Math.abs(restored - plain) > PLAIN_TOLERANCE * Math.max(1, Math.abs(plain));
+    }
 
     static void requireExpected(List<Point> current, String expectedHash) {
         if (expectedHash == null || AutomationLane.hash(current).equals(expectedHash)) return;

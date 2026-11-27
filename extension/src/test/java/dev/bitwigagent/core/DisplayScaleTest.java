@@ -58,7 +58,17 @@ public final class DisplayScaleTest {
         assertFalse(DisplayScale.reads("2.1", "2.00"));
         assertTrue(DisplayScale.reads(" off", "Off "), "text compares as text");
         assertFalse(DisplayScale.reads("Off", "0.0 dB"), "text against a number");
-        assertFalse(DisplayScale.reads("2", "2.00 Hz"), "a plain number against a quantity");
+        assertTrue(DisplayScale.reads("50", "50.0 %"), "a plain number reads in the unit shown");
+        assertTrue(DisplayScale.reads("6.8", "6.80 kHz"), "as the number shown, not in base units");
+        assertFalse(DisplayScale.reads("51", "50.0 %"));
+        assertFalse(DisplayScale.reads("-6", "-inf dB"), "a plain number is never minus infinity");
+        assertTrue(DisplayScale.reads("50 %", "50.0 %"), "percent");
+        assertFalse(DisplayScale.reads("50 %", "55.0 %"));
+        assertTrue(DisplayScale.reads("-inf dB", "-inf dB"), "minus infinity reads as itself");
+        assertFalse(DisplayScale.reads("-inf dB", "-60.0 dB"), "and not as the floor of a finite range");
+        assertTrue(DisplayScale.reads("4:1", "1:4.00"), "a ratio reads either way round");
+        assertFalse(DisplayScale.reads("4:1", "1:2.00"));
+        assertTrue(DisplayScale.otherUnit("4:1", "-6 dB"), "a ratio is its own unit");
         assertTrue(DisplayScale.otherUnit("800 Hz", "-6 dB"));
         assertFalse(DisplayScale.otherUnit("800 Hz", "1.2 kHz"), "kHz is hertz");
         assertFalse(DisplayScale.otherUnit("800 Hz", "Off"), "text has no unit");

@@ -8,6 +8,7 @@ import dev.bitwigagent.core.Holds;
 import dev.bitwigagent.core.HostOperation;
 import dev.bitwigagent.core.MethodSpecs;
 import dev.bitwigagent.core.Scheduler;
+import dev.bitwigagent.device.ChainModule;
 import dev.bitwigagent.device.DeviceChainModule;
 import dev.bitwigagent.device.DeviceListModule;
 import dev.bitwigagent.device.DeviceModule;
@@ -134,6 +135,10 @@ public final class TestServices {
 
     public DeviceListModule deviceList() {
         return new DeviceListModule(window, trackRefs, chains);
+    }
+
+    public ChainModule chainEdits() {
+        return new ChainModule(scheduler, chains, transportSafety);
     }
 
     public DeviceChainModule deviceChain() {

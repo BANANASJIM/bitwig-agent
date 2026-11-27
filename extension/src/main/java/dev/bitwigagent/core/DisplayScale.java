@@ -97,14 +97,16 @@ public final class DisplayScale {
     }
 
     /**
-     * Whether a requested display text reads as the one the host shows for it: numbers in the same unit, or plain
-     * numbers, equal to the coarser of the two texts' resolutions; any other text only when it is the same text.
+     * Whether a requested display text reads as the one the host shows for it: numbers in the same unit equal to the
+     * coarser of the two texts' resolutions; a plain number as the number shown, in the unit shown ("50" reads as
+     * "50.0 %"); any other text only when it is the same text.
      */
     public static boolean reads(String requested, String shown) {
         Quantity x = quantity(requested), y = quantity(shown);
         if (x != null && y != null)
             return x.unit.equals(y.unit) && Math.abs(x.value - y.value) <= Math.max(x.resolution, y.resolution);
-        if (BARE.matcher(requested).matches() && BARE.matcher(shown).matches())
+        if (BARE.matcher(requested).matches()
+                && (y != null ? y.value > MINUS_INF : BARE.matcher(shown).matches()))
             return Math.abs(number(requested) - number(shown)) <= Math.max(tolerance(requested), tolerance(shown));
         return requested.trim().equalsIgnoreCase(shown.trim());
     }
