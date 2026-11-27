@@ -46,6 +46,7 @@ import dev.bitwigagent.mix.MeterModule;
 import dev.bitwigagent.mix.MixModule;
 import dev.bitwigagent.mix.TrackLifecycleModule;
 import dev.bitwigagent.mix.TrackListModule;
+import dev.bitwigagent.mix.TrackReshapeModule;
 import dev.bitwigagent.nativehost.NativePorts;
 import dev.bitwigagent.project.ContextModule;
 import dev.bitwigagent.project.DiscoveryModule;
@@ -103,7 +104,7 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
                 new ProjectModule(scheduler, application, project, projectState, natives.saveAs(), holds);
         register(new DiscoveryModule(host, application, transport, window, projectState, specs, holds, domains));
         register(new DeviceListModule(window, trackRefs, chains));
-        register(new DeviceChainModule(scheduler, window, trackRefs, sources, chains, transportSafety));
+        register(new DeviceChainModule(scheduler, window, trackRefs, sources, chains, transportSafety, remotes));
         register(new ChainModule(scheduler, chains, transportSafety));
         register(new ActionModule(scheduler, application, projectState, selection));
         register(projectModule);
@@ -124,6 +125,8 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
                 natives.trackGroup(),
                 holds,
                 mix));
+        register(new TrackReshapeModule(
+                scheduler, window, trackRefs, transportSafety, selection, natives.trackReshape(), mix));
         register(new DeviceModule(scheduler, sources, chains, selection));
         LauncherTargets launcherTargets =
                 new LauncherTargets(window, trackRefs, new SceneWindowLease(window, scheduler));

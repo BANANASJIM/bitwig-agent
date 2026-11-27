@@ -19,13 +19,13 @@ from remap import classfile, table
 
 ROOT = Path(__file__).resolve().parents[1]
 SHARED = ROOT / "src/bitwig_agent/shared"
-HOSTS = json.loads((SHARED / "host.json").read_text())
-RECORD = json.loads((ROOT / "tests/fixtures/names_verified.json").read_text())
+HOSTS = json.loads((SHARED / "host.json").read_text(encoding="utf-8"))
+RECORD = json.loads((ROOT / "tests/fixtures/names_verified.json").read_text(encoding="utf-8"))
 JARS = [Path(p) for p in os.environ.get("BITWIG_HOST_JARS", "/opt/bitwig-studio/bin/bitwig.jar").split(os.pathsep)]
 
 
 def names(entry: dict) -> dict:
-    return json.loads((SHARED / f"{entry['names']}.json").read_text())
+    return json.loads((SHARED / f"{entry['names']}.json").read_text(encoding="utf-8"))
 
 
 @pytest.mark.parametrize("entry", HOSTS, ids=lambda e: e["names"])
@@ -35,7 +35,7 @@ def test_every_member_has_a_descriptor_and_its_table_was_verified_on_the_entry_j
     assert RECORD[entry["names"]] == {"jarSha256": entry["jarSha256"], "tableSha256": table.file_sha256(path)}, (
         "the table changed since its last real-jar verify, or was verified on another jar"
     )
-    assert path.read_text() == table.render(names(entry)), "tables keep the generated layout"
+    assert path.read_text(encoding="utf-8") == table.render(names(entry)), "tables keep the generated layout"
 
 
 @pytest.mark.parametrize("entry", HOSTS, ids=lambda e: e["names"])

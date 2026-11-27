@@ -83,7 +83,7 @@ def test_each_host_target_is_one_fact():
     assert host_version() == hosts[-1]["version"]
     assert bundled_schema()["hostVersion"] == host_version()
     assert measured_notes()["hostVersion"] == host_version()
-    api = tomllib.loads((ROOT / "extension/deps.toml").read_text())["extension-api"]
+    api = tomllib.loads((ROOT / "extension/deps.toml").read_text(encoding="utf-8"))["extension-api"]
     for host in hosts:
         assert set(host) == {"version", "apiVersion", "jarSha256", "names"}
         assert re.fullmatch(r"[0-9a-f]{64}", host["jarSha256"])

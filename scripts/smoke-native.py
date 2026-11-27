@@ -179,7 +179,7 @@ class NativeTarget:
     def process_start(self):
         if self.process.stat().st_uid != os.getuid():
             raise RuntimeError("Refusing a host process owned by another user")
-        return (self.process / "stat").read_text().rsplit(")", 1)[1].split()[19]
+        return (self.process / "stat").read_text(encoding="utf-8").rsplit(")", 1)[1].split()[19]
 
     def guard(self):
         if self.process_start() != self.start_time:
@@ -202,6 +202,7 @@ class NativeTarget:
             check=True,
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=5,
         ).stdout
         owner = re.search(r"_NET_WM_PID\([^)]*\)\s*=\s*(\d+)", window)
@@ -225,7 +226,7 @@ class NativeTarget:
         for name in ("tcp", "tcp6"):
             path = self.process / "net" / name
             try:
-                tables.append(path.read_text())
+                tables.append(path.read_text(encoding="utf-8"))
             except FileNotFoundError:
                 continue  # A kernel may have IPv6 disabled.
         if not any(has_owned_loopback_listener(table, self.config["port"], owned_sockets) for table in tables):

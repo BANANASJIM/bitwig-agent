@@ -1,7 +1,9 @@
 """diagnostics.get against synthetic Bitwig logs (no real log, no Bitwig)."""
 
 import asyncio
+import os
 import re
+import sys
 from datetime import datetime, timedelta
 
 import pytest
@@ -97,7 +99,8 @@ def test_classifies_and_dedups(log):
         + "\tat a.b.C.d(C.java:1)\n\tat a.b.C.e(C.java:2)\n"
         + line(t, "audio", "warn", "Cannot use realtime priority")
         + line(t, "audio", "warn", "something odd")
-        + line(t, "audio", "info", "chatter")
+        + line(t, "audio", "info", "chatter"),
+        encoding="utf-8",
     )
     result = run()
     events = result["events"]
@@ -124,7 +127,8 @@ def test_window_and_max_events(log):
     log.write_text(
         header(NOW - timedelta(hours=2))
         + line(NOW - timedelta(hours=1), "x", "error", "old problem")
-        + "".join(line(NOW - timedelta(seconds=10 - i), "x", "error", f"problem {i}") for i in range(5))
+        + "".join(line(NOW - timedelta(seconds=10 - i), "x", "error", f"problem {i}") for i in range(5)),
+        encoding="utf-8",
     )
     assert [e["message"] for e in run()["events"]] == [f"problem {i}" for i in range(5)]
     assert "old problem" in [e["message"] for e in run({"sinceSeconds": 7200})["events"]]
@@ -134,10 +138,10 @@ def test_window_and_max_events(log):
 
 
 def test_marker_returns_only_new_events(log):
-    log.write_text(header(NOW - timedelta(minutes=1)) + line(NOW, "x", "error", "first"))
+    log.write_text(header(NOW - timedelta(minutes=1)) + line(NOW, "x", "error", "first"), encoding="utf-8")
     first = run()
     assert [e["message"] for e in first["events"]] == ["first"]
-    with log.open("a") as f:
+    with log.open("a", encoding="utf-8") as f:
         f.write(line(NOW, "x", "error", "second"))
     second = run({"sinceMarker": first["marker"]})
     assert [e["message"] for e in second["events"]] == ["second"]
@@ -146,9 +150,9 @@ def test_marker_returns_only_new_events(log):
 
 
 def test_stale_marker_falls_back(log):
-    log.write_text(header(NOW - timedelta(minutes=1)) + line(NOW, "x", "error", "one"))
+    log.write_text(header(NOW - timedelta(minutes=1)) + line(NOW, "x", "error", "one"), encoding="utf-8")
     marker = run()["marker"]
-    log.write_text(header(NOW - timedelta(seconds=30)) + line(NOW, "x", "error", "fresh start"))
+    log.write_text(header(NOW - timedelta(seconds=30)) + line(NOW, "x", "error", "fresh start"), encoding="utf-8")
     result = run({"sinceMarker": marker})
     assert [e["message"] for e in result["events"]] == ["fresh start"]
     assert "stale" in result["warnings"][0]
@@ -161,7 +165,8 @@ def test_attribution_by_process_start(log, monkeypatch):
         header(a)
         + line(a + timedelta(seconds=5), "x", "error", "from A")
         + header(b)
-        + line(b + timedelta(seconds=5), "x", "error", "from B")
+        + line(b + timedelta(seconds=5), "x", "error", "from B"),
+        encoding="utf-8",
     )
     monkeypatch.setattr(diagnostics, "process_start", lambda pid: a - timedelta(seconds=2))
     result = run({"sinceSeconds": 7200})
@@ -178,7 +183,7 @@ def test_attribution_by_process_start(log, monkeypatch):
 
 def test_no_instance_is_uncertain_latest_section(log):
     a, b = NOW - timedelta(minutes=30), NOW - timedelta(minutes=10)
-    log.write_text(header(a) + line(a, "x", "error", "A") + header(b) + line(b, "x", "error", "B"))
+    log.write_text(header(a) + line(a, "x", "error", "A") + header(b) + line(b, "x", "error", "B"), encoding="utf-8")
     result = run({"sinceSeconds": 7200}, Bridge(fail=True))
     assert [e["message"] for e in result["events"]] == ["B"]
     att = result["attribution"]
@@ -195,8 +200,16 @@ def test_large_log_reads_from_the_end(log, monkeypatch):
         header(NOW - timedelta(days=1))
         + "".join(line(NOW - timedelta(hours=5), "x", "info", "filler" * 20) for _ in range(2000))
         + header(t)
-        + line(t, "x", "error", "needle")
+        + line(t, "x", "error", "needle"),
+        encoding="utf-8",
     )
     result = run()
     assert [e["message"] for e in result["events"]] == ["needle"]
     assert result["attribution"]["sectionsSeen"] == 1  # stopped at the newest header, did not read the whole file
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="reads /proc")
+def test_process_start_of_this_process_is_in_the_past():
+    started = diagnostics.process_start(os.getpid())
+    assert started is not None
+    assert started <= datetime.now()

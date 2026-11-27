@@ -21,7 +21,6 @@ public final class ModulatorModule implements HostModule {
     private final DeviceSources sources;
     private final PortHandle<ModulatorAdapter> adapters;
     private final ModulatorEditModule edits;
-    private ModulatorAdapter adapter;
 
     public ModulatorModule(
             Scheduler scheduler,
@@ -46,7 +45,7 @@ public final class ModulatorModule implements HostModule {
     public void dispatch(HostOperation op, String method, JsonObject p) {
         scheduler.check(op);
         ModulatorEditor editor = edits.editor(op);
-        adapter = adapters.get(op);
+        ModulatorAdapter adapter = adapters.get(op);
         boolean one = method.equals("modulators.get");
         JsonObject modulatorRef = one ? p.getAsJsonObject("target") : null;
         DeviceSources.Source device =
@@ -65,7 +64,7 @@ public final class ModulatorModule implements HostModule {
                 };
                 check.run();
                 JsonObject value = editor.read(device, deviceRef, offset, limit, only, check);
-                addPanels(value, device, check);
+                addPanels(adapter, value, device, check);
                 JsonObject result = one ? single(value) : value;
                 check.run();
                 final String serialized = BoundedJson.serialize(
@@ -109,7 +108,8 @@ public final class ModulatorModule implements HostModule {
     }
 
     /** Each modulator's string panels as read-only rows; Bitwig shows them as text fields that have no ref to write. */
-    private void addPanels(JsonObject page, DeviceSources.Source device, Runnable check) {
+    private static void addPanels(
+            ModulatorAdapter adapter, JsonObject page, DeviceSources.Source device, Runnable check) {
         JsonArray rows = page.getAsJsonArray("modulators");
         if (rows.size() == 0) return;
         int first = rows.get(0).getAsJsonObject().get("index").getAsInt();

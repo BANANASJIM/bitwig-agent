@@ -11,7 +11,7 @@ ALLOWED_THIRD_PARTY = {"pydantic"}
 
 def imported_modules(path: Path) -> set[str]:
     modules = set()
-    for node in ast.walk(ast.parse(path.read_text())):
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
         if isinstance(node, ast.Import):
             modules |= {alias.name for alias in node.names}
         elif isinstance(node, ast.ImportFrom):

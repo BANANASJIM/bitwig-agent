@@ -37,12 +37,12 @@ def download_verified(url: str, sha256: str, target: Path, limit: int) -> Path:
 
 
 def dependency(name: str) -> Path:
-    entry = tomllib.loads(DEPS_TABLE.read_text())[name]
+    entry = tomllib.loads(DEPS_TABLE.read_text(encoding="utf-8"))[name]
     return download_verified(entry["url"], entry["sha256"], DEPS_DIR / entry["file"], entry["max_bytes"])
 
 
 def dependency_group(prefix: str) -> list[str]:
-    return [name for name in tomllib.loads(DEPS_TABLE.read_text()) if name.startswith(prefix)]
+    return [name for name in tomllib.loads(DEPS_TABLE.read_text(encoding="utf-8")) if name.startswith(prefix)]
 
 
 def host_paths(value):

@@ -22,13 +22,17 @@ import dev.bitwigagent.host.TransportSafety;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 
-/** tracks.insert, tracks.group and tracks.delete: structure changes of the track list, each attributed by observation. */
+/**
+ * tracks.insert, tracks.group, tracks.duplicate and tracks.delete: structure changes of the track list, each attributed
+ * by observation.
+ */
 public final class TrackLifecycleModule implements HostModule {
-    static final Set<String> METHODS = Set.of("tracks.insert", "tracks.group", "tracks.delete");
+    static final Set<String> METHODS = Set.of("tracks.insert", "tracks.group", "tracks.delete", "tracks.duplicate");
+    private static final Set<String> CHANNEL_TYPES = Set.of("Audio", "Instrument", "Hybrid", "Effect");
     /** How long the new group is awaited once the native call has returned. */
     static final long GROUP_OBSERVE_NANOS = TimeUnit.MILLISECONDS.toNanos(3000);
     /** A completed/cancelled RPC does not cancel a void native factory. Never reuse its attribution window. */
-    private static final String INSERTION = "tracks.insert", GROUP = "tracks.group";
+    private static final String INSERTION = "tracks.insert", GROUP = "tracks.group", DUPLICATE = "tracks.duplicate";
 
     public interface GroupAccess {
         void execute(Runnable work);
@@ -100,13 +104,16 @@ public final class TrackLifecycleModule implements HostModule {
             case "tracks.group":
                 group(op, p);
                 return;
+            case "tracks.duplicate":
+                duplicate(op, p, mix.target(p.getAsJsonObject("target"), true));
+                return;
             default:
                 delete(op, mix.target(p.getAsJsonObject("target"), true));
         }
     }
 
     private void requireNoPending(String refused) {
-        for (String hold : List.of(INSERTION, GROUP))
+        for (String hold : List.of(INSERTION, GROUP, DUPLICATE))
             if (holds.held(hold))
                 throw holds.blocked(
                         hold,
@@ -360,13 +367,16 @@ public final class TrackLifecycleModule implements HostModule {
         JsonObject result = Results.unknown();
         result.addProperty("reason", reason.wire());
         result.addProperty("detail", detail);
-        result.addProperty("nameApplied", false);
+        if (!hold.equals(DUPLICATE)) result.addProperty("nameApplied", false);
         result.add("requested", p);
         result.addProperty("next", "Inspect tracks.list, then ack " + hold + "; never retry before that.");
         return result;
     }
 
-    /** Delete one audio/instrument/hybrid/effect track by Track.deleteObject (DeleteableObject), verified by bank UUID set and count. */
+    /**
+     * Delete one audio/instrument/hybrid/effect track, or a group with every track inside it, by Track.deleteObject
+     * (DeleteableObject), verified by the bank's UUID set and count.
+     */
     private void delete(HostOperation op, MixModule.Target target) {
         SafetyObservation safety = transportSafety.stopped(op);
         if (!window.observed()) throw Errors.notApplied(Reason.NOT_READY, "Track bank has not reported its size yet.");
@@ -374,11 +384,12 @@ public final class TrackLifecycleModule implements HostModule {
         int slot = window.trackSlot(target.id);
         JsonElement type = mix.meta(slot, "type"), index = mix.meta(slot, "index");
         if (type.isJsonNull()) throw Errors.notApplied(Reason.NOT_READY, "Track type has not been observed.");
-        if (!Set.of("Audio", "Instrument", "Hybrid", "Effect").contains(type.getAsString()))
+        boolean group = type.getAsString().equals("Group");
+        if (!group && !CHANNEL_TYPES.contains(type.getAsString()))
             throw Errors.notApplied(
                     Reason.UNSUPPORTED_SCOPE,
-                    "Only Audio, Instrument, Hybrid and Effect tracks can be deleted; this track is "
-                            + type.getAsString() + " (group and master are refused); nothing changed.");
+                    "Only Audio, Instrument, Hybrid, Effect and Group tracks can be deleted; this track is "
+                            + type.getAsString() + "; nothing changed.");
         Creation before = capture();
         if (!before.complete || !before.ids.contains(target.id))
             throw Errors.notApplied(
@@ -386,6 +397,22 @@ public final class TrackLifecycleModule implements HostModule {
                     "Deletion needs the whole project observed in the " + HostLimits.TRACKS
                             + "-track bank window (offset 0, at most " + HostLimits.TRACKS
                             + " tracks including group children and effect tracks, every UUID/type/position read); this project exceeds it or is not fully observed yet. Nothing changed.");
+        Set<String> removed = new HashSet<>(Set.of(target.id));
+        JsonArray children = new JsonArray();
+        if (group) {
+            if (!before.tree.complete)
+                throw Errors.notApplied(
+                        Reason.NOT_READY,
+                        "Deleting a group needs every track's parent observed (" + before.tree.reason
+                                + ") to know which tracks go with it; nothing changed.");
+            TrackTree.Node node = before.tree.byId.get(target.id);
+            TrackTree.requireListed(node, "deleted");
+            for (TrackTree.Node child : before.tree.descendants(node)) {
+                TrackTree.requireListed(child, "deleted");
+                removed.add(child.id);
+                children.add(trackRefs.ref(child.slot));
+            }
+        }
         transportSafety.guardStopped(safety);
         mix.guard(op, target);
         op.markDispatched();
@@ -394,25 +421,102 @@ public final class TrackLifecycleModule implements HostModule {
         deleted.addProperty("type", type.getAsString());
         deleted.add("index", index);
         window.at(slot).deleteObject();
-        awaitDeletion(op, target.id, deleted, before);
+        awaitDeletion(op, removed, deleted, group ? children : null, before);
     }
 
-    private void awaitDeletion(HostOperation op, String id, JsonObject deleted, Creation before) {
-        scheduler.poll(op, scheduler.observeUntil(op), () -> deletedFrom(capture(), before, id), gone -> {
+    private void awaitDeletion(
+            HostOperation op, Set<String> removed, JsonObject deleted, JsonArray children, Creation before) {
+        scheduler.poll(op, scheduler.observeUntil(op), () -> deletedFrom(capture(), before, removed), gone -> {
             Creation after = capture();
             JsonObject result = Results.outcome(gone ? Outcome.APPLIED : Outcome.UNKNOWN, Verification.API_READBACK);
             if (!gone) result.addProperty("reason", Reason.NOT_OBSERVED.wire());
             result.add("deleted", deleted);
+            if (children != null) result.add("deletedChildren", children);
             result.addProperty("trackCountBefore", before.total);
             result.addProperty("trackCountAfter", after.total);
             op.result.complete(result);
         });
     }
 
-    private static boolean deletedFrom(Creation after, Creation before, String id) {
+    private static boolean deletedFrom(Creation after, Creation before, Set<String> removed) {
         Set<String> others = new HashSet<>(before.ids);
-        others.remove(id);
-        return after.complete && !after.ids.contains(id) && after.total == before.total - 1 && after.ids.equals(others);
+        others.removeAll(removed);
+        return after.complete && after.total == before.total - removed.size() && after.ids.equals(others);
+    }
+
+    // ---------------------------------------------------------------- duplicate
+
+    /** Duplicate one channel track with Channel.duplicate; the copy is attributed like an insertion. */
+    private void duplicate(HostOperation op, JsonObject p, MixModule.Target target) {
+        requireNoPending("track duplication");
+        transportSafety.recording(op);
+        mix.guard(op, target);
+        Creation before = capture();
+        if (!before.complete || !before.tree.complete)
+            throw Errors.notApplied(
+                    Reason.NOT_READY,
+                    "Duplication needs the whole project observed in the " + HostLimits.TRACKS
+                            + "-track window with every parent (" + before.tree.reason + "); nothing changed.");
+        if (before.total >= HostLimits.TRACKS)
+            throw Errors.notApplied(
+                    Reason.OUTSIDE_WINDOW,
+                    "The " + HostLimits.TRACKS
+                            + "-track window is full: the copy could not be observed; nothing changed.");
+        TrackTree.Node source = before.tree.byId.get(target.id);
+        if (!CHANNEL_TYPES.contains(source.type))
+            throw Errors.notApplied(
+                    Reason.UNSUPPORTED_SCOPE,
+                    "Only Audio, Instrument, Hybrid and Effect tracks can be duplicated; this track is " + source.type
+                            + "; nothing changed.");
+        int devices = window.devices(source.slot).itemCount().get();
+        inserting = op;
+        scheduler.check(op);
+        op.markDispatched();
+        holds.place(DUPLICATE, "A prior tracks.duplicate copy remains unattributed.");
+        window.at(source.slot).duplicate();
+        String[] candidate = {null};
+        scheduler.conclude(
+                op,
+                scheduler.observeUntil(op),
+                () -> duplicateStep(op, p, before, source, devices, candidate),
+                () -> op.result.complete(unattributed(p, Reason.NOT_OBSERVED, "unique_copy_not_observed", DUPLICATE)));
+    }
+
+    /** The conclusion once the copy is attributed (seen on two polls in a row) or cannot be; null to keep polling. */
+    private Runnable duplicateStep(
+            HostOperation op, JsonObject p, Creation before, TrackTree.Node source, int devices, String[] candidate) {
+        Creation after = capture();
+        if (after.offset != before.offset || !after.ids.containsAll(before.ids))
+            return () -> op.result.complete(
+                    unattributed(p, Reason.TARGET_CHANGED, "track_window_or_existing_targets_changed", DUPLICATE));
+        Set<String> added = new HashSet<>(after.ids);
+        added.removeAll(before.ids);
+        if (added.size() > 1 || after.total > before.total + 1)
+            return () -> op.result.complete(unattributed(p, Reason.SIDE_EFFECT, "ambiguous_added_tracks", DUPLICATE));
+        String found = null;
+        if (after.complete && after.tree.complete && added.size() == 1) {
+            String id = added.iterator().next();
+            TrackTree.Node copy = after.tree.byId.get(id), now = after.tree.byId.get(source.id);
+            if (copy != null
+                    && now != null
+                    && source.type.equals(copy.type)
+                    && Objects.equals(source.parentId, copy.parentId)
+                    && copy.position == now.position + 1
+                    && window.devices(copy.slot).itemCount().get() == devices) found = id;
+        }
+        if (found != null && found.equals(candidate[0])) {
+            String copy = found;
+            return () -> {
+                holds.release(DUPLICATE);
+                JsonObject result = Results.outcome(Outcome.APPLIED, Verification.API_READBACK);
+                result.add("ref", trackRefs.ref(window.trackSlot(copy)));
+                result.add("source", trackRefs.ref(window.trackSlot(source.id)));
+                result.addProperty("deviceCount", devices);
+                op.result.complete(result);
+            };
+        }
+        candidate[0] = found;
+        return null;
     }
 
     private void awaitInsertion(HostOperation op, JsonObject p, Creation before, int requested) {

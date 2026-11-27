@@ -32,8 +32,10 @@ public final class NativePortsTest {
         });
         int bound = 0;
         for (PortHandle<?> port : ports.all()) {
+            int before = asked.size();
             try {
                 assertNotNull(port.get(OP));
+                assertSame(port.get(OP), port.get(OP), "a bound port is kept");
                 bound++;
             } catch (RpcException error) {
                 assertTrue(
@@ -41,10 +43,9 @@ public final class NativePortsTest {
                         error.getMessage());
                 assertSame(error, assertThrows(RpcException.class, () -> port.get(OP)), "a refusal is kept");
             }
+            assertTrue(asked.size() - before <= 1, "a port asks the gate only until it is bound or refused");
         }
         assertEquals(2, bound, "Grid and modulator reads bind and report their own availability");
-        assertEquals(ports.all().size(), asked.size(), "each port asks the gate only until it is bound or refused");
-        assertSame(ports.grid().get(OP), ports.grid().get(OP), "a bound port is kept");
         RpcException gated = assertRpcError(
                 Reason.NATIVE_UNAVAILABLE.wire(), () -> ports.keySignature().get(OP));
         assertTrue(gated.getMessage().startsWith("The project key signature needs the native gate: Native access"));
@@ -90,6 +91,16 @@ public final class NativePortsTest {
                                     throw new NoClassDefFoundError("q2");
                                 }))
                         .getMessage());
+        LazyBinding<Object> broken = new LazyBinding<>("Exact thing unavailable: ");
+        int[] calls = {0};
+        LazyBinding.Bind<Object> npe = () -> {
+            calls[0]++;
+            throw new IllegalStateException("q3");
+        };
+        RpcException unchecked = assertRpcError(Reason.NATIVE_UNAVAILABLE.wire(), () -> broken.get(npe));
+        assertEquals("Exact thing unavailable: IllegalStateException: q3", unchecked.getMessage());
+        assertSame(unchecked, assertThrows(RpcException.class, () -> broken.get(npe)));
+        assertEquals(1, calls[0], "an unchecked error from binding code is kept like a reflective one");
         LazyBinding<Object> busy = new LazyBinding<>("");
         assertRpcError(
                 Reason.BUSY.wire(),

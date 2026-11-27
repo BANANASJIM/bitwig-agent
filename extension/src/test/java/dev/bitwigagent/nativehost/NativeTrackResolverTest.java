@@ -25,8 +25,9 @@ import org.junit.jupiter.api.Test;
 /**
  * Binds every port of {@link NativePorts}, the bindings they resolve on first use, and the access classes built on the
  * track resolver against the classpath host jar. With the inspected jar of a host.json entry each exact descriptor must
- * resolve offline and match the name table's (the compat layer's check that every port constructs on every shipped
- * entry: run once per entry jar, e.g. {@code BITWIG_API_JAR}); with any other jar the bindings must fail closed with
+ * resolve offline, and the types the code binds each member with are compared here with the name table's desc (the
+ * compat layer's check that every port constructs on every shipped entry, and its offline descriptor comparison; run
+ * once per entry jar with {@code pixi run test-java --host-jar}); with any other jar the bindings must fail closed with
  * the host_mismatch reason. No native host runs and no bound method is invoked. The kind and identity checks every
  * access class shares are exercised directly.
  */

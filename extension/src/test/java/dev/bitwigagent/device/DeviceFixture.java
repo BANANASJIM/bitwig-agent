@@ -153,7 +153,7 @@ final class DeviceFixture {
     }
 
     DeviceChainModule chains() {
-        return chainModule == null ? chainModule = services.deviceChain() : chainModule;
+        return chainModule == null ? chainModule = services.deviceChain(remote) : chainModule;
     }
 
     ParameterModule parameters() {
@@ -296,6 +296,10 @@ final class DeviceFixture {
         final List<String> points = new ArrayList<>();
         int insertions, deletions, selected = -1;
         String insertMode = "one", deleteMode = "one", moveMode = "one", lastInsertion;
+        String[] replacement = {"Replaced", "instrument"};
+        /** Remote Controls page names the replacing device reports, or null for none. */
+        String[] replacementPages;
+
         Object lastArgument;
 
         Chain(HostFixture host, FakeHost bank, int window, FakeHost start, FakeHost end) {
@@ -326,6 +330,7 @@ final class DeviceFixture {
                 });
                 point(slots[i].child("beforeDeviceInsertionPoint"), "before", i);
                 point(slots[i].child("afterDeviceInsertionPoint"), "after", i);
+                replacement(slots[i].child("replaceDeviceInsertionPoint"), i);
             }
             point(start, "start", -1);
             end.onMethods(InsertionPoint.class, name -> name.startsWith("insert"), (name, args) -> {
@@ -357,7 +362,7 @@ final class DeviceFixture {
         private void point(FakeHost node, String mode, int anchor) {
             node.onMethods(
                     InsertionPoint.class,
-                    name -> name.startsWith("insert") || name.equals("moveDevices"),
+                    name -> name.startsWith("insert") || name.equals("moveDevices") || name.equals("copyDevices"),
                     (name, args) -> {
                         boolean insert = name.startsWith("insert");
                         host.mutation();
@@ -369,7 +374,11 @@ final class DeviceFixture {
                         }
                         if (insert ? insertMode.equals("none") : moveMode.equals("none")) return null;
                         List<String[]> next = new ArrayList<>(entries);
-                        if (insert) {
+                        if (name.equals("copyDevices")) {
+                            int from = Arrays.asList(proxies).indexOf(((Device[]) args[0])[0]);
+                            String[] copy = entries.get(from);
+                            next.add(anchor + 1, moveMode.equals("other") ? new String[] {"Other", copy[1]} : copy);
+                        } else if (insert) {
                             int index = mode.equals("start") ? 0 : mode.equals("before") ? anchor : anchor + 1;
                             next.add(index, new String[] {"Inserted", "audio-effect"});
                         } else {
@@ -382,6 +391,28 @@ final class DeviceFixture {
                         render(next);
                         return null;
                     });
+        }
+
+        /** The replace point of slot {@code index}: an insert puts {@code replacement} in that device's place. */
+        private void replacement(FakeHost node, int index) {
+            node.onMethods(InsertionPoint.class, name -> name.startsWith("insert"), (name, args) -> {
+                host.mutation();
+                points.add("replace:" + index + ":" + name);
+                insertions++;
+                lastInsertion = name;
+                lastArgument = args[0];
+                if (!insertMode.equals("none")) {
+                    List<String[]> next = new ArrayList<>(entries);
+                    next.set(index, replacement);
+                    render(next);
+                    if (replacementPages != null)
+                        slots[index]
+                                .child("createCursorRemoteControlsPage")
+                                .child("pageNames")
+                                .emit(replacementPages);
+                }
+                return null;
+            });
         }
 
         /** Emits the observer traffic of the chain becoming {@code next}, in the order the host reports it. */

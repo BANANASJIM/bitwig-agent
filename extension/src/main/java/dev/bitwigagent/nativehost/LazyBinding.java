@@ -6,8 +6,14 @@ import dev.bitwigagent.core.RpcException;
 
 /**
  * Bindings resolved on first use and kept, so a key a host lacks fails only the features that use it (compat layer
- * §3.2). A failure to bind is that feature's {@code native_unavailable} and is kept too: it cannot change for the
- * loaded jar. Other failures (a cancelled request) are not kept. Used from one thread, the extension's or a handle's.
+ * §3.2). A failure to bind (a reflective, linkage or other unchecked error from the binding code) is that feature's
+ * {@code native_unavailable} and is kept too: it cannot change for the loaded jar. A refusal the binding raises itself
+ * is kept when it is {@code native_unavailable} or {@code host_mismatch}; any other (a cancelled request) is not.
+ *
+ * <p>Not thread-safe, and the kept value is published without synchronization: an instance belongs to the thread that
+ * calls {@link #get}, the extension's controller thread for {@link NativePorts}' handles and the owning adapter's
+ * calling thread for an adapter's own first-use bindings. Hand the bound value to other threads only through a
+ * happens-before edge (the host's dispatch to its document or model thread is one).
  */
 final class LazyBinding<T> {
     @FunctionalInterface
@@ -30,12 +36,12 @@ final class LazyBinding<T> {
         if (failure != null) throw failure;
         try {
             value = bind.bind();
-        } catch (ReflectiveOperationException | LinkageError error) {
-            failure = Errors.notApplied(Reason.NATIVE_UNAVAILABLE, unavailable + Errors.diagnostic(error));
-            throw failure;
         } catch (RpcException error) {
             if (error.is(Reason.NATIVE_UNAVAILABLE) || error.is(Reason.HOST_MISMATCH)) failure = error;
             throw error;
+        } catch (ReflectiveOperationException | LinkageError | RuntimeException error) {
+            failure = Errors.notApplied(Reason.NATIVE_UNAVAILABLE, unavailable + Errors.diagnostic(error));
+            throw failure;
         }
         return value;
     }

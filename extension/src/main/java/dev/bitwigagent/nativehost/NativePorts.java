@@ -16,6 +16,7 @@ import dev.bitwigagent.grid.GridRemotePageWriter;
 import dev.bitwigagent.launcher.LauncherSettingsModule;
 import dev.bitwigagent.launcher.NativeNotes;
 import dev.bitwigagent.mix.TrackLifecycleModule;
+import dev.bitwigagent.mix.TrackReshapeModule;
 import dev.bitwigagent.project.KeySignatureModule;
 import dev.bitwigagent.project.ProjectModule;
 import dev.bitwigagent.render.RenderModule;
@@ -43,6 +44,8 @@ public final class NativePorts {
             port("Exact launcher settings descriptors unavailable: ", NativeLauncherSettingsAccess::new);
     private final PortHandle<TrackLifecycleModule.GroupAccess> trackGroup =
             port("Exact track group descriptors unavailable: ", NativeTrackGroupAccess::new);
+    private final PortHandle<TrackReshapeModule.Access> trackReshape =
+            port("Exact track command descriptors unavailable: ", NativeTrackReshapeAccess::new);
     private final PortHandle<NativeChains.Access> chains =
             port("Native chain binding unavailable: ", NativeChainAccess::new);
     private final PortHandle<GridRemotePageWriter.Access> remotePages =
@@ -99,6 +102,10 @@ public final class NativePorts {
         return trackGroup;
     }
 
+    public PortHandle<TrackReshapeModule.Access> trackReshape() {
+        return trackReshape;
+    }
+
     public PortHandle<NativeChains.Access> chains() {
         return chains;
     }
@@ -146,6 +153,7 @@ public final class NativePorts {
                 routing,
                 launcherSettings,
                 trackGroup,
+                trackReshape,
                 chains,
                 remotePages,
                 noteWrites,
