@@ -8,6 +8,7 @@ import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.Holds;
 import dev.bitwigagent.core.HostModule;
 import dev.bitwigagent.core.HostOperation;
+import dev.bitwigagent.core.RangeEdit;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.SafetyObservation;
 import dev.bitwigagent.core.Scheduler;
@@ -26,19 +27,26 @@ import java.util.*;
 /** Arranger automation points on a track's automation lane for volume, pan or a Grid module parameter (version-gated). */
 public final class AutomationModule implements HostModule {
     static final Set<String> METHODS = Set.of("automation.points.get", "automation.points.set");
-    static final double MAX_BEATS = 4194304, EPS = 1e-9;
     public static final int MAX_READ = 1024, MAX_LANE = 65536;
 
-    /** One automation point as read or requested: beat, normalized value, interpolation, curve. */
+    /**
+     * One canonical automation point: beat on a 2^-20 grid, value and curve on a 1e-9 grid, so a point read back and
+     * written again is equal by construction.
+     */
     public static final class Point {
+        static final double BEAT_GRID = 1 << 20, VALUE_GRID = 1e9;
         public final double beat, value, curve;
         public final boolean linear;
 
         public Point(double beat, double value, boolean linear, double curve) {
-            this.beat = beat;
-            this.value = value;
+            this.beat = beat(beat);
+            this.value = Math.rint(value * VALUE_GRID) / VALUE_GRID;
             this.linear = linear;
-            this.curve = curve;
+            this.curve = Math.rint(curve * VALUE_GRID) / VALUE_GRID;
+        }
+
+        static double beat(double beat) {
+            return Math.rint(beat * BEAT_GRID) / BEAT_GRID;
         }
 
         String interpolation() {
@@ -53,6 +61,50 @@ public final class AutomationModule implements HostModule {
             out.addProperty("curve", curve);
             return out;
         }
+
+        @Override
+        public boolean equals(Object other) {
+            if (!(other instanceof Point)) return false;
+            Point o = (Point) other;
+            return beat == o.beat && value == o.value && linear == o.linear && curve == o.curve;
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(beat, value, linear, curve);
+        }
+    }
+
+    /** A requested point; {@code linear} is null when interpolation is omitted. */
+    public static final class Request {
+        public final double beat, value;
+        public final Boolean linear;
+
+        public Request(double beat, double value, Boolean linear) {
+            this.beat = Point.beat(beat);
+            this.value = value;
+            this.linear = linear;
+        }
+    }
+
+    /** Points are identified by beat and compared canonically. */
+    public static final RangeEdit.Kind<Point> KIND = new RangeEdit.Kind<>() {
+        public Object key(Point point) {
+            return point.beat;
+        }
+
+        public boolean same(Point a, Point b) {
+            return a.equals(b);
+        }
+    };
+
+    /**
+     * The point a request writes: it keeps what it omits (interpolation, curve) from the point at its beat; a new point
+     * is linear with curve 0.
+     */
+    static Point written(Point observed, Request listed) {
+        boolean linear = listed.linear != null ? listed.linear : observed == null || observed.linear;
+        return new Point(listed.beat, listed.value, linear, observed == null ? 0 : observed.curve);
     }
 
     /** Which parameter's lane: a track's volume or pan, or a Grid module parameter of one of its devices. */
@@ -78,13 +130,13 @@ public final class AutomationModule implements HostModule {
         /** range is null for the whole lane, else {start, end} inclusive. */
         JsonObject get(Object trackProxy, String trackId, Target target, double[] range, Runnable check);
 
-        /** {@code expectedHash} is null when the request has no expect. */
+        /** {@code expectedHash} is null when the request has no expect; range is null without one, else as range(). */
         JsonObject set(
                 Object trackProxy,
                 String trackId,
                 Target target,
                 String expectedHash,
-                List<Point> points,
+                List<Request> points,
                 double[] range,
                 Runnable check,
                 Runnable beforeWrite);
@@ -143,31 +195,37 @@ public final class AutomationModule implements HostModule {
         if (method.equals("automation.points.set")) points(p);
     }
 
-    /** What the schema cannot say: the range is ordered. */
+    /** The whole lane as a range: {@code range:"all"}. */
+    public static final double[] ALL = {Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY};
+
+    /** What the schema cannot say: the range is ordered. Bounds snap to the beat grid; {@code "all"} is {@link #ALL}. */
     static double[] range(JsonObject p) {
         if (!p.has("range")) return null;
+        if (p.get("range").isJsonPrimitive()) return ALL;
         JsonObject r = p.getAsJsonObject("range");
-        double start = r.get("start").getAsDouble(), end = r.get("end").getAsDouble();
+        double start = Point.beat(r.get("start").getAsDouble()),
+                end = Point.beat(r.get("end").getAsDouble());
         if (start > end) throw Errors.invalid("range.start must not exceed range.end");
         return new double[] {start, end};
     }
 
-    /** Requested points: strictly increasing beats, inside range when one is given. */
-    static List<Point> points(JsonObject p) {
+    /** Requested points: beats strictly increasing and inside range when one is given, both on the beat grid. */
+    static List<Request> points(JsonObject p) {
         double[] range = range(p);
-        List<Point> out = new ArrayList<>();
+        List<Request> out = new ArrayList<>();
         for (JsonElement item : p.getAsJsonArray("points")) {
             JsonObject n = item.getAsJsonObject();
-            double beat = n.get("beat").getAsDouble();
+            double beat = Point.beat(n.get("beat").getAsDouble());
             if (!out.isEmpty() && beat <= out.get(out.size() - 1).beat)
-                throw Errors.invalid("point beats must be strictly increasing");
+                throw Errors.invalid("point beats must be strictly increasing on the 2^-20 beat grid");
             if (range != null && (beat < range[0] || beat > range[1]))
                 throw Errors.invalid("every point must lie inside range");
-            out.add(new Point(
+            out.add(new Request(
                     beat,
                     n.get("value").getAsDouble(),
-                    n.get("interpolation").getAsString().equals("linear"),
-                    0));
+                    n.has("interpolation")
+                            ? n.get("interpolation").getAsString().equals("linear")
+                            : null));
         }
         return out;
     }
@@ -196,29 +254,54 @@ public final class AutomationModule implements HostModule {
         }
     }
 
-    /** The lane after the write: points outside range are kept, the requested ones replace the rest. */
-    public static List<Point> desired(List<Point> current, double[] range, List<Point> requested) {
-        List<Point> out = new ArrayList<>();
-        for (Point point : current) if (!inRange(point.beat, range)) out.add(point);
-        out.addAll(requested);
-        out.sort(Comparator.comparingDouble(point -> point.beat));
-        return out;
+    /**
+     * The range rule on one lane as native steps: the natives to delete, then each new point with its index in the final
+     * lane, ascending. {@code natives.get(i)} is the native object of {@code current.get(i)}.
+     */
+    public static final class Edit<N> {
+        public final RangeEdit.Change<Point> change;
+        public final List<Point> desired, insert = new ArrayList<>();
+        public final List<Integer> at = new ArrayList<>();
+        public final List<N> delete = new ArrayList<>(), kept = new ArrayList<>();
+
+        public Edit(List<N> natives, List<Point> current, List<Request> requested, double[] range) {
+            Map<Double, Point> byBeat = new HashMap<>();
+            for (Point point : current) byBeat.putIfAbsent(point.beat, point);
+            List<Point> listed = new ArrayList<>();
+            for (Request request : requested) listed.add(written(byBeat.get(request.beat), request));
+            change = RangeEdit.plan(current, listed, range == null ? null : p -> inRange(p.beat, range), KIND);
+            desired = RangeEdit.apply(current, change);
+            desired.sort(Comparator.comparingDouble(point -> point.beat));
+            Map<Point, N> nativeOf = new IdentityHashMap<>();
+            for (int i = 0; i < current.size(); i++) nativeOf.put(current.get(i), natives.get(i));
+            for (Point point : change.remove) delete.add(nativeOf.get(point));
+            for (RangeEdit.Update<Point> update : change.update) delete.add(nativeOf.get(update.before));
+            for (int i = 0; i < desired.size(); i++) {
+                N kept = nativeOf.get(desired.get(i));
+                if (kept != null) this.kept.add(kept);
+                else {
+                    insert.add(desired.get(i));
+                    at.add(i);
+                }
+            }
+        }
+
+        /** Nothing to write; a lane holding only Bitwig's base point counts as cleared. */
+        public boolean matched(List<Point> current) {
+            return change.isEmpty() || withoutBasePoint(current, desired).equals(desired);
+        }
+
+        public JsonObject summary(boolean applied) {
+            JsonObject out = new JsonObject();
+            out.addProperty("inserted", applied ? change.insert.size() : 0);
+            out.addProperty("updated", applied ? change.update.size() : 0);
+            out.addProperty("removed", applied ? change.remove.size() : 0);
+            out.addProperty("unchanged", change.unchanged);
+            return out;
+        }
     }
 
-    static boolean same(Point a, Point b) {
-        return Math.abs(a.beat - b.beat) <= EPS
-                && Math.abs(a.value - b.value) <= EPS
-                && a.linear == b.linear
-                && Math.abs(a.curve - b.curve) <= EPS;
-    }
-
-    public static boolean same(List<Point> a, List<Point> b) {
-        if (a.size() != b.size()) return false;
-        for (int i = 0; i < a.size(); i++) if (!same(a.get(i), b.get(i))) return false;
-        return true;
-    }
-
-    /** Exact readback: same count, order, beats, values (within 1e-9), interpolation and curve. */
+    /** Exact readback of canonical points: same count, order, beats, values, interpolation and curve. */
     public static void verify(List<Point> expected, List<Point> actual) {
         if (actual.size() != expected.size())
             throw Errors.unknown(
@@ -226,7 +309,7 @@ public final class AutomationModule implements HostModule {
                     "Native lane holds " + actual.size() + " points after the write, expected " + expected.size()
                             + "; inspect automation.points.get before another write.");
         for (int i = 0; i < expected.size(); i++)
-            if (!same(expected.get(i), actual.get(i)))
+            if (!expected.get(i).equals(actual.get(i)))
                 throw Errors.unknown(
                         Reason.READBACK_MISMATCH,
                         "Native point " + i + " reads back as " + actual.get(i).json() + ", expected "
@@ -245,7 +328,7 @@ public final class AutomationModule implements HostModule {
      * holds exactly one point at beat 0 counts as cleared. Nothing else is excused.
      */
     public static List<Point> withoutBasePoint(List<Point> lane, List<Point> wanted) {
-        boolean base = wanted.isEmpty() && lane.size() == 1 && lane.get(0).beat <= EPS;
+        boolean base = wanted.isEmpty() && lane.size() == 1 && lane.get(0).beat == 0;
         return base ? List.of() : lane;
     }
 
@@ -256,7 +339,8 @@ public final class AutomationModule implements HostModule {
         lane.addProperty("count", all.size());
         lane.addProperty("pointsHash", hash(all));
         out.add("lane", lane);
-        if (range != null) {
+        if (range == ALL) out.addProperty("range", "all");
+        else if (range != null) {
             JsonObject r = new JsonObject();
             r.addProperty("start", range[0]);
             r.addProperty("end", range[1]);
