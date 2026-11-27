@@ -56,12 +56,11 @@ public final class MethodSpecs {
                 remotePageSlots,
                 parameterResolution,
                 minTimeoutMs,
-                maxRequestBytes,
-                maxResponseBytes,
+                maxMessageBytes,
                 defaultPort,
                 maxClipLength,
                 responseGraceMs;
-        public final double beatGrid, durationResolution, normalizedTolerance;
+        public final double beatGrid, durationResolution, normalizedTolerance, maxCurve;
 
         private Limits(JsonObject object) {
             trackWindow = integer(object, "trackWindow");
@@ -71,25 +70,26 @@ public final class MethodSpecs {
             remotePageSlots = integer(object, "remotePageSlots");
             parameterResolution = integer(object, "parameterResolution");
             minTimeoutMs = integer(object, "minTimeoutMs");
-            maxRequestBytes = integer(object, "maxRequestBytes");
-            maxResponseBytes = integer(object, "maxResponseBytes");
+            maxMessageBytes = integer(object, "maxMessageBytes");
             defaultPort = integer(object, "defaultPort");
             maxClipLength = integer(object, "maxClipLength");
             responseGraceMs = integer(object, "responseGraceMs");
             beatGrid = object.get("beatGrid").getAsDouble();
             durationResolution = object.get("durationResolution").getAsDouble();
             normalizedTolerance = object.get("normalizedTolerance").getAsDouble();
+            maxCurve = object.get("maxCurve").getAsDouble();
             if (Math.min(Math.min(trackWindow, sceneWindow), Math.min(deviceWindow, sendWindow)) < 1
                     || Math.min(remotePageSlots, minTimeoutMs) < 1
                     || parameterResolution < 2
-                    || Math.min(maxRequestBytes, maxResponseBytes) < 1
+                    || maxMessageBytes < 1
                     || defaultPort < 1
                     || defaultPort > 65535
                     || maxClipLength < 1
                     || responseGraceMs < 2
                     || !(beatGrid > 0)
                     || !(durationResolution > 0)
-                    || !(normalizedTolerance > 0)) throw new IllegalStateException("limits must be positive");
+                    || !(normalizedTolerance > 0)
+                    || !(maxCurve > 0)) throw new IllegalStateException("limits must be positive");
         }
     }
 

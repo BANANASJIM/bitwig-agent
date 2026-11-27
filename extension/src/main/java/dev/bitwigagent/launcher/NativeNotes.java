@@ -1,15 +1,17 @@
 package dev.bitwigagent.launcher;
 
 import dev.bitwigagent.core.HostOperation;
+import dev.bitwigagent.core.RangeEdit;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.RpcException;
 import dev.bitwigagent.host.NativeRuntime;
 import dev.bitwigagent.nativehost.NativeNoteWriteAccess;
 import java.util.List;
+import java.util.function.Function;
 
 /**
- * Launcher note writes as one Bitwig Undo step: every cell of a request is written natively inside one undo
- * transaction. Without the exact bindings the note methods fall back to the public per-note setters.
+ * Launcher note reads and writes through the native document: a read sees every note of the clip without selecting
+ * it, and a write is one Bitwig Undo step. Without the exact bindings the note methods fall back to the public API.
  */
 public final class NativeNotes {
     /**
@@ -18,80 +20,52 @@ public final class NativeNotes {
      */
     public static final String ONE_STEP = "one_step", PER_NOTE = "per_note", PER_STEP = "per_step", NONE = "none";
 
-    /** One requested cell: the absolute grid step {@code step} of {@code stepBeats}, as the public setter takes it. */
-    public static final class Cell {
-        public final int channel, pitch, velocity, cells;
-        public final long step;
-        public final double stepBeats, duration;
-        public final boolean set;
-
-        public Cell(
-                int channel,
-                long step,
-                double stepBeats,
-                int pitch,
-                boolean set,
-                int velocity,
-                double duration,
-                int cells) {
-            this.channel = channel;
-            this.step = step;
-            this.stepBeats = stepBeats;
-            this.pitch = pitch;
-            this.set = set;
-            this.velocity = velocity;
-            this.duration = duration;
-            this.cells = cells;
-        }
-    }
-
-    /**
-     * A cell as the clip holds it before the write: the onsets inside the cell (the first one's velocity 0..1 and
-     * duration), whether an earlier note sustains into it, and whether a set would run into a later onset.
-     */
+    /** A launcher note clip as the document holds it: every note of every row, and the loop. */
     public static final class Observed {
-        public final int onsets;
-        public final double velocity, duration;
-        public final boolean sustained, collides;
+        public final List<Note> notes;
+        public final double loopStart, loopLength;
 
-        public Observed(int onsets, double velocity, double duration, boolean sustained, boolean collides) {
-            this.onsets = onsets;
-            this.velocity = velocity;
-            this.duration = duration;
-            this.sustained = sustained;
-            this.collides = collides;
+        public Observed(List<Note> notes, double loopStart, double loopLength) {
+            this.notes = notes;
+            this.loopStart = loopStart;
+            this.loopLength = loopLength;
         }
-    }
 
-    /** Decides from the observed cells which ones to write; throws to refuse the whole request. */
-    public interface Plan {
-        boolean[] write(double loopStart, double loopEnd, List<Observed> cells);
+        long loopEnd() {
+            return Note.ticks(loopStart + loopLength);
+        }
     }
 
     /** Exact native note bindings; every method but {@link #execute} runs on the native document thread. */
     public interface Access {
         void execute(Runnable work);
 
+        /** Resolves the slot's clip (track UUID, clip name and slot checked) and reads every note of it. */
+        Observed read(Object slot, String trackId, String expectedName, Runnable check);
+
         /**
-         * Resolves the slot's clip, observes every cell, and writes the cells {@code plan} picks in one undo
-         * transaction; {@code beforeWrite} runs right before it opens. Returns the cells written.
+         * Resolves and reads the clip, asks {@code plan} for the change and, when it is not empty, runs
+         * {@code beforeWrite} and writes it in one undo transaction; returns the clip read back afterwards (the
+         * first read when nothing changed). {@code plan} may refuse, before anything is dispatched.
          */
-        boolean[] edit(
+        Observed edit(
                 Object slot,
                 String trackId,
                 String expectedName,
-                List<Cell> cells,
                 Runnable check,
-                Plan plan,
+                Function<Observed, RangeEdit.Change<Note>> plan,
                 Runnable beforeWrite);
 
-        /** Creates a named note clip of {@code clipLength} in the empty slot and writes {@code cells}, one undo step. */
-        void create(
+        /**
+         * Creates a named note clip of {@code clipLength} in the empty slot holding {@code notes}, one undo step;
+         * returns the clip read back.
+         */
+        Observed create(
                 Object slot,
                 String trackId,
                 String name,
                 int clipLength,
-                List<Cell> cells,
+                List<Note> notes,
                 Runnable check,
                 Runnable beforeWrite);
     }

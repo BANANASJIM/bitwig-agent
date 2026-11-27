@@ -1,10 +1,12 @@
+import json
+from pathlib import Path
 from typing import Any
 
 import pytest
 from pydantic import ValidationError
 
-from bitwig_agent.protocol import TOOLS, invalid_params_reason, validate_call
-from bitwig_agent.protocol.clips import MAX_TRANSFORM_TARGETS, NOTE_WINDOW
+from bitwig_agent.protocol import TOOLS, invalid_params_message, invalid_params_reason, validate_call
+from bitwig_agent.protocol.clips import MAX_TRANSFORM_TARGETS
 from bitwig_agent.protocol.launcher import ARRANGER_CLIP_REF, CLIP_REF, SCENE_REF, SLOT_REF, TRACK_REF
 
 SLOT = SLOT_REF
@@ -13,7 +15,7 @@ NOTE = {"beat": 0, "pitch": 60, "velocity": 90, "duration": 1}
 
 
 def note(**changes):
-    return {"op": "set", "beat": 0, "pitch": 60, "velocity": 90, "duration": 1, **changes}
+    return {**NOTE, **changes}
 
 
 def reason(method, args):
@@ -59,26 +61,28 @@ def test_insert_rejects_a_missing_wrong_or_mixed_length(args):
 
 def test_insert_notes_fail_before_dispatch_when_invalid():
     base = {"to": SLOT, "loop": {"length": 4}, "name": "Sketch"}
-    params, _ = validate_call("clips.insert", {**base, "notes": [NOTE, {**NOTE, "beat": 1}], "channel": 2})
+    params, _ = validate_call("clips.insert", {**base, "notes": [NOTE, {**NOTE, "beat": 1, "channel": 2}]})
     assert params["notes"][0] == NOTE
-    assert params["channel"] == 2
+    assert params["notes"][1]["channel"] == 2
     bad: Any
     for bad in (
         {"notes": [{**NOTE, "beat": 3.5}]},
         {"notes": [NOTE, NOTE]},
         {"notes": [{**NOTE, "op": "set"}]},
         {"notes": []},
-        {"channel": 1},
+        {"notes": [NOTE], "channel": 1},
+        {"notes": [NOTE], "detail": "full"},
         {"notes": [{**NOTE, "velocity": 0}]},
-        {"notes": [{**NOTE, "beat": 0.001}]},
+        {"notes": [{**NOTE, "channel": 16}]},
+        {"notes": [{k: v for k, v in NOTE.items() if k != "duration"}]},
     ):
         with pytest.raises(ValidationError):
             validate_call("clips.insert", {**base, **bad})
+    assert validate_call("clips.insert", {**base, "notes": [{**NOTE, "beat": 0.001}]})[0]["notes"][0]["beat"] == 0.001
     arranger = {"to": START, "length": 4, "name": "Verse"}
-    assert validate_call("clips.insert", {**arranger, "notes": [NOTE], "channel": 1})[0]["channel"] == 1
-    for bad in ({"channel": 1}, {"notes": [{**NOTE, "beat": 3.5}]}, {"notes": [NOTE], "detail": "full"}):
-        with pytest.raises(ValidationError):
-            validate_call("clips.insert", {**arranger, **bad})
+    assert validate_call("clips.insert", {**arranger, "notes": [{**NOTE, "channel": 1}]})[0]["notes"][0]["channel"] == 1
+    with pytest.raises(ValidationError):
+        validate_call("clips.insert", {**arranger, "notes": [{**NOTE, "beat": 3.5}]})
 
 
 def test_unicode_length_matches_java_utf16_bounds():
@@ -296,54 +300,74 @@ def test_clips_edit_is_gone_and_its_ops_are_methods():
 # ---- notes ----
 
 
-def test_notes_take_a_clip_ref_and_the_window_is_optional_but_all_or_none():
-    params, _ = validate_call("notes.set", {"target": CLIP_REF, "edits": [note(), note(beat=1, pitch=64)]})
-    assert set(params) == {"target", "edits"}
+def test_notes_take_a_launcher_clip_ref_an_optional_range_and_records():
+    params, _ = validate_call("notes.set", {"target": CLIP_REF, "notes": [note(), note(beat=1, pitch=64)]})
+    assert set(params) == {"target", "notes"}
     params, _ = validate_call("notes.get", {"target": CLIP_REF})
     assert set(params) == {"target"}
-    for method, extra in (("notes.get", {}), ("notes.set", {"edits": [note()]})):
+    params, _ = validate_call("notes.get", {"target": CLIP_REF, "range": {"start": 0, "end": 4, "pitches": [36, 42]}})
+    assert params["range"] == {"start": 0, "end": 4, "pitches": [36, 42]}
+    assert validate_call("notes.set", {"target": CLIP_REF, "range": "all", "notes": []})[0]["notes"] == []
+    for method, extra in (("notes.get", {}), ("notes.set", {"notes": [note()]})):
+        for gone in ({"steps": 8}, {"channel": 0}, {"detail": "full"}, {"edits": [note()]}):
+            with pytest.raises(ValidationError):
+                validate_call(method, {"target": CLIP_REF, **gone, **extra})
         with pytest.raises(ValidationError):
-            validate_call(method, {"target": CLIP_REF, "steps": 8, **extra})
-    for method in ("notes.get", "notes.set"):
-        with pytest.raises(ValidationError):
-            validate_call(
-                method, {"target": ARRANGER_CLIP_REF, **({"edits": [note()]} if method.endswith("edit") else {})}
-            )
+            validate_call(method, {"target": ARRANGER_CLIP_REF, **extra})
+
+
+def test_the_note_methods_wait_longer_by_default_for_the_public_grid():
+    assert validate_call("notes.get", {"target": CLIP_REF})[1] == 30000
+    assert validate_call("notes.set", {"target": CLIP_REF, "notes": [note()]})[1] == 30000
+    insert = {"to": SLOT, "loop": {"length": 4}, "name": "Sketch"}
+    assert validate_call("clips.insert", insert)[1] == 5000, "a clip without notes keeps the short default"
+    assert validate_call("clips.insert", {**insert, "notes": [note()]})[1] == 30000
+    assert validate_call("clips.insert", {**insert, "notes": [note()], "timeoutMs": 7000})[1] == 7000
 
 
 @pytest.mark.parametrize(
-    "edits",
+    ("range_", "message"),
     [
-        [note(), note()],
-        [note(), note(beat=0.5)],
-        [note(beat=3.5)],
-        [note(beat=0.1)],
-        [note(beat=3.75, duration=0.5)],
-        [note(pitch=True)],
-        [note(velocity=0)],
-        [note(velocity=128)],
-        [note(extra=1)],
-        [{"op": "clear", "beat": 0, "pitch": 60, "duration": 1}],
-        [{"op": "clear", "beat": 0, "pitch": 60, "velocity": None}],
+        ({"start": 1, "end": 1.0000001}, "range.end must be at least 1/1048576 beat after range.start"),
+        ({"start": 0, "end": 4, "pitches": [50, 40]}, "range.pitches is [low, high] with low <= high"),
+        ("some", "range.all: Input should be 'all'"),
     ],
 )
-def test_rejects_ambiguous_or_out_of_window_note_edits(edits):
-    with pytest.raises(ValidationError):
-        validate_call("notes.set", {**NOTE_WINDOW, "edits": edits})
+def test_a_bad_range_is_named_without_the_union_internals(range_, message):
+    with pytest.raises(ValidationError) as error:
+        validate_call("notes.get", {"target": CLIP_REF, "range": range_})
+    assert invalid_params_message("notes.get", error.value) == message
+
+
+def test_an_omitted_velocity_or_duration_is_an_update_of_an_existing_note():
+    params, _ = validate_call("notes.set", {"target": CLIP_REF, "notes": [{"beat": 0, "pitch": 60, "velocity": 40}]})
+    assert params["notes"] == [{"beat": 0, "pitch": 60, "velocity": 40}]
 
 
 @pytest.mark.parametrize(
-    "edits",
+    "args",
     [
-        [note(), note()],
-        [note(), note(beat=0.5)],
-        [note(beat=0.001)],
-        [note(duration=0.001)],
+        {"notes": []},
+        {"notes": [note(), note()]},
+        {"notes": [note(), note(beat=0.5)]},
+        {"notes": [note(), note(beat=0.0000001)]},
+        {"notes": [note(pitch=True)]},
+        {"notes": [note(velocity=0)]},
+        {"notes": [note(velocity=128)]},
+        {"notes": [note(extra=1)]},
+        {"notes": [note(op="set")]},
+        {"range": {"start": 2, "end": 2}, "notes": []},
+        {"range": {"start": 0, "end": 4, "pitches": [62, 60]}, "notes": []},
+        {"range": {"start": 0, "end": 4, "pitches": [60]}, "notes": []},
+        {"range": "whole", "notes": []},
+        {"range": {"start": 1, "end": 4}, "notes": [note(beat=0.5, duration=0.25)]},
+        {"range": {"start": 0, "end": 4}, "notes": [note(beat=4)]},
+        {"range": {"start": 0, "end": 4, "pitches": [36, 42]}, "notes": [note()]},
     ],
 )
-def test_derived_window_still_rejects_cell_and_overlap_errors(edits):
+def test_rejects_ambiguous_or_out_of_range_notes(args):
     with pytest.raises(ValidationError):
-        validate_call("notes.set", {"target": CLIP_REF, "edits": edits})
+        validate_call("notes.set", {"target": CLIP_REF, **args})
 
 
 def message(method, args):
@@ -358,9 +382,10 @@ def test_durations_need_no_grid_and_overlap_is_judged_as_stored():
     params, _ = validate_call("clips.insert", {**insert, "notes": eighths})
     assert params["notes"][0]["duration"] == 0.45
     # 0.5000001 is stored as 0.5 (1/1048576-beat steps): it ends where the next same-pitch note starts
-    validate_call("notes.set", {"target": CLIP_REF, "edits": [note(duration=0.5000001), note(beat=0.5)]})
-    text = message("notes.set", {"target": CLIP_REF, "edits": [note(duration=0.5000006), note(beat=0.5)]})
-    assert "edits[1] starts at beat 0.5 before edits[0] on pitch 60 ends at beat 0.5000006" in text
+    validate_call("notes.set", {"target": CLIP_REF, "notes": [note(duration=0.5000001), note(beat=0.5)]})
+    text = message("notes.set", {"target": CLIP_REF, "notes": [note(duration=0.5000006), note(beat=0.5)]})
+    assert "notes[1] starts at beat 0.5 before notes[0] on pitch 60 ends at beat 0.5000006" in text
+    validate_call("notes.set", {"target": CLIP_REF, "notes": [note(), note(beat=0.5, channel=1)]})
 
 
 def test_every_broken_rule_is_reported_at_once_with_its_index_and_fix():
@@ -373,56 +398,49 @@ def test_every_broken_rule_is_reported_at_once_with_its_index_and_fix():
         {**NOTE, "pitch": 40, "beat": 1.3, "duration": 0.25},
     ]
     text = message("clips.insert", {**insert, "notes": notes})
-    assert "notes: 5 problems, nothing was written: " in text
+    assert "notes: 3 problems, nothing was written: " in text
     assert (
         "notes[1] starts at beat 0.5 before notes[0] on pitch 33 ends at beat 0.75: shorten notes[0] to duration <= 0.5"
         in text
     )
-    assert "notes[2] beat 1.3 is not on the 1/128-beat grid: use 1.296875 or 1.3046875" in text
+    assert "notes[2]" not in text.split("notes[3]")[0].split("notes[1]")[1], "an off-grid onset is a valid note"
     assert "notes[3] ends at beat 4.5, past the clip length 4: shorten it to duration <= 0.5" in text
-    assert "notes[4] repeats the beat and pitch of notes[2]: remove one" in text
-    assert text.index("notes[1]") < text.index("notes[2]") < text.index("notes[3]") < text.index("notes[4]")
+    assert "notes[4] repeats the channel, beat and pitch of notes[2]: remove one" in text
+    assert text.index("notes[1]") < text.index("notes[3]") < text.index("notes[4]")
     late = message("clips.insert", {**insert, "notes": [{**NOTE, "beat": 4}]})
     assert "notes[0] starts at beat 4, at or past the clip length 4" in late
 
 
-def test_an_explicit_window_reports_alignment_range_and_end():
+def test_a_range_reports_every_listed_note_outside_it():
     text = message(
         "notes.set",
-        {**NOTE_WINDOW, "edits": [note(beat=0.1), note(beat=5), note(beat=3.75, duration=0.5)]},
+        {
+            "target": CLIP_REF,
+            "range": {"start": 1, "end": 4, "pitches": [60, 62]},
+            "notes": [note(beat=0.5, duration=0.25), note(beat=5), note(beat=2, pitch=70)],
+        },
     )
-    assert "edits: 3 problems" in text
-    assert "edits[0] beat 0.1 does not align with stepSize 0.25: use a multiple of it" in text
-    assert "edits[1] (beat 5, pitch 60) is outside the window: beats 0 to 4, pitches 0 to 127" in text
-    assert "edits[2] ends at beat 4.25, past the window end 4: shorten it to duration <= 0.25" in text
+    assert "notes: 3 problems" in text
+    assert "notes[0] beat 0.5 is before range.start 1: move it inside, or lower range.start" in text
+    assert "notes[1] beat 5 is outside range [1, 4): move it inside, or raise range.end above 5" in text
+    assert "notes[2] pitch 70 is outside range.pitches [60, 62]: move it inside, or widen range.pitches" in text
+    assert "is empty" in message("notes.set", {"target": CLIP_REF, "notes": []})
 
 
-def test_decimal_grid_alignment_is_exact_not_float_rounding():
-    args = {**NOTE_WINDOW, "stepSize": 0.1, "edits": [note(beat=0.3, duration=0.2)]}
-    params, _ = validate_call("notes.set", args)
-    assert params["edits"][0]["beat"] == 0.3
-    with pytest.raises(ValidationError):
-        validate_call("notes.set", {**args, "edits": [note(beat=0.30000000000000004, duration=0.2)]})
+SHARED_VECTORS = json.loads((Path(__file__).parent / "fixtures/note_rules.json").read_text())
 
 
-def test_chords_adjacent_notes_and_absolute_window_offsets_are_valid():
-    edits = [note(beat=4), note(beat=4, pitch=64), note(beat=5)]
-    params, _ = validate_call("notes.set", {**NOTE_WINDOW, "startStep": 16, "edits": edits})
-    assert params["edits"] == edits
-    with pytest.raises(ValidationError):
-        validate_call("notes.set", {**NOTE_WINDOW, "startStep": 16, "edits": [note(beat=0)]})
-
-
-def test_detail_is_edit_and_insert_only_and_enumerated():
-    params, _ = validate_call("notes.set", {"target": CLIP_REF, "edits": [note()], "detail": "full"})
-    assert params["detail"] == "full"
-    insert = {"to": SLOT, "loop": {"length": 4}, "name": "x"}
-    params, _ = validate_call("clips.insert", {**insert, "notes": [NOTE], "detail": "full"})
-    assert params["detail"] == "full"
-    for method, args in (
-        ("notes.set", {"target": CLIP_REF, "edits": [note()], "detail": "verbose"}),
-        ("notes.get", {"target": CLIP_REF, "detail": "full"}),
-        ("clips.insert", {**insert, "detail": "full"}),
-    ):
-        with pytest.raises(ValidationError):
-            validate_call(method, args)
+@pytest.mark.parametrize("case", SHARED_VECTORS, ids=lambda case: case["name"])
+def test_shared_note_rule_vectors(case):
+    """The same file runs in the extension (NoteRulesVectorTest): same verdict, same text."""
+    params = case["params"]
+    if case["method"] == "notes.set":
+        args = {"target": CLIP_REF, **params}
+    else:
+        args = {"to": SLOT, "loop": {"length": params["length"]}, "name": "x", "notes": params["notes"]}
+    if case["error"] is None:
+        validate_call(case["method"], args)
+        return
+    with pytest.raises(ValidationError) as error:
+        validate_call(case["method"], args)
+    assert error.value.errors()[0]["msg"].removeprefix("Value error, ") == case["error"]

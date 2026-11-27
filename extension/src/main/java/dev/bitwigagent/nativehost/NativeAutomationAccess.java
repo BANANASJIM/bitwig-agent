@@ -1,16 +1,20 @@
 package dev.bitwigagent.nativehost;
 
 import com.google.gson.JsonObject;
+import dev.bitwigagent.automation.AutomationLane;
 import dev.bitwigagent.automation.AutomationModule;
+import dev.bitwigagent.automation.AutomationPlan;
 import dev.bitwigagent.core.Errors;
-import dev.bitwigagent.core.Outcome;
 import dev.bitwigagent.core.Reason;
-import dev.bitwigagent.core.Results;
-import dev.bitwigagent.core.Verification;
+import dev.bitwigagent.core.RpcException;
+import dev.bitwigagent.device.NativeChains;
 import dev.bitwigagent.grid.GridSnapshotReader;
 import dev.bitwigagent.host.NativeReadContext;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.*;
+import java.util.function.DoubleFunction;
+import java.util.function.Function;
 
 /**
  * Exact bindings for the arranger automation lane of one parameter on a player track. Paths follow Bitwig's own
@@ -18,14 +22,21 @@ import java.util.*;
  * {@code track.channel.automationLanes()}, {@code automation.reference.of(parameter)} parameter reference,
  * {@code automation.laneSet.find(target)} find lane, {@code automation.laneSet.add(target,false,false,false)} "Add
  * Automation Lane" without the seed point or UI reveal, {@code automation.lane.content().points()} point timeline,
- * {@code value.range.newPoint(beat,value,interpolation,curve)} new point in the lane's value range,
- * {@code automation.timeline.insert(point,index)} insert, {@code timeline.remove(point)} delete. Values are
- * normalized through the lane's range ({@code value.scale.normalized(value)}); beats are arrangement quarter notes. No
- * UI selection is read or changed.
+ * {@code value.range.newPoint(beat,value,interpolation,curve)} new point in the lane's value range (the curve is
+ * clamped to [-1, 1] by the point), {@code automation.timeline.insert(point,index)} insert,
+ * {@code timeline.remove(point)} delete. Values are normalized through the lane's range
+ * ({@code value.scale.normalized(value)}); beats are arrangement quarter notes. A device's direct parameter is
+ * {@code device.base.parameter("CONTENTS/<id>")} on the device a {@link NativeChains.Finder} walks to. Display text is
+ * the controller's own: {@code parameter.text.format(definition, plain, {ADD_UNIT_LABEL, LIMITED_LENGTH})} (what
+ * {@code parameter.controller.display} returns for the parameter's current value), and the host's text-entry parser
+ * {@code parameter.text.parse(text, definition)}, which throws on text it cannot read; the float definition maps
+ * plain to normalized linearly and clamps. No UI selection is read or changed.
  */
 public final class NativeAutomationAccess implements AutomationModule.Access {
     private final NativeHost.Access a;
     private NativeGridAdapter gridAdapter;
+    private NativeChainAccess chainAccess;
+    private Text text;
     private final NativeReadContext context;
     private final NativeTrackResolver resolver;
     private final Class<?> parameterType, rangeType, pointType, projectType;
@@ -49,10 +60,12 @@ public final class NativeAutomationAccess implements AutomationModule.Access {
         try {
             return new NativeAutomationAccess(a);
         } catch (ReflectiveOperationException | LinkageError error) {
-            throw Errors.notApplied(
-                    Reason.NATIVE_UNAVAILABLE,
-                    "Exact automation bindings unavailable: " + NativeHost.diagnostic(error));
+            throw unavailable("Exact automation bindings unavailable: ", error);
         }
+    }
+
+    private static RpcException unavailable(String what, Throwable error) {
+        return Errors.notApplied(Reason.NATIVE_UNAVAILABLE, what + NativeHost.diagnostic(error));
     }
 
     NativeAutomationAccess(NativeHost.Access a) throws ReflectiveOperationException {
@@ -118,6 +131,64 @@ public final class NativeAutomationAccess implements AutomationModule.Access {
         linear = l;
     }
 
+    /**
+     * Display text bindings, added after the 6.1.4 entry shipped: resolved on first use, so a host without them fails
+     * only the reads and writes that need them.
+     */
+    private final class Text {
+        final Method format, parse, normalize, denormalize;
+        final EnumSet<?> options;
+
+        Text() throws ReflectiveOperationException {
+            Class<?> definition = a.type("parameter.valueDefinition"), option = a.type("parameter.textOption");
+            if (!definition.isAssignableFrom(rangeType) || !option.isEnum())
+                throw new NoSuchMethodException("Inspected parameter text formatting ancestry differs.");
+            format =
+                    a.exactMethod("parameter.text.format", String.class, true, definition, double.class, EnumSet.class);
+            parse = a.exactMethod("parameter.text.parse", double.class, true, String.class, definition);
+            normalize = a.exactMethod("parameter.floatDefinition.normalize", double.class, false, double.class);
+            denormalize = a.exactMethod("parameter.floatDefinition.denormalize", double.class, false, double.class);
+            options = options(option, "ADD_UNIT_LABEL", "LIMITED_LENGTH");
+        }
+
+        String display(Object definition, double normalized) {
+            return (String)
+                    a.invoke(format, null, definition, (Double) a.invoke(denormalize, definition, normalized), options);
+        }
+
+        AutomationLane.Parsed parse(Object definition, String shown) {
+            double plain;
+            try {
+                plain = (Double) a.invoke(parse, null, shown, definition);
+            } catch (RpcException error) {
+                if (error.getCause() instanceof InvocationTargetException) return AutomationLane.Parsed.UNPARSEABLE;
+                throw error;
+            }
+            double n = (Double) a.invoke(normalize, definition, plain);
+            return new AutomationLane.Parsed(
+                    plain, n, (Double) a.invoke(denormalize, definition, n), display(definition, n));
+        }
+    }
+
+    /** The host's own option names; the enum class is only known at runtime. */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static EnumSet<?> options(Class<?> type, String... names) {
+        EnumSet set = EnumSet.noneOf((Class) type);
+        for (String name : names) set.add(Enum.valueOf((Class) type, name));
+        return set;
+    }
+
+    private Text text() {
+        if (text == null) {
+            try {
+                text = new Text();
+            } catch (ReflectiveOperationException | LinkageError error) {
+                throw unavailable("Automation display bindings unavailable: ", error);
+            }
+        }
+        return text;
+    }
+
     @Override
     public void execute(Runnable work) {
         a.execute(work);
@@ -131,6 +202,7 @@ public final class NativeAutomationAccess implements AutomationModule.Access {
         final Object[] models;
         final String[] labels = {"parameterDeleted", "lanesDeleted", "trackDeleted", "projectDeleted"};
         final NativeReadContext.Capture capture;
+        final Runnable check;
         Object lane, timeline;
 
         Lane(Object proxy, String trackId, AutomationModule.Target spec, Runnable check) {
@@ -138,12 +210,13 @@ public final class NativeAutomationAccess implements AutomationModule.Access {
             check.run();
             this.proxy = proxy;
             this.spec = spec;
+            this.check = check;
             track = resolver.resolve(proxy, trackId, NativeTrackResolver.Kind.CHANNEL);
             laneSet = a.invoke(lanes, track);
             if (laneSet == null)
                 throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Track has no automation lane set.");
-            grid = spec.grid()
-                    ? gridAdapter().automationParameter(spec.device, spec.moduleId, spec.parameterId, check)
+            grid = spec.kind == AutomationModule.Target.Kind.GRID
+                    ? gridAdapter().automationParameter(spec.device, spec.moduleId(), spec.parameterId(), check)
                     : null;
             parameter = resolve();
             if (!parameterType.isInstance(parameter))
@@ -161,10 +234,19 @@ public final class NativeAutomationAccess implements AutomationModule.Access {
         }
 
         private Object resolve() {
-            if (spec.grid()) return grid.parameter;
-            Object mixer = a.invoke(channel, track);
-            if (mixer == null) throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Track has no native mixer channel.");
-            return a.invoke(spec.kind.equals("volume") ? volume : pan, mixer);
+            switch (spec.kind) {
+                case GRID:
+                    return grid.parameter;
+                case DEVICE:
+                    NativeChains.Access chains = chains();
+                    return new NativeChains.Finder(chains, chains.root(spec.device, check), spec.device.ref())
+                            .parameter(spec.ref);
+                default:
+                    Object mixer = a.invoke(channel, track);
+                    if (mixer == null)
+                        throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Track has no native mixer channel.");
+                    return a.invoke(spec.kind == AutomationModule.Target.Kind.VOLUME ? volume : pan, mixer);
+            }
         }
 
         void attach(Object found) {
@@ -175,11 +257,11 @@ public final class NativeAutomationAccess implements AutomationModule.Access {
             if (timeline != null) a.requireModelThread(timeline);
         }
 
-        void guard(Runnable check) {
+        void guard() {
             check.run();
             a.requireModelThread(track);
             context.guard(capture, models, labels, check);
-            if (spec.grid()) gridAdapter().guardAutomationParameter(grid);
+            if (grid != null) gridAdapter().guardAutomationParameter(grid);
             if (!resolver.same(proxy, track)
                     || a.invoke(lanes, track) != laneSet
                     || resolve() != parameter
@@ -191,38 +273,45 @@ public final class NativeAutomationAccess implements AutomationModule.Access {
         List<Object> natives() {
             if (timeline == null) return List.of();
             List<Object> out = new ArrayList<>((List<?>) a.invoke(events, timeline));
-            if (out.size() > AutomationModule.MAX_LANE)
+            if (out.size() > AutomationLane.MAX_LANE)
                 throw Errors.notApplied(
                         Reason.OUT_OF_BOUNDS,
-                        "Automation lane holds more than " + AutomationModule.MAX_LANE + " points.");
+                        "Automation lane holds more than " + AutomationLane.MAX_LANE + " points.");
             return out;
         }
 
+        /** The lane's value range, or the parameter's own while it has no lane; only decimal ones are supported. */
         Object valueRange() {
-            Object r = a.invoke(range, timeline);
+            Object r = timeline == null ? a.invoke(referenceRange, ref) : a.invoke(range, timeline);
             if (!rangeType.isInstance(r))
                 throw Errors.notApplied(
                         Reason.UNSUPPORTED_SCOPE, "Only continuous (decimal) automation lanes are supported.");
             return r;
         }
 
-        List<AutomationModule.Point> describe(List<Object> natives) {
-            if (natives.isEmpty()) return List.of();
-            Object r = valueRange();
-            List<AutomationModule.Point> out = new ArrayList<>();
+        AutomationLane.Observed observe(List<String> displays) {
+            List<Object> natives = natives();
+            List<AutomationLane.Point> out = new ArrayList<>();
+            Object r = natives.isEmpty() ? null : valueRange();
             for (Object point : natives) {
                 if (!pointType.isInstance(point))
                     throw Errors.notApplied(Reason.UNSUPPORTED_SCOPE, "Automation lane holds a non-point event.");
                 Object mode = a.invoke(interpolation, point);
                 if (mode != hold && mode != linear)
                     throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Unknown automation interpolation.");
-                out.add(new AutomationModule.Point(
+                out.add(new AutomationLane.Point(
                         (Double) a.invoke(time, point),
                         (Double) a.invoke(normalized, r, point),
                         mode == linear,
-                        (Double) a.invoke(curve, point)));
+                        (Double) a.invoke(curve, point),
+                        point));
             }
-            return out;
+            Map<String, AutomationLane.Parsed> parsed = new HashMap<>();
+            for (String shown : displays) parsed.computeIfAbsent(shown, t -> text().parse(valueRange(), t));
+            DoubleFunction<String> display = n -> text().display(valueRange(), n);
+            JsonObject provenance = new JsonObject();
+            a.provenance(provenance);
+            return new AutomationLane.Observed(lane != null, out, parsed, display, provenance);
         }
 
         void transaction(String label, Runnable work) {
@@ -240,102 +329,60 @@ public final class NativeAutomationAccess implements AutomationModule.Access {
         return gridAdapter;
     }
 
-    @Override
-    public JsonObject get(
-            Object trackProxy, String trackId, AutomationModule.Target target, double[] range, Runnable check) {
-        Lane lane = new Lane(trackProxy, trackId, target, check);
-        List<AutomationModule.Point> points = lane.describe(lane.natives());
-        lane.guard(check);
-        JsonObject out = AutomationModule.lane(new JsonObject(), lane.lane != null, points, range);
-        a.provenance(out);
-        return out;
+    private NativeChainAccess chains() {
+        if (chainAccess == null) {
+            try {
+                chainAccess = new NativeChainAccess(a);
+            } catch (ReflectiveOperationException | LinkageError error) {
+                throw unavailable("Native chain binding unavailable: ", error);
+            }
+        }
+        return chainAccess;
     }
 
     @Override
-    public JsonObject set(
+    public AutomationLane.Observed read(
+            Object trackProxy, String trackId, AutomationModule.Target target, List<String> displays, Runnable check) {
+        Lane lane = new Lane(trackProxy, trackId, target, check);
+        AutomationLane.Observed observed = lane.observe(displays);
+        lane.guard();
+        return observed;
+    }
+
+    @Override
+    public AutomationModule.Edited edit(
             Object trackProxy,
             String trackId,
             AutomationModule.Target target,
-            String expectedHash,
-            List<AutomationModule.Request> requested,
-            double[] range,
+            List<String> displays,
+            Function<AutomationLane.Observed, AutomationPlan.Write> plan,
             Runnable check,
             Runnable beforeWrite) {
         Lane lane = new Lane(trackProxy, trackId, target, check);
-        List<Object> before = lane.natives();
-        List<AutomationModule.Point> current = lane.describe(before);
-        AutomationModule.requireExpected(current, expectedHash);
-        AutomationModule.Edit<Object> edit = new AutomationModule.Edit<>(before, current, requested, range);
-        boolean existed = lane.lane != null;
-        if (existed) lane.valueRange();
-        else if (!rangeType.isInstance(a.invoke(referenceRange, lane.ref)))
-            throw Errors.notApplied(
-                    Reason.UNSUPPORTED_SCOPE, "Only continuous (decimal) automation lanes are supported.");
-        if (edit.matched(current)) {
-            lane.guard(check);
-            JsonObject out =
-                    written(Outcome.ALREADY_MATCHED, lane, current, range, current, edit.summary(false), false);
-            out.addProperty("nativeUndo", false);
-            return out;
-        }
-        lane.guard(check);
+        lane.valueRange();
+        AutomationLane.Observed before = lane.observe(displays);
+        AutomationPlan.Write write = plan.apply(before);
+        lane.guard();
+        if (write.empty) return new AutomationModule.Edited(before, write, before, false);
+        boolean created = lane.lane == null;
         beforeWrite.run();
         lane.transaction("Set Automation Points", () -> {
-            if (lane.lane == null) {
+            if (created) {
                 lane.attach(a.invoke(addLane, lane.laneSet, lane.ref, false, false, false));
                 if (lane.lane == null)
                     throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Bitwig did not create the automation lane.");
             }
             Object valueRange = lane.valueRange();
-            for (Object point : edit.delete) a.invoke(delete, lane.timeline, point);
-            for (int i = 0; i < edit.insert.size(); i++) {
-                AutomationModule.Point p = edit.insert.get(i);
+            for (Object point : write.delete) a.invoke(delete, lane.timeline, point);
+            for (int i = 0; i < write.insert.size(); i++) {
+                AutomationLane.Point p = write.insert.get(i);
                 Object point = a.invoke(newPoint, valueRange, p.beat, p.value, p.linear ? linear : hold, p.curve);
                 if (point == null)
                     throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Bitwig did not create an automation point.");
-                a.invoke(insert, lane.timeline, point, edit.at.get(i));
+                a.invoke(insert, lane.timeline, point, write.at.get(i));
             }
         });
-        lane.guard(check);
-        List<Object> after = lane.natives();
-        Set<Object> present = Collections.newSetFromMap(new IdentityHashMap<>());
-        present.addAll(after);
-        for (Object point : edit.kept)
-            if (!present.contains(point))
-                throw Errors.unknown(
-                        Reason.READBACK_MISMATCH,
-                        "A point the write did not touch disappeared; inspect automation.points.get.");
-        List<AutomationModule.Point> actual = lane.describe(after);
-        List<AutomationModule.Point> settled = AutomationModule.withoutBasePoint(actual, edit.desired);
-        Object base = settled == actual ? null : after.get(0);
-        for (Object point : edit.delete)
-            if (present.contains(point) && point != base)
-                throw Errors.unknown(
-                        Reason.READBACK_MISMATCH,
-                        "A replaced point is still on the lane; inspect automation.points.get.");
-        AutomationModule.verify(edit.desired, settled);
-        return written(Outcome.APPLIED, lane, actual, range, current, edit.summary(true), !existed);
-    }
-
-    private JsonObject written(
-            Outcome outcome,
-            Lane lane,
-            List<AutomationModule.Point> all,
-            double[] range,
-            List<AutomationModule.Point> previous,
-            JsonObject summary,
-            boolean created) {
-        JsonObject out = AutomationModule.lane(
-                Results.outcome(outcome, Verification.NATIVE_READBACK), lane.lane != null, all, range);
-        a.provenance(out);
-        JsonObject before = new JsonObject();
-        before.addProperty("count", previous.size());
-        before.addProperty("pointsHash", AutomationModule.hash(previous));
-        out.add("previous", before);
-        out.add("summary", summary);
-        out.addProperty("laneCreated", created);
-        out.addProperty("nativeUndo", true);
-        out.addProperty("undoGroupingVerified", false);
-        return out;
+        lane.guard();
+        return new AutomationModule.Edited(before, write, lane.observe(List.of()), created);
     }
 }

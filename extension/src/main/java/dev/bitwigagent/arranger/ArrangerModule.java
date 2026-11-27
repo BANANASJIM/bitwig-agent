@@ -19,7 +19,8 @@ import dev.bitwigagent.host.TrackRefs;
 import dev.bitwigagent.host.TrackWindow;
 import dev.bitwigagent.host.TransportSafety;
 import dev.bitwigagent.launcher.LauncherState;
-import dev.bitwigagent.launcher.NoteGrid;
+import dev.bitwigagent.launcher.Note;
+import dev.bitwigagent.launcher.NoteModule;
 import dev.bitwigagent.nativehost.NativeArrangerAccess;
 import java.math.BigDecimal;
 import java.util.*;
@@ -43,7 +44,6 @@ public final class ArrangerModule implements HostModule {
                 double clipLength,
                 String name,
                 List<double[]> notes,
-                int channel,
                 Runnable check,
                 Runnable beforeWrite);
 
@@ -120,19 +120,11 @@ public final class ArrangerModule implements HostModule {
     @Override
     public void validate(String method, JsonObject p) {}
 
-    /** Notes are {beat, pitch, velocity, duration}; beats are relative to the clip start, on a 1/128-beat grid. */
+    /** Notes are {beat, pitch, velocity, duration, channel}, canonical; beats are relative to the clip start. */
     public static List<double[]> notes(JsonArray array, double length) {
-        NoteGrid.requireNoteRules(array, BigDecimal.valueOf(length));
         List<double[]> out = new ArrayList<>();
-        for (JsonElement item : array) {
-            JsonObject n = item.getAsJsonObject();
-            out.add(new double[] {
-                n.get("beat").getAsDouble(),
-                n.get("pitch").getAsInt(),
-                n.get("velocity").getAsInt(),
-                n.get("duration").getAsDouble()
-            });
-        }
+        for (Note n : NoteModule.insertNotes(array, BigDecimal.valueOf(length)))
+            out.add(new double[] {n.beatValue(), n.pitch, n.velocity, n.durationValue(), n.channel});
         return out;
     }
 
@@ -198,7 +190,6 @@ public final class ArrangerModule implements HostModule {
             double clipLength,
             String name,
             JsonArray notes,
-            int channel,
             Consumer<JsonObject> done) {
         int index = trackRefs.resolve(trackRef, false);
         if (!"Instrument".equals(window.at(index).trackType().get()))
@@ -213,7 +204,7 @@ public final class ArrangerModule implements HostModule {
                 -1,
                 true,
                 (bridge, track, id, check, beforeWrite) ->
-                        bridge.create(track, id, clipStart, clipLength, name, list, channel, check, beforeWrite),
+                        bridge.create(track, id, clipStart, clipLength, name, list, check, beforeWrite),
                 results -> done.accept(shaped(results.get(0), current)));
     }
 

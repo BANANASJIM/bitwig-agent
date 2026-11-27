@@ -87,6 +87,14 @@ def unknown_arguments_message(method: str, keys: Sequence[str | tuple[Any, ...]]
     return f"Unknown argument for {method}: {', '.join(hints)}." + (f" {tail}" if tail else "")
 
 
+def _problem(method: str, error: Any) -> str:
+    """One validation error; a validator's message that names its own field (range.end ...) stands alone."""
+    loc, text = tuple(error["loc"]), str(error["msg"]).removeprefix("Value error, ")
+    if error.get("type") == "value_error" and loc and text.startswith(f"{loc[0]}."):
+        return text
+    return f"{_path(loc) or method}: {error['msg']}"
+
+
 def invalid_params_message(method: str, exc: Exception) -> str:
     """Compact validation text: unknown fields get the closest accepted name at their own level; no pydantic URLs or input echoes."""
     errors = getattr(exc, "errors", None)
@@ -95,7 +103,7 @@ def invalid_params_message(method: str, exc: Exception) -> str:
     items = errors(include_url=False, include_input=False)
     unknown = [tuple(e["loc"]) for e in items if e.get("type") == "extra_forbidden" and e.get("loc")]
     parts = [unknown_arguments_message(method, unknown)] if unknown else []
-    parts += [f"{_path(tuple(e['loc'])) or method}: {e['msg']}" for e in items if e.get("type") != "extra_forbidden"]
+    parts += [_problem(method, e) for e in items if e.get("type") != "extra_forbidden"]
     return "; ".join(parts) or str(exc)
 
 

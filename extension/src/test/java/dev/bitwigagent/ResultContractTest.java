@@ -97,7 +97,6 @@ final class ResultContractTest {
             "clips.copy",
             "clips.delete",
             "clips.import",
-            "clips.insert",
             "clips.launch",
             "clips.move",
             "clips.set",
@@ -126,7 +125,6 @@ final class ResultContractTest {
             "modulators.map",
             "modulators.unmap",
             "notes.get",
-            "notes.set",
             "parameters.set",
             "project.activateEngine",
             "project.save",
@@ -139,6 +137,18 @@ final class ResultContractTest {
             "tracks.bounce",
             "tracks.group",
             "tracks.routing.set");
+
+    /**
+     * Launcher note writes, run on the launcher fixture with the native note binding: params name the clip at scene 0
+     * (an existing clip named Riff for notes.set, an empty slot for clips.insert).
+     */
+    private static final Map<String, Function<LauncherFake, JsonObject>> LAUNCHER = Map.of(
+            "notes.set",
+                    f -> HostFixture.json("{\"target\":" + f.clip(0)
+                            + ",\"notes\":[{\"beat\":0,\"pitch\":60,\"velocity\":90,\"duration\":1}]}"),
+            "clips.insert",
+                    f -> HostFixture.json("{\"to\":" + f.slot(0) + ",\"loop\":{\"length\":4},\"name\":\"Riff\","
+                            + "\"notes\":[{\"beat\":0,\"pitch\":60,\"velocity\":90,\"duration\":1}]}"));
 
     /** Host writes whose fixture example answers {@code sent}: nothing is read back, so nothing to verify. */
     private static final Map<String, Example> SENT =
@@ -196,12 +206,18 @@ final class ResultContractTest {
             if (!HostFixture.SPECS.get(method).readOnly) writes.add(method);
         Set<String> listed = new TreeSet<>(EXAMPLES.keySet());
         listed.addAll(SENT.keySet());
+        listed.addAll(LAUNCHER.keySet());
         listed.addAll(DOMAIN_EXAMPLES.keySet());
         listed.addAll(CLIP_EXAMPLES.keySet());
         listed.addAll(MISSING);
         assertEquals(writes, listed);
         assertEquals(
-                EXAMPLES.size() + CLIP_EXAMPLES.size() + SENT.size() + DOMAIN_EXAMPLES.size() + MISSING.size(),
+                EXAMPLES.size()
+                        + SENT.size()
+                        + LAUNCHER.size()
+                        + CLIP_EXAMPLES.size()
+                        + DOMAIN_EXAMPLES.size()
+                        + MISSING.size(),
                 listed.size(),
                 "each write is listed once");
     }
@@ -210,6 +226,16 @@ final class ResultContractTest {
     void everyAppliedExampleNamesItsVerificationOnEveryAppliedLeaf() {
         for (Map.Entry<String, Example> example : EXAMPLES.entrySet()) {
             JsonObject result = run(example.getKey(), example.getValue());
+            assertTrue(applies(result), example.getKey() + " example does not apply: " + result);
+            assertTrue(Results.leafRuleHolds(result), example.getKey() + ": " + result);
+        }
+        for (Map.Entry<String, Function<LauncherFake, JsonObject>> example : LAUNCHER.entrySet()) {
+            LauncherFake f = LauncherFake.withNativeNotes();
+            if (example.getKey().equals("notes.set")) {
+                f.slots[0].content = true;
+                f.slots[0].name = "Riff";
+            }
+            JsonObject result = f.call(example.getKey(), example.getValue().apply(f));
             assertTrue(applies(result), example.getKey() + " example does not apply: " + result);
             assertTrue(Results.leafRuleHolds(result), example.getKey() + ": " + result);
         }

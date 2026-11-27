@@ -309,7 +309,11 @@ SetParameterRef = Annotated[
     Discriminator(tag),
     _scope("parameters.set", gridModule="grid.apply", track="tracks.set"),
 ]
-AutomationParameterRef = Annotated[_TRACK_PARAMETER | _GRID_PARAMETER, Discriminator(tag), _scope("automation.points")]
+AutomationParameterRef = Annotated[
+    _TRACK_PARAMETER | _GRID_PARAMETER | _DEVICE_PARAMETER,
+    Discriminator(tag),
+    _scope("automation.points", remotePage="parameters.list"),
+]
 MappingParameterRef = Annotated[
     _GRID_PARAMETER | _MODULATOR_PARAMETER, Discriminator(tag), _scope("modulators.map/unmap")
 ]

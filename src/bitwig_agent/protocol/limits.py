@@ -22,8 +22,8 @@ RESPONSE_GRACE_MS = 1000
 # What an agent reads per tool: the advertised description and its example fit this many characters.
 DESCRIPTION_LIMIT = 600
 
-MAX_REQUEST_BYTES = 1 << 20
-MAX_RESPONSE_BYTES = 16 << 20
+# One cap for requests and responses, so whatever notes.get can return, notes.set can send back.
+MAX_MESSAGE_BYTES = 16 << 20
 
 DEFAULT_PORT = 61172
 
@@ -34,6 +34,8 @@ MAX_CLIP_BEATS = 4096
 # Bitwig 6.1.4 stores a note duration to this step (native readback: 0.225 reads back as 0.22500038146972656).
 DURATION_RESOLUTION_DIVISOR = 1 << 20
 DURATION_RESOLUTION = 1 / DURATION_RESOLUTION_DIVISOR
+# Bitwig clamps an automation point's curve to this magnitude (inspected 6.1.4/6.1.7 JAR).
+MAX_CURVE = 1.0
 
 
 def mebibytes(size: int) -> str:
@@ -50,11 +52,11 @@ def bundle_limits() -> dict[str, int | float]:
         "parameterResolution": PARAMETER_RESOLUTION,
         "normalizedTolerance": NORMALIZED_TOLERANCE,
         "minTimeoutMs": MIN_TIMEOUT_MS,
-        "maxRequestBytes": MAX_REQUEST_BYTES,
-        "maxResponseBytes": MAX_RESPONSE_BYTES,
+        "maxMessageBytes": MAX_MESSAGE_BYTES,
         "defaultPort": DEFAULT_PORT,
         "beatGrid": BEAT_GRID,
         "durationResolution": DURATION_RESOLUTION,
         "maxClipLength": MAX_CLIP_BEATS,
         "responseGraceMs": RESPONSE_GRACE_MS,
+        "maxCurve": MAX_CURVE,
     }

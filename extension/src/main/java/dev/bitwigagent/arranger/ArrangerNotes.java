@@ -34,9 +34,9 @@ public final class ArrangerNotes {
         double velocity01(Object note);
     }
 
-    /** Notes are {beat, pitch, velocity, duration}. */
-    public static void write(Host host, Object clip, List<double[]> notes, int channel) {
-        for (double[] n : notes) host.addNote(clip, host.newNote(n[0], n[3], n[2] / 127.0), channel, (int) n[1]);
+    /** Notes are {beat, pitch, velocity, duration, channel}. */
+    public static void write(Host host, Object clip, List<double[]> notes) {
+        for (double[] n : notes) host.addNote(clip, host.newNote(n[0], n[3], n[2] / 127.0), (int) n[4], (int) n[1]);
     }
 
     public static final class Readback {
@@ -53,7 +53,7 @@ public final class ArrangerNotes {
         }
     }
 
-    public static Readback verify(Host host, Object clip, List<double[]> notes, int channel) {
+    public static Readback verify(Host host, Object clip, List<double[]> notes) {
         int invalid = 0, count = 0;
         List<double[]> seen = new ArrayList<>();
         for (Object row : host.rows(clip)) {
@@ -70,7 +70,7 @@ public final class ArrangerNotes {
         for (double[] n : notes) {
             boolean ok = false;
             for (double[] s : seen)
-                ok |= s[0] == channel
+                ok |= s[0] == n[4]
                         && s[1] == n[1]
                         && near(s[2], n[0])
                         && near(s[3], n[3])
@@ -87,7 +87,6 @@ public final class ArrangerNotes {
         out.addProperty("requested", notes.size());
         out.addProperty("verified", verified);
         out.addProperty("notesInClip", count);
-        out.addProperty("channel", channel);
         out.add("unverifiedNotes", missing);
         out.addProperty("invalidRows", invalid);
         Results.readBy(out, Verification.NATIVE_READBACK);

@@ -5,9 +5,10 @@ from typing import Annotated, Literal, Self
 
 from pydantic import Field, model_validator
 
-from bitwig_agent.protocol.base import MAX_BEAT, StatusArgs, StrictModel, ToolSpec, UnitValue, omitted
+from bitwig_agent.protocol.base import MAX_BEAT, StatusArgs, StrictModel, ToolSpec, omitted
+from bitwig_agent.protocol.limits import MAX_CURVE
 from bitwig_agent.protocol.refs import AutomationParameterRef
-from bitwig_agent.protocol.values import Expect
+from bitwig_agent.protocol.values import Expect, Normalized
 
 
 class AutomationRange(StrictModel):
@@ -23,9 +24,16 @@ class AutomationRange(StrictModel):
 
 class AutomationPoint(StrictModel):
     beat: float = Field(ge=0, le=MAX_BEAT, description="Arrangement position in beats (quarter notes).")
-    value: UnitValue = Field(description="Normalized 0..1 parameter value.")
+    value: Normalized = Field(
+        description='The normalized 0..1 value a read returned, or {display: "800 Hz"} in the form the parameter displays (a bare number reads in the unit it shows).'
+    )
     interpolation: Literal["linear", "hold"] = omitted(
         description="Omitted: a new point is linear, an updated point keeps its interpolation."
+    )
+    curve: float = omitted(
+        ge=-MAX_CURVE,
+        le=MAX_CURVE,
+        description="Bend of the segment from this point to the next, -1..1 (0 straight). Omitted: a new point is 0, an updated point keeps its curve.",
     )
 
 
@@ -70,6 +78,12 @@ TRACK_VOLUME = {
     "id": "volume",
 }
 TRACK_PAN = {**TRACK_VOLUME, "id": "pan"}
+FILTER_FREQUENCY = {
+    "kind": "parameter",
+    "owner": {"kind": "device", "track": TRACK_VOLUME["owner"], "index": 1, "name": "Filter"},
+    "id": "CONTENTS/PID1a",
+    "name": "Frequency",
+}
 GRID_CUTOFF = {
     "kind": "parameter",
     "owner": {
@@ -80,8 +94,8 @@ GRID_CUTOFF = {
     },
     "id": "CUTOFF",
 }
-AUTOMATION_POINTS_GET_DESCRIPTION = "Read the arranger automation points of one parameter on an audio/instrument track: target is the parameter ref tracks.get returned for volume or pan, or a Grid module parameter ref (an owner gridModule ref as grid.export read it, id the parameter key) for a float Grid control; other owners are unsupported_scope. Returns ref, lane {exists, count, pointsHash} for the whole lane (pass pointsHash as expect to automation.points.set) and points [{beat, value (normalized 0..1), interpolation linear|hold, curve}] inside the optional range, at most 1024 (truncated says more exist). Beats are quarter notes from the arrangement start. Launcher-clip automation and automation clips are not read. Native read (version-gated); no selection."
-AUTOMATION_POINTS_SET_DESCRIPTION = 'Write the arranger automation points of one parameter (targets as automation.points.get). points [{beat, value 0..1, interpolation linear|hold}] are strictly increasing; a point at the beat of an existing one updates it, keeping the interpolation and curve it omits; a new point is linear unless given, curve 0. Without range only the listed points are written and nothing is removed; range {start, end} makes the points with start <= beat <= end exactly the listed ones (they must lie inside it); range "all" does that for the whole lane. Points read by automation.points.get can be written back as {beat, value, interpolation}: the same request again is already_matched. expect.pointsHash, when given, must equal a fresh automation.points.get (else stale/target_changed with observed, nothing changed). Creates the lane when missing; an empty points list with a range clears it, leaving only Bitwig\'s own base point at beat 0, which counts as cleared. Returns summary {inserted, updated, removed, unchanged}. One native undoable edit, verified by reading the whole lane back; untouched points stay the same native objects. Needs stopped transport with recording/automation-write off. An unknown outcome refuses further automation writes until you inspect automation.points.get and ack the hold; never retry.'
+AUTOMATION_POINTS_GET_DESCRIPTION = "Read the arranger automation points of one parameter on an audio/instrument track. target is a parameter ref as read: a track's volume or pan (tracks.get), a direct parameter of a device on the track or inside one of its chains (parameters.list), or a float Grid module parameter (an owner gridModule ref as grid.export read it, id the parameter key); Remote Control and modulator refs are unsupported_scope. Returns ref, lane {exists, count, pointsHash} for the whole lane (pass pointsHash as expect to automation.points.set) and points [{beat, value (normalized 0..1), display (the parameter's own text for value), interpolation linear|hold, curve -1..1}] inside the optional range, at most 1024 (truncated says more exist). Beats are quarter notes from the arrangement start. Only continuous (decimal) parameters have lanes here; others are unsupported_scope. Launcher-clip automation and automation clips are not read. Native read (version-gated); no selection."
+AUTOMATION_POINTS_SET_DESCRIPTION = 'Write the arranger automation points of one parameter (targets as automation.points.get). points [{beat, value, interpolation linear|hold, curve -1..1}] are strictly increasing; value is the normalized 0..1 value a read returned or {display: "800 Hz"}, which Bitwig\'s own text parser reads on that parameter, a bare number in the unit it shows (text it cannot read, or a number in another unit than the parameter shows, is unsupported_unit; past either end of its range is out_of_bounds; nothing is written). A point at the beat of an existing one updates it, keeping the interpolation and curve it omits; a new point is linear unless given, curve 0. Without range only the listed points are written and nothing is removed; range {start, end} makes the points with start <= beat <= end exactly the listed ones (they must lie inside it); range "all" does that for the whole lane. Points read by automation.points.get can be written back as {beat, value, interpolation, curve}: the same request again is already_matched. expect.pointsHash, when given, must equal a fresh automation.points.get (else stale/target_changed with observed, nothing changed). Creates the lane when missing; an empty points list with a range clears it, leaving only Bitwig\'s own base point at beat 0, which counts as cleared. Returns summary {inserted, updated, removed, unchanged}. One native undoable edit, verified by reading the whole lane back; untouched points stay the same native objects. Needs stopped transport with recording/automation-write off. An unknown outcome refuses further automation writes until you inspect automation.points.get and ack the hold; never retry.'
 
 
 SPECS: dict[str, ToolSpec] = {
@@ -92,8 +106,9 @@ SPECS: dict[str, ToolSpec] = {
         examples=(
             {"target": TRACK_VOLUME},
             {"target": GRID_CUTOFF, "range": {"start": 0, "end": 16}},
+            {"target": FILTER_FREQUENCY},
         ),
-        summary="Read the arranger automation points of a track's volume or pan, or a float Grid module parameter, by parameter ref. Returns lane {exists, count, pointsHash} and the points in the optional range.",
+        summary="Read the arranger automation points of any continuous parameter by ref (track volume/pan, device parameter, Grid module parameter). Returns lane {exists, count, pointsHash} and the points with value, display and curve in the optional range.",
     ),
     "automation.points.set": ToolSpec(
         AutomationPointsSetArgs,
@@ -119,7 +134,16 @@ SPECS: dict[str, ToolSpec] = {
                 ],
                 "range": {"start": 32, "end": 64},
             },
+            {
+                "target": FILTER_FREQUENCY,
+                "points": [
+                    {"beat": 32, "value": {"display": "420 Hz"}},
+                    {"beat": 60, "value": {"display": "420 Hz"}, "curve": 0.6},
+                    {"beat": 64, "value": {"display": "6.80 kHz"}, "interpolation": "hold"},
+                ],
+                "range": {"start": 32, "end": 64},
+            },
         ),
-        summary='Write points of one parameter ref: without range only the listed points (nothing removed); range {start,end} or "all" becomes exactly the listed points. Optional expect.pointsHash. Stopped transport only.',
+        summary='Write points of one parameter ref, value normalized or {display}, optional curve: without range only the listed points (nothing removed); range {start,end} or "all" becomes exactly the listed points. Optional expect.pointsHash. Stopped transport only.',
     ),
 }
