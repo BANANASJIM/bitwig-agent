@@ -283,7 +283,6 @@ public final class NativeArrangerAccess implements ArrangerModule.Access {
             double clipLength,
             String clipName,
             List<double[]> notes,
-            int channel,
             Runnable check,
             Runnable beforeWrite) {
         Lane lane = new Lane(trackProxy, trackId, check);
@@ -297,7 +296,7 @@ public final class NativeArrangerAccess implements ArrangerModule.Access {
             created[0] = clip;
             a.invoke(insert, lane.timeline, clip, false, false, null);
             a.invoke(rename, clip, clipName);
-            ArrangerNotes.write(noteHost, clip, notes, channel);
+            ArrangerNotes.write(noteHost, clip, notes);
         });
         lane.guard(check);
         Object clip = added(before, lane.clips());
@@ -305,7 +304,7 @@ public final class NativeArrangerAccess implements ArrangerModule.Access {
         if (!near((Double) a.invoke(start, clip), clipStart)) throw mismatch("start");
         if (!near((Double) a.invoke(length, clip), clipLength)) throw mismatch("length");
         if (!clipName.equals(a.invoke(name, clip))) throw mismatch("name");
-        ArrangerNotes.Readback readback = notes.isEmpty() ? null : ArrangerNotes.verify(noteHost, clip, notes, channel);
+        ArrangerNotes.Readback readback = notes.isEmpty() ? null : ArrangerNotes.verify(noteHost, clip, notes);
         if (readback != null && readback.invalidRows > 0) {
             // Rows outside channel 0..15 / key 0..127 crash Bitwig's note editor when drawn: remove the clip now.
             String cleanup;

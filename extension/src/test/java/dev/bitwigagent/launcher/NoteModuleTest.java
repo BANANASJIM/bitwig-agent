@@ -5,130 +5,78 @@ import static dev.bitwigagent.TestJson.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 import com.google.gson.*;
-import dev.bitwigagent.HostBridge;
-import dev.bitwigagent.HostFixture;
 import dev.bitwigagent.core.HostOperation;
 import dev.bitwigagent.core.Refs;
 import dev.bitwigagent.core.RpcException;
-import dev.bitwigagent.rpc.RpcServer;
-import java.math.BigDecimal;
-import java.nio.charset.StandardCharsets;
-import java.util.List;
-import java.util.Set;
 import org.junit.jupiter.api.Test;
 
-/** Consumer tests against API-shaped in-memory host proxies; never native-host evidence. */
+/**
+ * The note methods without the native binding: the public note grid, read and written window by window. Consumer
+ * tests against API-shaped in-memory host proxies; never native-host evidence.
+ */
 public final class NoteModuleTest {
 
-    private static JsonObject set(double beat, int pitch, int velocity, double duration) {
-        JsonObject e = new JsonObject();
-        e.addProperty("op", "set");
-        e.addProperty("beat", beat);
-        e.addProperty("pitch", pitch);
-        e.addProperty("velocity", velocity);
-        e.addProperty("duration", duration);
-        return e;
+    static JsonObject note(double beat, int pitch, int velocity, double duration) {
+        JsonObject n = new JsonObject();
+        n.addProperty("beat", beat);
+        n.addProperty("pitch", pitch);
+        n.addProperty("velocity", velocity);
+        n.addProperty("duration", duration);
+        return n;
     }
 
-    private static JsonObject clear(double beat, int pitch) {
-        JsonObject e = new JsonObject();
-        e.addProperty("op", "clear");
-        e.addProperty("beat", beat);
-        e.addProperty("pitch", pitch);
-        return e;
+    static JsonObject note(double beat, int pitch, int velocity, double duration, int channel) {
+        JsonObject n = note(beat, pitch, velocity, duration);
+        n.addProperty("channel", channel);
+        return n;
     }
 
-    private static JsonArray fixture() {
-        JsonArray edits = new JsonArray();
-        edits.add(set(0, 60, 100, .5));
-        edits.add(set(0, 64, 80, .5));
-        edits.add(set(0, 67, 90, .5));
-        edits.add(set(1, 62, 100, .5));
-        edits.add(set(0, 36, 110, .25));
-        return edits;
-    }
-
-    private static JsonArray array(JsonObject... all) {
+    static JsonArray array(JsonObject... all) {
         JsonArray list = new JsonArray();
         for (JsonObject one : all) list.add(one);
         return list;
     }
 
     /** A launcher clip named Riff at the scene. */
-    private static void clipAt(LauncherFake f, int scene) {
+    static void clipAt(LauncherFake f, int scene) {
         f.slots[scene].content = true;
         f.slots[scene].name = "Riff";
     }
 
-    private static JsonObject target(LauncherFake f, int scene) {
+    static JsonObject target(LauncherFake f, int scene) {
         JsonObject p = new JsonObject();
         p.add("target", f.clip(scene));
         return p;
     }
 
-    private static JsonObject window(LauncherFake f, int scene) {
+    /** notes.set params; {@code range} null for an upsert. */
+    static JsonObject set(LauncherFake f, int scene, Object range, JsonObject... notes) {
         JsonObject p = target(f, scene);
-        p.addProperty("channel", 0);
-        p.addProperty("stepSize", .25);
-        p.addProperty("startStep", 0);
-        p.addProperty("steps", 16);
-        p.addProperty("pitchStart", 0);
-        p.addProperty("pitchCount", 128);
+        if (range != null) p.add("range", toJson(range));
+        p.add("notes", array(notes));
         return p;
     }
 
-    private static JsonObject window(LauncherFake f) {
-        return window(f, 0);
+    static JsonObject range(double start, double end) {
+        JsonObject r = new JsonObject();
+        r.addProperty("start", start);
+        r.addProperty("end", end);
+        return r;
     }
 
-    private static JsonObject editFixture(LauncherFake f) {
-        JsonObject p = window(f);
-        p.add("edits", fixture());
-        return p;
-    }
-
-    private static JsonObject editing(JsonObject p, JsonArray edits) {
-        p.add("edits", edits);
-        return p;
-    }
-
-    private static JsonObject manyEdits(LauncherFake f, int count) {
-        JsonObject p = target(f, 0);
-        JsonArray edits = new JsonArray();
-        for (int i = 0; i < count; i++) edits.add(set(i * .5, 48 + i % 12, 60 + i, .25));
-        p.add("edits", edits);
-        return p;
-    }
-
-    private static JsonObject find(JsonObject result, int pitch, double beat) {
-        for (JsonElement v : result.getAsJsonArray("notes")) {
-            JsonObject n = v.getAsJsonObject();
-            if (n.get("pitch").getAsInt() == pitch && n.get("beat").getAsDouble() == beat) return n;
-        }
-        throw new AssertionError("missing observed note");
-    }
-
-    private static LauncherFake riff() {
+    /** Three notes on channel 0 and one on channel 2 of the clip at scene 0. */
+    static LauncherFake riff() {
         LauncherFake f = new LauncherFake();
         clipAt(f, 0);
-        f.put(0, 0, 0, 60, 100, 4);
-        f.put(0, 0, 8, 64, 90, 4);
-        f.put(0, 0, 3, 67, 80, 2);
+        f.put(0, 0, 0, 60, 100, 1);
+        f.put(0, 0, 1, 64, 90, 1);
+        f.put(0, 0, .375, 67, 80, .25);
+        f.put(0, 2, 2, 36, 110, .5);
         return f;
     }
 
-    private static List<NoteGrid.Part> plan(JsonObject p) {
-        return NoteGrid.plan(p, p.getAsJsonArray("edits"), "edits", null);
-    }
-
-    private static NoteGrid.Window derived(JsonObject p) {
-        List<NoteGrid.Part> parts = plan(p);
-        assertEquals(1, parts.size(), "one window");
-        return parts.get(0).window;
-    }
-
-    private static void invalid(LauncherFake f, JsonObject p) {
-        HostOperation op = f.start("notes.set", p);
+    static void invalid(LauncherFake f, String method, JsonObject p) {
+        HostOperation op = f.start(method, p);
         assertTrue(op.result.isDone(), () -> "accepted: " + p);
         assertRpcError("invalid_params", op);
         assertFalse(op.dispatched(), "a rejected request touches nothing");
@@ -137,734 +85,500 @@ public final class NoteModuleTest {
     // ---- validation ----
 
     @Test
-    void schemaRejectsMalformedRequests() {
-        LauncherFake f = new LauncherFake();
-        clipAt(f, 0);
-        JsonObject valid = editFixture(f);
-        JsonObject filled = HostBridge.checkSchema(HostFixture.SPECS, "notes.set", valid);
-        assertEquals(5, NoteGrid.edits(plan(filled).get(0)).size(), "melody/chord/drum fixture accepted");
-        JsonObject bad = valid.deepCopy();
-        bad.addProperty("channel", 16);
-        invalid(f, bad);
-        bad = valid.deepCopy();
-        bad.addProperty("steps", 129);
-        invalid(f, bad);
-        bad = valid.deepCopy();
-        bad.addProperty("pitchStart", 120);
-        bad.addProperty("pitchCount", 9);
-        invalid(f, bad);
-        bad = valid.deepCopy();
-        bad.addProperty("unexpected", true);
-        invalid(f, bad);
-        bad = valid.deepCopy();
-        bad.add("edits", new JsonArray());
-        invalid(f, bad);
-        bad = valid.deepCopy();
-        bad.addProperty("detail", "verbose");
-        invalid(f, bad);
-        bad = valid.deepCopy();
-        bad.remove("pitchCount");
-        invalid(f, bad);
-        JsonArray tooMany = new JsonArray();
-        for (int i = 0; i < 257; i++) tooMany.add(set(0, 60, 100, .25));
-        bad = valid.deepCopy();
-        bad.add("edits", tooMany);
-        invalid(f, bad);
-        JsonObject read = window(f);
-        read.addProperty("detail", "full");
-        assertRpcError("invalid_params", f.start("notes.get", read));
-        JsonObject partial = target(f, 0);
-        partial.addProperty("steps", 8);
-        assertRpcError("invalid_params", f.start("notes.get", partial));
-        assertRpcError("invalid_params", f.start("notes.set", editing(partial, fixture())));
-    }
-
-    @Test
-    void aSetNeedsVelocityAndDurationAndAClearForbidsThem() {
-        LauncherFake f = new LauncherFake();
-        JsonObject valid = editFixture(f);
-        JsonObject bad = valid.deepCopy();
-        bad.add("edits", array(obj("{\"op\":\"set\",\"beat\":0,\"pitch\":60,\"duration\":1}")));
-        invalid(f, bad);
-        bad = valid.deepCopy();
-        bad.add("edits", array(obj("{\"op\":\"clear\",\"beat\":0,\"pitch\":60,\"velocity\":90}")));
-        invalid(f, bad);
-        bad = valid.deepCopy();
-        bad.add("edits", array(obj("{\"op\":\"set\",\"beat\":0,\"pitch\":60,\"velocity\":90}")));
-        for (String grid : List.of("stepSize", "startStep", "steps", "pitchStart", "pitchCount")) bad.remove(grid);
-        invalid(f, bad);
-    }
-
-    @Test
-    void semanticValidationRunsBeforeAnythingIsSelected() {
-        LauncherFake f = new LauncherFake();
-        JsonObject valid = editFixture(f);
-        JsonObject bad = valid.deepCopy();
-        bad.getAsJsonArray("edits").add(bad.getAsJsonArray("edits").get(0).deepCopy());
-        invalid(f, bad);
-        bad = valid.deepCopy();
-        bad.getAsJsonArray("edits").get(0).getAsJsonObject().addProperty("beat", .3);
-        invalid(f, bad);
-        bad = valid.deepCopy();
-        bad.getAsJsonArray("edits").get(0).getAsJsonObject().addProperty("duration", 5);
-        invalid(f, bad);
-        bad = valid.deepCopy();
-        bad.getAsJsonArray("edits").add(set(.25, 60, 100, .25));
-        invalid(f, bad); // overlaps the first edit's pitch-60 span
-        bad = valid.deepCopy();
-        bad.add("edits", array(set(4, 60, 100, .25)));
-        invalid(f, bad); // beat 4 is step 16, one past the 16-step window
-        bad = valid.deepCopy();
-        bad.addProperty("pitchCount", 61);
-        invalid(f, bad); // pitches 62..67 of the fixture lie outside 0..60
-        assertEquals(0, f.selected, "no clip was selected");
-        assertEquals(0, f.writes);
-        JsonObject tenths = window(f);
-        tenths.addProperty("stepSize", .1);
-        tenths.add("edits", array(set(.3, 60, 90, .25)));
-        assertEquals(3, NoteGrid.edits(plan(tenths).get(0)).get(0).x, "decimal alignment is exact");
-        tenths.add("edits", array(set(.30000000000000004, 60, 90, .25)));
-        assertRpcError("invalid_params", () -> plan(tenths));
-        JsonObject far = target(f, 0);
-        far.add("edits", array(set(1e12, 60, 90, .25)));
-        assertRpcError("invalid_params", () -> plan(far));
-    }
-
-    @Test
-    void omittedWindowIsDerivedFromEdits() {
-        LauncherFake f = new LauncherFake();
-        clipAt(f, 0);
-        JsonObject p = target(f, 0);
-        p.add("edits", fixture());
-        NoteGrid.Window w = derived(p);
-        assertEquals(0, w.exact.compareTo(new BigDecimal("0.015625")), "the finest grid that fits 128 steps");
-        assertEquals(0, w.start);
-        assertEquals(96, w.steps);
-        assertEquals(36, w.pitch);
-        assertEquals(32, w.pitches, "the pitch range comes from the edits");
-        JsonObject out = f.call("notes.set", p);
-        assertEquals("applied", out.get("outcome").getAsString());
-        assertEquals("api_readback", out.get("verification").getAsString());
-        assertTrue(out.getAsJsonObject("window").get("derived").getAsBoolean(), "the derived window is echoed");
-        assertTrue(
-                f.notes.containsKey(LauncherFake.key(0, 0, 0, 60))
-                        && f.notes.containsKey(LauncherFake.key(0, 0, 64, 62)),
-                "notes landed on absolute steps of the derived grid");
-
-        JsonObject quarter = target(f, 0);
-        quarter.add("edits", array(set(2, 61, 90, 2)));
-        assertEquals(0, derived(quarter).exact.compareTo(new BigDecimal("0.015625")));
-        JsonObject whole = target(f, 0);
-        whole.add("edits", array(set(0, 61, 90, 256)));
-        NoteGrid.Window coarse = derived(whole);
-        assertEquals(0, coarse.exact.compareTo(new BigDecimal("2")), "a single 256-beat note derives a coarse grid");
-        assertEquals(128, coarse.steps);
-        JsonObject fine = target(f, 0);
-        fine.add("edits", array(set(.0625, 61, 90, .125)));
-        assertEquals(
-                0, derived(fine).exact.compareTo(new BigDecimal("0.0078125")), "short fine edits use the finest grid");
-
-        JsonObject wide = target(f, 0);
-        wide.add("edits", array(set(0, 60, 90, .25), set(40, 60, 90, .25)));
-        assertEquals(0, derived(wide).exact.compareTo(new BigDecimal("0.5")), "durations no longer force a finer grid");
-        JsonObject odd = target(f, 0);
-        odd.add("edits", array(set(.001, 60, 90, .25)));
-        assertRpcError("invalid_params", f.start("notes.set", odd));
-
-        LauncherFake hidden = new LauncherFake();
-        clipAt(hidden, 0);
-        hidden.noteStorageStepSize = 1.0 / 128;
-        hidden.put(0, 0, 0, 36, 90, .5);
-        hidden.put(0, 0, 64, 36, 90, .5); // a second onset at beat 0.5
-        JsonObject overlap = target(hidden, 0);
-        overlap.add("edits", array(set(0, 36, 100, 1)));
-        assertUnknown("overlap", hidden.startAndDrain("notes.set", overlap));
-        assertEquals(0, hidden.writes, "a derived window cannot hide a finer existing onset");
-
-        assertEquals(
-                "applied", f.call("notes.set", editFixture(f)).get("outcome").getAsString());
-    }
-
-    // ---- grid rules the write absorbs ----
-
-    private static LauncherFake longClip() {
-        LauncherFake f = new LauncherFake();
-        clipAt(f, 0);
-        f.slots[0].length = 128;
-        return f;
-    }
-
-    /** Three notes 40 beats apart whose onsets need a 1/16-note grid: three windows. */
-    private static JsonObject spread(LauncherFake f) {
-        JsonObject p = target(f, 0);
-        p.add("edits", array(set(0, 60, 90, .25), set(40.25, 61, 90, .5), set(80.5, 62, 90, .3)));
-        return p;
-    }
-
-    @Test
-    void everyBrokenRuleIsRefusedAtOnceBeforeAnythingIsSelected() {
-        LauncherFake f = longClip();
-        JsonObject p = target(f, 0);
-        p.add(
-                "edits",
-                array(
-                        set(0, 33, 90, .75),
-                        set(.5, 33, 90, .25),
-                        set(1.3, 40, 90, .25),
-                        set(2, 41, 90, .25),
-                        set(2, 41, 90, .25)));
-        String message =
-                assertRpcError("invalid_params", f.start("notes.set", p)).getMessage();
-        assertEquals(
-                "edits: 3 problems, nothing was written: edits[1] starts at beat 0.5 before edits[0] on pitch 33 ends"
-                        + " at beat 0.75: shorten edits[0] to duration <= 0.5; edits[2] beat 1.3 is not on the"
-                        + " 1/128-beat grid: use 1.296875 or 1.3046875; edits[4] repeats the beat and pitch of edits[3]:"
-                        + " remove one",
-                message);
-        JsonObject long_ = target(f, 0);
-        long_.add("edits", array(set(0, 60, 90, 40), set(40.25, 61, 90, .25)));
-        assertTrue(assertRpcError("invalid_params", f.start("notes.set", long_))
-                .getMessage()
-                .contains("edits[0] duration 40 spans more than 128 steps of the 0.25-beat grid the onsets"
-                        + " need: shorten it to duration <= 32 or write it in a call of its own"));
-        JsonObject alone = target(f, 0);
-        alone.add("edits", array(set(0, 60, 90, 600)));
-        assertTrue(assertRpcError("invalid_params", () -> plan(alone))
-                .getMessage()
-                .endsWith("spans more than 128 steps of the 4-beat grid the onsets need: shorten it to duration"
-                        + " <= 512"));
-        assertEquals(0, f.selected, "no clip was selected");
+    void malformedRequestsAreRefusedBeforeAnythingIsSelected() {
+        LauncherFake f = riff();
+        JsonObject bad = set(f, 0, null, note(0, 60, 100, 1));
+        bad.addProperty("detail", "full");
+        invalid(f, "notes.set", bad);
+        invalid(f, "notes.set", set(f, 0, null));
+        invalid(f, "notes.set", set(f, 0, range(2, 2), note(2, 60, 100, 1)));
+        invalid(f, "notes.set", set(f, 0, obj("{\"start\":0,\"end\":4,\"pitches\":[50,40]}")));
+        invalid(f, "notes.set", set(f, 0, "some", note(0, 60, 100, 1)));
+        invalid(f, "notes.set", set(f, 0, null, note(0, 60, 100, 1, 16)));
+        JsonObject old = target(f, 0);
+        old.add("edits", array(note(0, 60, 100, 1)));
+        invalid(f, "notes.set", old);
+        JsonObject window = target(f, 0);
+        window.addProperty("stepSize", .25);
+        invalid(f, "notes.get", window);
+        invalid(f, "notes.get", set(f, 0, range(3, 1)));
+        assertEquals(0, f.selected);
         assertEquals(0, f.writes);
     }
 
     @Test
-    void durationsAreKeptAndReadBackAtTheHostResolution() {
-        LauncherFake f = longClip();
-        f.durationStep = NoteGrid.DURATION_RESOLUTION; // stores durations as Bitwig 6.1.4 does
-        JsonObject p = target(f, 0);
-        // 0.5000001 is stored as 0.5, so it ends exactly where the next same-pitch note starts
-        p.add("edits", array(set(0, 60, 90, .225), set(.5, 61, 90, .5000001), set(1, 61, 90, .5)));
-        JsonObject out = f.call("notes.set", p);
-        assertEquals("applied", out.get("outcome").getAsString());
-        assertEquals(3, out.getAsJsonObject("summary").get("verified").getAsInt());
-        assertFalse(out.has("adjusted"));
-        assertEquals(0.22500038146972656, f.notes.get(LauncherFake.key(0, 0, 0, 60)).duration);
-        assertEquals(
-                "already_matched",
-                f.call("notes.set", p).get("outcome").getAsString(),
-                "the stored duration matches the request it came from");
-        JsonObject over = target(f, 0);
-        over.add("edits", array(set(0, 62, 90, .5000006), set(.5, 62, 90, .5)));
-        assertEquals(
-                "edits: 1 problem, nothing was written: edits[1] starts at beat 0.5 before edits[0] on pitch 62 ends"
-                        + " at beat 0.5000006: shorten edits[0] to duration <= 0.5",
-                assertRpcError("invalid_params", f.start("notes.set", over)).getMessage(),
-                "0.5000006 is stored as 0.50000095367431640625, past the next onset");
-    }
-
-    @Test
-    void aSpanBeyondOneWindowIsWrittenInSeveralWindowsOfOneCall() {
-        LauncherFake f = longClip();
-        JsonObject p = spread(f);
-        List<NoteGrid.Part> parts = plan(p);
-        assertEquals(3, parts.size());
-        assertEquals(0, parts.get(1).window.exact.compareTo(new BigDecimal("0.25")), "the coarsest aligning grid");
-        assertEquals(161, parts.get(1).window.start);
-        JsonObject out = f.call("notes.set", p);
-        assertEquals("applied", out.get("outcome").getAsString());
-        JsonArray windows = out.getAsJsonArray("windows");
-        assertEquals(3, windows.size());
-        JsonObject first = windows.get(0).getAsJsonObject();
-        assertEquals("applied", first.get("outcome").getAsString());
-        assertTrue(first.has("window") && !first.has("ref") && !first.has("loop"), "clip fields appear once");
-        assertEquals(
-                obj(
-                        "{\"requested\":3,\"dispatched\":3,\"alreadyMatched\":0,\"verified\":3,\"unverified\":0,\"notReached\":0}"),
-                out.getAsJsonObject("summary"));
-        assertFalse(out.has("notReached"));
-        assertEquals(.3, f.notes.get(LauncherFake.key(0, 0, 322, 62)).duration, "durations are written as requested");
-        assertTrue(f.notes.containsKey(LauncherFake.key(0, 0, 161, 61)));
-        assertFalse(f.services.selection.held(), "the cursor lease ends with the call");
-        assertEquals(
-                "already_matched", f.call("notes.set", spread(f)).get("outcome").getAsString(), "re-sending converges");
-    }
-
-    @Test
-    void aWindowThatFailsAfterItsWriteStopsTheRest() {
-        LauncherFake f = longClip();
-        f.failWriteAt = 2;
-        JsonObject out = f.call("notes.set", spread(f));
-        assertEquals("unknown", out.get("outcome").getAsString());
-        JsonArray windows = out.getAsJsonArray("windows");
-        assertEquals("applied", windows.get(0).getAsJsonObject().get("outcome").getAsString());
-        assertEquals("unknown", windows.get(1).getAsJsonObject().get("outcome").getAsString());
-        JsonObject rest = windows.get(2).getAsJsonObject();
-        assertEquals("not_applied", rest.get("outcome").getAsString());
-        assertEquals("not_reached", rest.get("reason").getAsString());
-        assertEquals(JsonParser.parseString("[2]"), out.getAsJsonArray("notReached"));
-        JsonObject summary = out.getAsJsonObject("summary");
-        assertEquals(2, summary.get("dispatched").getAsInt());
-        assertEquals(1, summary.get("notReached").getAsInt());
-        assertEquals(2, f.writes);
-    }
-
-    @Test
-    void aLaterWindowRefusedBeforeItsWriteIsNotApplied() {
-        LauncherFake f = longClip();
-        f.put(0, 0, 160, 61, 90, 1); // sustains over beat 40.25 on the window grid
-        JsonObject out = f.call("notes.set", spread(f));
-        assertEquals("not_applied", out.get("outcome").getAsString());
-        JsonObject refused = out.getAsJsonArray("windows").get(1).getAsJsonObject();
-        assertEquals("not_applied", refused.get("outcome").getAsString());
-        assertEquals("overlap", refused.get("reason").getAsString());
-        assertEquals(JsonParser.parseString("[1,2]"), out.getAsJsonArray("notReached"));
-        assertEquals(1, f.writes, "only the first window wrote");
-    }
-
-    @Test
-    void aFirstWindowLostAfterItsSelectionIsUnknown() {
-        LauncherFake f = longClip();
-        HostOperation op = f.start("notes.set", spread(f));
-        f.trackId = "22222222-2222-2222-2222-222222222222";
-        f.drain(op);
-        assertTrue(op.dispatched(), "the first window's selection already counts as a write");
-        assertEquals("unknown", op.result.join().get("outcome").getAsString());
+    void everyRuleTheListedNotesBreakIsRefusedAtOnce() {
+        LauncherFake f = riff();
+        JsonObject p = set(
+                f,
+                0,
+                obj("{\"start\":0,\"end\":4,\"pitches\":[60,64]}"),
+                note(0, 60, 100, 1),
+                note(0, 60, 90, .5),
+                note(.5, 60, 100, .25),
+                note(5, 62, 100, 1),
+                note(1, 70, 100, 1));
+        HostOperation op = f.start("notes.set", p);
+        String message = assertRpcError("invalid_params", op).getMessage();
+        assertTrue(message.startsWith("notes: 4 problems, nothing was written: notes[1] repeats"), message);
+        assertTrue(message.contains("notes[2] starts at beat 0.5 before notes[0] on pitch 60 ends at beat 1"), message);
+        assertTrue(message.contains("notes[3] beat 5 is outside range [0, 4)"), message);
+        assertTrue(message.contains("notes[4] pitch 70 is outside range.pitches [60, 64]"), message);
+        invalid(f, "notes.set", set(f, 0, range(1, 2), note(.5, 60, 100, .25)));
         assertEquals(0, f.writes);
-    }
-
-    @Test
-    void tooLittleTimeForAnotherWindowStopsBeforeIt() {
-        LauncherFake f = longClip();
-        HostOperation op = f.start(new HostOperation(f.tasks.after(WINDOW_DEADLINE_MS)), "notes.set", spread(f));
-        f.drain(op);
-        JsonObject out = op.result.join();
-        JsonArray windows = out.getAsJsonArray("windows");
-        assertEquals("applied", windows.get(0).getAsJsonObject().get("outcome").getAsString());
-        assertEquals("deadline", windows.get(1).getAsJsonObject().get("reason").getAsString());
-        assertEquals(
-                "not_reached", windows.get(2).getAsJsonObject().get("reason").getAsString());
-        assertEquals(JsonParser.parseString("[1,2]"), out.getAsJsonArray("notReached"));
-        assertEquals(1, f.writes);
-    }
-
-    private static final int WINDOW_DEADLINE_MS = 500;
-
-    @Test
-    void omittedReadWindowCoversTheClipLoop() {
-        LauncherFake f = new LauncherFake();
-        clipAt(f, 0);
-        f.slots[0].length = 13 * 4;
-        f.put(0, 0, 100, 60, 90, .25); // beat 25
-        JsonObject read = f.call("notes.get", target(f, 0));
-        JsonObject w = read.getAsJsonObject("window");
-        assertEquals(.25, w.get("stepSize").getAsDouble());
-        assertEquals(128, w.get("steps").getAsInt());
-        assertEquals(128, w.get("pitchCount").getAsInt(), "a long loop reads 128 steps at 1/16 note");
-        assertFalse(read.get("windowCoversLoop").getAsBoolean());
-        assertTrue(read.get("continuation").getAsString().contains("startStep=128"), "a continuation, not coarser");
-        assertTrue(w.get("derived").getAsBoolean());
-        assertEquals(1, read.getAsJsonArray("notes").size());
-
-        LauncherFake g = new LauncherFake();
-        clipAt(g, 0);
-        JsonObject whole = g.call("notes.get", target(g, 0));
-        assertEquals(.125, whole.getAsJsonObject("window").get("stepSize").getAsDouble());
-        assertEquals(32, whole.getAsJsonObject("window").get("steps").getAsInt(), "a short loop reads at 1/32 note");
-        assertTrue(whole.get("windowCoversLoop").getAsBoolean());
-        assertFalse(whole.has("continuation"));
     }
 
     // ---- reads ----
 
     @Test
-    void denseReadReportsItsResponseBoundary() {
-        LauncherFake f = new LauncherFake();
-        clipAt(f, 0);
-        f.slots[0].length = 8;
-        for (int x = 0; x < 32; x++) for (int pitch = 0; pitch < 128; pitch++) f.put(0, 0, x, pitch, 100, .25);
-        JsonObject p = window(f);
-        p.addProperty("steps", 32);
-        JsonObject out = f.call("notes.get", p);
-        assertEquals(4096, out.get("notesInWindow").getAsInt(), "a dense window reports the actual total");
-        assertEquals(2048, out.getAsJsonArray("notes").size(), "the response stays bounded");
-        assertFalse(out.get("completeWindow").getAsBoolean());
-        assertTrue(out.has("continuation"), "a dense partial read is explicit");
-        assertTrue(out.toString().getBytes(StandardCharsets.UTF_8).length < RpcServer.MAX_RESPONSE_BYTES);
-    }
-
-    @Test
-    void noteRowsUseEditUnitsAndCarryNoConstantProse() {
-        LauncherFake f = new LauncherFake();
-        clipAt(f, 0);
-        f.put(0, 0, 4, 61, 100, 1.5);
-        JsonObject read = f.call("notes.get", window(f));
-        JsonObject row = read.getAsJsonArray("notes").get(0).getAsJsonObject();
-        assertEquals(Set.of("beat", "pitch", "velocity", "duration"), row.keySet());
-        assertEquals(100, row.get("velocity").getAsInt(), "velocity is MIDI 1..127");
-        assertEquals(1.0, row.get("beat").getAsDouble(), "beat is absolute");
-        for (String gone : new String[] {
-            "gridReadinessLimitation",
-            "onsetPrecision",
-            "selectionSideEffect",
-            "identityVerification",
-            "completeClip",
-            "scope"
-        }) assertFalse(read.has(gone), gone + " is not repeated per response");
-        assertTrue(read.has("gridReadiness") && read.has("completeWindow"));
-        assertEquals(0, read.getAsJsonObject("window").get("channel").getAsInt());
-
-        f.put(0, 0, 0, 70, 60, 4);
-        f.slots[0].length = 8;
-        JsonObject later = window(f);
-        later.addProperty("startStep", 2);
-        later.addProperty("steps", 4);
-        JsonArray sustains = f.call("notes.get", later).getAsJsonArray("continuingAtWindowStart");
-        assertEquals(1, sustains.size());
-        for (JsonElement v : sustains)
-            assertEquals("NoteSustain", v.getAsJsonObject().get("state").getAsString(), "marked, not a copyable onset");
-        assertEquals(1, NoteGrid.midiVelocity(1 / 127.0));
-        assertEquals(127, NoteGrid.midiVelocity(1.0));
-        assertEquals(1, NoteGrid.midiVelocity(0.0));
-    }
-
-    @Test
-    void delayedGridPropagationKeepsReadinessExplicit() {
-        LauncherFake f = new LauncherFake();
-        clipAt(f, 0);
-        f.slots[0].length = 32;
-        f.put(0, 0, 0, 60, 100, .25);
-        f.put(0, 0, 16, 72, 80, .5);
-        long before = f.call("notes.get", window(f)).get("gridGeneration").getAsLong();
-        f.deferGridChanges = true;
-        JsonObject p = window(f);
-        p.addProperty("startStep", 16);
-        p.addProperty("stepSize", .5);
-        HostOperation delayed = f.start("notes.get", p);
-        assertTrue(f.start == 0 && f.size == .25, "the fixture retains the old grid after reconfiguration");
-        f.next();
-        f.applyPendingGrid();
-        f.drain(delayed);
-        JsonObject out = delayed.result.join();
-        assertNotNull(find(out, 72, 8), "the grid delivered during settling yields the new window content");
-        assertTrue(out.get("gridGeneration").getAsLong() > before, "a window change gets a distinct generation");
-        assertEquals(
-                "scheduled_settling_not_acknowledged", out.get("gridReadiness").getAsString());
-        assertFalse(out.has("gridReadinessLimitation") || out.has("onsetPrecision") || out.has("selectionSideEffect"));
-
-        f.emitNotes = false;
-        editing(p, array(set(8, 72, 90, .5)));
-        HostOperation changed = f.start("notes.set", p);
-        f.observer.noteStepChanged(f.note(0, 0, 72)); // an old-generation callback while the new binding is unsettled
-        f.applyPendingGrid();
-        f.drain(changed);
-        JsonObject unverified =
-                changed.result.join().getAsJsonArray("unverifiedEdits").get(0).getAsJsonObject();
-        assertEquals("unknown", unverified.get("outcome").getAsString(), "a prior-window callback cannot verify");
-    }
-
-    @Test
-    void firstGridReadWaitsForNativeDebounce() {
-        LauncherFake f = new LauncherFake();
-        clipAt(f, 0);
-        f.noteStorageStepSize = .25;
-        f.gridRefreshDelayMillis = 100;
-        f.put(0, 0, 0, 60, 96, 1);
-        f.put(0, 0, 8, 64, 96, 1);
-        JsonObject p = window(f);
-        p.addProperty("stepSize", .125);
-        p.addProperty("steps", 32);
-        JsonObject out = f.call("notes.get", p);
-        assertEquals(2, out.getAsJsonArray("notes").size(), "the first grid read preserves both stored notes");
-        assertNotNull(find(out, 64, 2), "an eighth-beat read must not relabel the old quarter-beat cache");
-        assertEquals(0, f.writes, "a grid refresh does not change note content");
-    }
-
-    // ---- edits ----
-
-    @Test
-    void matchingEditsPreserveExistingNotes() {
-        LauncherFake f = new LauncherFake();
-        clipAt(f, 0);
-        f.put(0, 0, 0, 60, 100, .5);
-        LauncherFake.Note existing = f.notes.get(LauncherFake.key(0, 0, 0, 60));
-        JsonObject out = f.call("notes.set", editing(window(f), array(set(0, 60, 100, .5))));
-        assertEquals(0, f.writes, "a matching set neither replaces the note nor clears its expression");
-        assertSame(existing, f.notes.get(LauncherFake.key(0, 0, 0, 60)));
-        assertEquals("already_matched", out.get("outcome").getAsString());
-    }
-
-    @Test
-    void echoingAReadRowIsAlreadyMatched() {
-        LauncherFake f = new LauncherFake();
-        clipAt(f, 0);
-        f.put(0, 0, 0, 60, 64, .5);
-        f.notes.get(LauncherFake.key(0, 0, 0, 60)).exact = 0.5; // GUI value 0.5 reads as MIDI 64
-        JsonObject row =
-                f.call("notes.get", window(f)).getAsJsonArray("notes").get(0).getAsJsonObject();
-        assertEquals(64, row.get("velocity").getAsInt());
-        JsonObject out = f.call(
-                "notes.set",
-                editing(
-                        window(f),
-                        array(set(
-                                row.get("beat").getAsDouble(),
-                                row.get("pitch").getAsInt(),
-                                row.get("velocity").getAsInt(),
-                                row.get("duration").getAsDouble()))));
-        assertEquals(0, f.writes);
-        assertEquals(1, out.getAsJsonObject("summary").get("alreadyMatched").getAsInt());
-        assertEquals(0, out.getAsJsonObject("summary").get("dispatched").getAsInt());
-        assertEquals("already_matched", out.get("outcome").getAsString());
-    }
-
-    @Test
-    void clearingAndSettingAreReadBackPerCell() {
+    void aReadListsEveryChannelOfTheLoopAsRecordsOnTheWriteGrid() {
         LauncherFake f = riff();
-        JsonObject p = window(f);
-        p.addProperty("detail", "full");
-        editing(p, array(clear(0, 60), set(1, 61, 70, .5)));
-        JsonObject out = f.call("notes.set", p);
-        assertEquals("applied", out.get("outcome").getAsString());
-        JsonArray edits = out.getAsJsonArray("edits");
-        assertEquals(2, edits.size());
-        assertEquals("clear", edits.get(0).getAsJsonObject().get("op").getAsString());
-        assertEquals(0, edits.get(0).getAsJsonObject().get("step").getAsInt());
-        assertEquals(4, edits.get(1).getAsJsonObject().get("step").getAsInt());
-        assertFalse(f.notes.containsKey(LauncherFake.key(0, 0, 0, 60)));
-        assertTrue(f.notes.containsKey(LauncherFake.key(0, 0, 4, 61)));
-        assertEquals(2, f.writes);
-        assertTrue(out.has("notes"), "full detail lists the window");
+        JsonObject read = f.call("notes.get", target(f, 0));
+        assertEquals(f.clip(0), read.getAsJsonObject("ref"));
+        assertFalse(read.get("exact").getAsBoolean());
+        assertEquals(.0078125, read.get("onsetResolution").getAsDouble(), "reads use the 1/128-beat write grid");
+        assertFalse(read.get("complete").getAsBoolean(), "the public grid cannot see past the loop end");
+        assertTrue(read.get("incompleteReason").getAsString().contains("the loop only (up to beat 4)"));
+        JsonObject inLoop = target(f, 0);
+        inLoop.add("range", range(0, 4));
+        assertTrue(f.call("notes.get", inLoop).get("complete").getAsBoolean(), "a range inside the loop is complete");
+        assertEquals(4, read.get("count").getAsInt());
+        JsonArray notes = read.getAsJsonArray("notes");
+        assertEquals(note(0, 60, 100, 1), notes.get(0));
+        assertEquals(note(.375, 67, 80, .25), notes.get(1));
+        assertEquals(note(1, 64, 90, 1), notes.get(2));
+        assertEquals(note(2, 36, 110, .5, 2), notes.get(3), "channel is listed when it is not 0");
+        assertEquals(0, f.selected, "the read selected the clip");
+        assertFalse(read.has("window") || read.has("gridReadiness"));
     }
 
     @Test
-    void compactEditReportsSummaryAndOnlyUnverifiedEdits() {
-        LauncherFake f = new LauncherFake();
-        clipAt(f, 0);
-        f.slots[0].length = 16;
-        JsonObject p = manyEdits(f, 32);
-        JsonObject out = f.call("notes.set", p);
-        JsonObject sum = out.getAsJsonObject("summary");
-        assertEquals("applied", out.get("outcome").getAsString());
-        assertEquals(32, sum.get("requested").getAsInt());
-        assertEquals(32, sum.get("dispatched").getAsInt());
-        assertEquals(0, sum.get("alreadyMatched").getAsInt());
-        assertEquals(32, sum.get("verified").getAsInt());
-        assertEquals(0, sum.get("unverified").getAsInt());
-        assertFalse(out.has("edits") || out.has("unverifiedEdits") || out.has("notes"));
-        assertEquals(32, out.get("notesInWindow").getAsInt());
-        int compact = out.toString().length();
-
-        JsonObject again = f.call("notes.set", p);
-        assertEquals("already_matched", again.get("outcome").getAsString());
-        assertEquals(32, again.getAsJsonObject("summary").get("alreadyMatched").getAsInt());
-        assertEquals(0, again.getAsJsonObject("summary").get("dispatched").getAsInt());
-
-        JsonObject full = manyEdits(f, 32);
-        full.addProperty("detail", "full");
-        JsonObject fullOut = f.call("notes.set", full);
-        assertEquals(32, fullOut.getAsJsonArray("edits").size());
-        assertEquals(32, fullOut.getAsJsonArray("notes").size());
-        assertEquals("already_matched", fullOut.get("outcome").getAsString());
-        assertTrue(compact * 3 < fullOut.toString().length(), "compact is much smaller");
-
-        LauncherFake silent = new LauncherFake();
-        clipAt(silent, 0);
-        silent.emitNotes = false;
-        JsonObject bad = silent.call("notes.set", manyEdits(silent, 3));
-        assertEquals("unknown", bad.get("outcome").getAsString(), "the fail-closed outcome is unchanged");
-        assertEquals(3, bad.getAsJsonObject("summary").get("unverified").getAsInt());
-        assertEquals(3, bad.getAsJsonArray("unverifiedEdits").size());
-        JsonObject item = bad.getAsJsonArray("unverifiedEdits").get(0).getAsJsonObject();
-        assertEquals("unknown", item.get("outcome").getAsString());
-        assertEquals(48, item.get("observed").getAsJsonObject().get("pitch").getAsInt());
-        assertEquals(0.0, item.get("beat").getAsDouble());
+    void aRangeLimitsTheReadAndALongLoopReadsInSeveralWindows() {
+        LauncherFake f = riff();
+        f.slots[0].length = 40;
+        f.put(0, 0, 36.5, 72, 70, 1);
+        JsonObject read =
+                f.startAndDrain(long_(f), "notes.get", target(f, 0)).result.join();
+        assertEquals(.0078125, read.get("onsetResolution").getAsDouble(), "every length reads on the write grid");
+        assertEquals(5, read.get("count").getAsInt(), "beat 36.5 lies in the window of beat 36");
+        JsonObject p = target(f, 0);
+        p.add("range", obj("{\"start\":0,\"end\":2,\"pitches\":[60,64]}"));
+        JsonObject ranged = f.call("notes.get", p);
+        assertEquals(obj("{\"start\":0,\"end\":2,\"pitches\":[60,64]}"), ranged.get("range"));
+        assertEquals(2, ranged.get("count").getAsInt());
+        JsonObject far = target(f, 0);
+        far.add("range", range(0, 100000));
+        JsonObject loop = f.startAndDrain(long_(f), "notes.get", far).result.join();
+        assertFalse(loop.get("complete").getAsBoolean(), "a range past the loop end is read up to it, incomplete");
+        assertEquals(5, loop.get("count").getAsInt());
     }
 
     @Test
-    void aFreshObservationThatDiffersIsAReadbackMismatch() {
-        LauncherFake f = new LauncherFake();
-        clipAt(f, 0);
-        f.emitNotes = false;
-        f.put(0, 0, 0, 60, 100, .5);
-        LauncherFake.Note old = f.notes.get(LauncherFake.key(0, 0, 0, 60));
-        HostOperation op = f.start("notes.set", editing(window(f), array(set(0, 60, 50, .5))));
-        while (f.writes < 1) f.next();
-        f.notes.put(LauncherFake.key(0, 0, 0, 60), old);
-        f.observer.noteStepChanged(f.note(0, 0, 60));
+    void aReadThatRunsOutOfTimeSaysItIsIncomplete() {
+        LauncherFake f = riff();
+        f.slots[0].length = 400;
+        HostOperation op = f.start(new HostOperation(f.tasks.after(1200)), "notes.get", target(f, 0));
         f.drain(op);
-        JsonObject out = op.result.join();
-        assertEquals("unknown", out.get("outcome").getAsString());
-        assertEquals("readback_mismatch", out.get("reason").getAsString());
-        assertEquals(
-                "readback_mismatch",
-                out.getAsJsonArray("unverifiedEdits")
-                        .get(0)
-                        .getAsJsonObject()
-                        .get("reason")
-                        .getAsString());
+        JsonObject read = op.result.join();
+        assertFalse(read.get("complete").getAsBoolean());
+        String reason = read.get("incompleteReason").getAsString();
+        java.util.regex.Matcher reached = java.util.regex.Pattern.compile(
+                        "^Too little time to read every window: read up to beat (\\d+): continue with range \\{start:"
+                                + " (\\d+), end: 400\\}\\.$")
+                .matcher(reason);
+        assertTrue(reached.matches(), reason);
+        assertEquals(reached.group(1), reached.group(2));
+        int beat = Integer.parseInt(reached.group(1));
+        assertTrue(beat >= 1 && beat < 400, reason);
+        for (JsonElement n : read.getAsJsonArray("notes"))
+            assertTrue(n.getAsJsonObject().get("beat").getAsDouble() < beat, "only beats read are listed: " + n);
+    }
+
+    /** An operation with the 30 s default deadline of the note methods. */
+    static HostOperation long_(LauncherFake f) {
+        return new HostOperation(f.tasks.after(30000));
     }
 
     @Test
-    void loopStartBoundsTheEdit() {
+    void aReadWrittenBackConvergesOnTheWriteGrid() {
         LauncherFake f = new LauncherFake();
         clipAt(f, 0);
-        f.loopStart = 1;
-        assertUnknown("invalid_params", f.startAndDrain("notes.set", editing(window(f), array(set(0, 60, 100, .5)))));
-        assertEquals(0, f.writes, "notes before the observed loop start are rejected before any mutation");
+        f.put(0, 0, .3, 48, 90, .25);
         assertEquals(
                 "applied",
-                f.call("notes.set", editing(window(f), array(set(1, 60, 100, .5))))
+                f.call("notes.set", set(f, 0, null, note(3.0625, 58, 70, .0625)))
                         .get("outcome")
                         .getAsString());
-        assertEquals(1, f.writes, "the loop start bound is inclusive");
-        JsonObject past = window(f);
-        past.addProperty("steps", 64);
-        assertUnknown("invalid_params", f.startAndDrain("notes.set", editing(past, array(set(4.75, 60, 100, .5)))));
-        assertEquals(1, f.writes, "a note past the loop end is rejected too");
+        for (JsonObject r : new JsonObject[] {range(3, 4), range(0, 1)}) {
+            JsonObject get = target(f, 0);
+            get.add("range", r);
+            JsonArray notes = f.call("notes.get", get).getAsJsonArray("notes");
+            assertEquals(1, notes.size());
+            JsonObject p = target(f, 0);
+            p.add("range", r);
+            p.add("notes", notes);
+            JsonObject out = f.call("notes.set", p);
+            assertEquals("already_matched", out.get("outcome").getAsString(), out.toString());
+        }
+        assertNotNull(f.at(0, 0, 3.0625, 58), "a 1/128-beat onset reads back where it is");
+        assertNotNull(f.at(0, 0, .3, 48), "an onset between grid lines reads at its cell start and is kept");
+    }
+
+    // ---- writes ----
+
+    @Test
+    void withoutRangeTheListedNotesAreWrittenInPlaceAndNothingIsRemoved() {
+        LauncherFake f = riff();
+        JsonObject quieter = new JsonObject();
+        quieter.addProperty("beat", 0);
+        quieter.addProperty("pitch", 60);
+        quieter.addProperty("velocity", 40);
+        JsonObject out = f.call("notes.set", set(f, 0, null, quieter, note(3, 48, 90, .5)));
+        assertEquals("applied", out.get("outcome").getAsString());
+        assertEquals("api_readback", out.get("verification").getAsString());
+        assertEquals(obj("{\"inserted\":1,\"updated\":1,\"removed\":0,\"unchanged\":0}"), out.get("summary"));
+        assertEquals("per_note", out.get("undo").getAsString());
+        assertFalse(out.get("exact").getAsBoolean());
+        assertEquals(40, f.at(0, 0, 0, 60).velocity);
+        assertEquals(1.0, f.at(0, 0, 0, 60).duration, "an omitted duration is kept");
+        assertEquals(5, f.clipNotes(0).size(), "nothing was removed");
     }
 
     @Test
-    void anEditCannotAddressASustainOrAnOverlap() {
-        LauncherFake f = new LauncherFake();
-        clipAt(f, 0);
-        f.put(0, 0, 0, 60, 100, 1);
-        assertUnknown("overlap", f.startAndDrain("notes.set", editing(window(f), array(set(.25, 60, 100, .25)))));
-        assertUnknown("overlap", f.startAndDrain("notes.set", editing(window(f), array(clear(.25, 60)))));
-        f.put(0, 0, 8, 61, 100, .25);
-        assertUnknown("overlap", f.startAndDrain("notes.set", editing(window(f), array(set(1.5, 61, 90, 1)))));
-        assertEquals(0, f.writes, "unrelated onsets are never overwritten");
-    }
-
-    @Test
-    void lateOrMissingObservationsRemainDispatched() {
-        LauncherFake f = new LauncherFake();
-        clipAt(f, 0);
-        f.emitNotes = false;
-        JsonObject p = editFixture(f);
-        p.addProperty("detail", "full");
+    void withARangeTheRangeBecomesTheListedNotesAndAReplayConverges() {
+        LauncherFake f = riff();
+        JsonObject p = set(f, 0, range(0, 2), note(0, 60, 100, 1), note(.5, 62, 70, .5));
         JsonObject out = f.call("notes.set", p);
-        assertEquals("unknown", out.get("outcome").getAsString());
-        assertEquals("not_observed", out.get("reason").getAsString(), "readback without fresh callbacks");
-        JsonObject unverified = out.getAsJsonArray("edits").get(0).getAsJsonObject();
-        assertEquals("unknown", unverified.get("outcome").getAsString());
-        assertEquals("not_observed", unverified.get("reason").getAsString());
-        assertEquals(5, out.getAsJsonArray("notes").size(), "a partial outcome still exposes the readable notes");
+        assertEquals("applied", out.get("outcome").getAsString());
+        assertEquals(obj("{\"inserted\":1,\"updated\":0,\"removed\":2,\"unchanged\":1}"), out.get("summary"));
+        assertEquals(range(0, 2), out.get("range"));
+        assertNull(f.at(0, 0, 1, 64), "an unlisted note in the range is removed");
+        assertNotNull(f.at(0, 2, 2, 36), "a note at the range end stays");
+        int writes = f.writes;
+        JsonObject again = f.call("notes.set", p);
+        assertEquals("already_matched", again.get("outcome").getAsString());
+        assertEquals("api_readback", again.get("verification").getAsString());
+        assertEquals("none", again.get("undo").getAsString());
+        assertEquals(writes, f.writes, "a replay writes nothing");
+    }
 
-        LauncherFake g = new LauncherFake();
-        clipAt(g, 0);
-        g.failWriteAt = 2;
-        assertUnknown("host_refused", g.startAndDrain("notes.set", p));
-        assertEquals(1, g.notes.size(), "the first applied note is preserved; no rollback or replay");
+    @Test
+    void aReadWrittenBackIsAlreadyMatchedAndTheLoopWithNoNotesClears() {
+        LauncherFake f = riff();
+        JsonObject read = f.call("notes.get", target(f, 0));
+        JsonObject p = target(f, 0);
+        p.add("range", range(0, 4));
+        p.add("notes", read.getAsJsonArray("notes"));
+        JsonObject echo = f.call("notes.set", p);
+        assertEquals("already_matched", echo.get("outcome").getAsString());
+        assertEquals(4, echo.getAsJsonObject("summary").get("unchanged").getAsInt());
+        p.add("notes", new JsonArray());
+        JsonObject cleared = f.call("notes.set", p);
+        assertEquals(4, cleared.getAsJsonObject("summary").get("removed").getAsInt());
+        assertTrue(f.clipNotes(0).isEmpty());
+    }
+
+    @Test
+    void theWholeClipAndRangesPastTheLoopAreNotWrittenWithoutTheNativeBinding() {
+        LauncherFake f = riff();
+        JsonObject all = set(f, 0, "all");
+        HostOperation op = f.startAndDrain("notes.set", all);
+        assertTrue(assertRpcError("native_unavailable", op)
+                .getMessage()
+                .contains("give range {start: 0, end: <loop end>}"));
+        assertFalse(op.dispatched());
+        JsonObject past = f.call("notes.set", set(f, 0, range(0, 8), note(0, 60, 100, 1)));
+        assertEquals("unknown", past.get("outcome").getAsString(), "refused after selecting the clip");
+        assertTrue(past.get("message").getAsString().contains("lengthen the loop (clips.set)"), past.toString());
+        assertEquals(0, f.writes);
+    }
+
+    @Test
+    void aRangeEndInsideACoarseCellLeavesTheNoteJustPastIt() {
+        LauncherFake f = riff();
+        f.put(0, 0, 1.1, 72, 70, .25);
+        JsonObject out = f.call("notes.set", set(f, 0, range(1, 1.0078125), note(1, 64, 90, 1)));
+        assertEquals("already_matched", out.get("outcome").getAsString(), out.toString());
+        assertNotNull(f.at(0, 0, 1.1, 72), "beat 1.1 lies past range.end 1.0078125 and stays");
+        HostOperation offGrid = f.startAndDrain("notes.set", set(f, 0, range(1, 1.003), note(1, 64, 90, 1)));
+        assertTrue(assertRpcError("native_unavailable", offGrid).getMessage().contains("range.end 1.003"));
+        assertFalse(offGrid.dispatched());
+    }
+
+    @Test
+    void anExistingOffGridNoteIsNotTakenForAListedOne() {
+        LauncherFake f = new LauncherFake();
+        clipAt(f, 0);
+        f.put(0, 0, .3, 60, 90, .25);
+        JsonObject out = f.call("notes.set", set(f, 0, range(0, 1), note(.25, 60, 90, .25)));
+        assertEquals(obj("{\"inserted\":1,\"updated\":0,\"removed\":1,\"unchanged\":0}"), out.get("summary"));
+        assertNotNull(f.at(0, 0, .25, 60));
+        assertNull(f.at(0, 0, .3, 60), "the note at 0.3 sat in the range and was not listed");
+    }
+
+    @Test
+    void aNoteSustainingIntoTheRangeFromBeforeItBlocksAnOverlappingWrite() {
+        LauncherFake f = riff();
+        f.put(0, 0, 2, 50, 90, 1.5);
+        JsonObject out = f.call("notes.set", set(f, 0, range(3, 4), note(3, 50, 90, .5)));
+        assertEquals("unknown", out.get("outcome").getAsString(), "a refusal after selecting is unknown");
+        assertEquals("invalid_params", out.get("reason").getAsString());
+        assertTrue(
+                out.get("message")
+                        .getAsString()
+                        .contains(
+                                "notes[0] starts at beat 3 while the note at about beat 2 on pitch 50 sustains to about beat 3.5:"
+                                        + " include beat 2 in range"),
+                out.toString());
+        assertEquals(0, f.writes);
+        assertEquals(
+                "applied",
+                f.call("notes.set", set(f, 0, range(3, 4), note(3.5, 50, 90, .5)))
+                        .get("outcome")
+                        .getAsString(),
+                "a note after the sustain ends is written");
+    }
+
+    @Test
+    void theClipRulesAreJudgedAgainstTheNotesLeftInPlace() {
+        LauncherFake f = riff();
+        JsonObject overlap = f.call("notes.set", set(f, 0, null, note(.5, 60, 90, .25)));
+        assertEquals("unknown", overlap.get("outcome").getAsString(), "a refusal after selecting is unknown");
+        assertTrue(
+                overlap.get("message")
+                        .getAsString()
+                        .contains(
+                                "notes[0] starts at beat 0.5 while the note at about beat 0 on pitch 60 sustains to about beat 1:"
+                                        + " list that note with duration <= about 0.5"),
+                overlap.toString());
+        JsonObject partial = new JsonObject();
+        partial.addProperty("beat", 3);
+        partial.addProperty("pitch", 50);
+        partial.addProperty("velocity", 90);
+        JsonObject missing = f.call("notes.set", set(f, 0, null, partial));
+        assertTrue(missing.get("message").getAsString().contains("is a new note"), missing.toString());
+        JsonObject past = f.call("notes.set", set(f, 0, null, note(3.5, 50, 90, 1)));
+        assertTrue(past.get("message").getAsString().contains("past the clip loop end 4"), past.toString());
+        assertEquals(0, f.writes);
+    }
+
+    @Test
+    void storedTimesInMessagesAreRoundedToSevenDecimals() {
+        LauncherFake f = riff();
+        f.slots[0].length = 4.3;
+        JsonObject past = f.call("notes.set", set(f, 0, null, note(4.296875, 50, 90, .1)));
+        assertTrue(
+                past.get("message")
+                        .getAsString()
+                        .contains("notes[0] ends at beat 4.3968754, past the clip loop end 4.3000002: shorten it to"
+                                + " duration <= 0.0031252"),
+                past.toString());
+    }
+
+    @Test
+    void onsetsOffThePublicGridAreRefusedBeforeAnythingIsSelected() {
+        LauncherFake f = riff();
+        HostOperation op = f.startAndDrain("notes.set", set(f, 0, null, note(.3, 60, 90, .25)));
+        RpcException error = assertRpcError("native_unavailable", op);
+        assertTrue(
+                error.getMessage().contains("1/128-beat grid, and these are not on it: notes[0] beat 0.3."),
+                error.getMessage());
+        assertFalse(op.dispatched());
+    }
+
+    @Test
+    void aWriteThatDoesNotReadBackIsUnknown() {
+        LauncherFake f = riff();
+        f.dropPublicWrites = true;
+        JsonObject out = f.call("notes.set", set(f, 0, null, note(3, 48, 90, .5)));
+        assertEquals("unknown", out.get("outcome").getAsString());
+        assertEquals("readback_mismatch", out.get("reason").getAsString());
+        assertEquals(array(note(3, 48, 90, .5)), out.getAsJsonObject("mismatch").get("missing"));
+        assertEquals(1, out.getAsJsonObject("summary").get("inserted").getAsInt());
+    }
+
+    @Test
+    void anUnlistedNoteThatAppearsInAWrittenWindowIsAReadbackMismatch() {
+        LauncherFake f = riff();
+        f.strayOnWrite = true;
+        JsonObject out = f.call("notes.set", set(f, 0, range(3, 4), note(3, 48, 90, .0078125)));
+        assertEquals("unknown", out.get("outcome").getAsString(), out.toString());
+        assertEquals("readback_mismatch", out.get("reason").getAsString());
+        assertEquals(array(), out.getAsJsonObject("mismatch").get("missing"));
+        assertEquals(
+                array(note(3.0078125, 48, 50, .0078125)),
+                out.getAsJsonObject("mismatch").get("unexpected"));
+    }
+
+    // ---- notes sustaining into a write from before the beats it reads ----
+
+    /** The outcome and message of a write on a clip of {@code length} beats holding {@code existing}. */
+    static JsonObject sustain(double length, JsonObject[] existing, Object range, JsonObject... notes) {
+        LauncherFake f = new LauncherFake();
+        clipAt(f, 0);
+        f.slots[0].length = length;
+        for (JsonObject n : existing)
+            f.put(
+                    0,
+                    n.has("channel") ? n.get("channel").getAsInt() : 0,
+                    n.get("beat").getAsDouble(),
+                    n.get("pitch").getAsInt(),
+                    n.get("velocity").getAsInt(),
+                    n.get("duration").getAsDouble());
+        JsonObject out = f.call("notes.set", set(f, 0, range, notes));
+        if (!out.get("outcome").getAsString().equals("applied")) assertEquals(0, f.writes, out.toString());
+        return out;
+    }
+
+    static void refused(JsonObject out, String message) {
+        assertEquals("unknown", out.get("outcome").getAsString(), out.toString());
+        assertEquals("invalid_params", out.get("reason").getAsString(), out.toString());
+        assertTrue(out.get("message").getAsString().contains(message), out.toString());
+    }
+
+    @Test
+    void aNoteFromBeforeTheBeatsReadIsFoundByItsOnsetAndBlocksAnOverlappingWrite() {
+        JsonObject[] whole = {note(1.5, 52, 83, 1)};
+        refused(
+                sustain(4, whole, range(2, 3), note(2, 52, 90, .25)),
+                "notes[0] starts at beat 2 while the note at about beat 1.5 on pitch 52 sustains to about beat 2.5: include beat 1.5"
+                        + " in range");
+        JsonObject[] midCell = {note(.5, 54, 83, .504)};
+        refused(
+                sustain(4, midCell, range(1, 2), note(1, 54, 90, .25)),
+                "notes[0] starts at beat 1 while the note at about beat 0.5 on pitch 54 sustains to about beat 1.0039997:"
+                        + " include beat 0.5 in range");
+        JsonObject[] upsert = {note(0, 56, 70, 2)};
+        refused(
+                sustain(4, upsert, null, note(1, 56, 90, .25)),
+                "notes[0] starts at beat 1 while the note at about beat 0 on pitch 56 sustains to about beat 2: list that note with"
+                        + " duration <= about 1");
+        JsonObject[] p1 = {note(1.9, 52, 83, 1)};
+        refused(sustain(4, p1, range(2, 3), note(2.5, 52, 90, .25)), "the note at about beat 1.8984375 on pitch 52");
+        JsonObject[] far = {note(0, 60, 90, 6)};
+        refused(
+                sustain(8, far, range(5, 6), note(5, 60, 90, .25)),
+                "the note at about beat 0 on pitch 60 sustains to about beat 6");
+    }
+
+    @Test
+    void aNoteWhoseOnsetSitsUnderAnEarlierSustainIsStillFound() {
+        JsonObject[] p2 = {note(.5, 52, 83, 1), note(1.75, 52, 83, 1)};
+        refused(sustain(4, p2, range(2, 3), note(2, 52, 90, .25)), "the note at about beat 1.75 on pitch 52");
+    }
+
+    @Test
+    void aNoteWhoseOnsetSitsUnderAnEarlierSustainIsStillFoundOnAnotherChannel() {
+        JsonObject[] p3 = {note(.5, 52, 83, 1, 1), note(1.75, 52, 83, 1, 1)};
+        refused(sustain(4, p3, range(2, 3), note(2, 52, 90, .25, 1)), "the note at about beat 1.75 on pitch 52");
+    }
+
+    @Test
+    void aNoteThatEndsByTheWrittenOnsetOrSitsOnAnotherRowDoesNotBlockIt() {
+        JsonObject[] endsAtStart = {note(1, 52, 83, 1)};
+        assertEquals(
+                "applied",
+                sustain(4, endsAtStart, range(2, 3), note(2, 52, 90, .25))
+                        .get("outcome")
+                        .getAsString(),
+                "a note ending exactly at range.start");
+        JsonObject[] shortBefore = {note(1, 56, 83, .25)};
+        assertEquals(
+                "applied",
+                sustain(4, shortBefore, null, note(1.25, 56, 90, .25))
+                        .get("outcome")
+                        .getAsString(),
+                "a note ending at the written onset in the same beat");
+        JsonObject[] otherChannel = {note(1, 50, 83, 2, 1)};
+        assertEquals(
+                "applied",
+                sustain(4, otherChannel, range(2, 3), note(2, 50, 90, .25))
+                        .get("outcome")
+                        .getAsString(),
+                "the same pitch on another channel");
+        refused(
+                sustain(4, otherChannel, range(2, 3), note(2.5, 50, 90, .25, 1)),
+                "the note at about beat 1 on pitch 50 sustains to about beat 3");
+    }
+
+    @Test
+    void aLookbackTheDeadlineCannotCoverWritesNothing() {
+        LauncherFake f = new LauncherFake();
+        clipAt(f, 0);
+        f.slots[0].length = 64;
+        f.put(0, 0, 0, 60, 90, 1);
+        HostOperation op = f.start(
+                new HostOperation(f.tasks.after(5000)), "notes.set", set(f, 0, range(60, 61), note(60, 60, 90, 1)));
+        f.drain(op);
+        String message = assertUnknown("deadline", op).get("message").getAsString();
+        assertTrue(message.contains("60 beat windows this write reads first (up to beat 60"), message);
+        assertTrue(message.endsWith("Nothing was written: raise timeoutMs (at most 60000)."), message);
+        assertEquals(0, f.writes);
+        assertEquals(
+                "applied",
+                f.startAndDrain(long_(f), "notes.set", set(f, 0, range(60, 61), note(60, 60, 90, 1)))
+                        .result
+                        .join()
+                        .get("outcome")
+                        .getAsString(),
+                "with time for every beat from 0 the write goes ahead");
+    }
+
+    @Test
+    void aWriteWhoseReadRunsOutOfTimeWritesNothing() {
+        LauncherFake f = new LauncherFake();
+        clipAt(f, 0);
+        f.slots[0].length = 64;
+        HostOperation op = f.start(
+                new HostOperation(f.tasks.after(1200)), "notes.set", set(f, 0, range(0, 64), note(0, 60, 90, 1)));
+        f.drain(op);
+        assertTrue(assertUnknown("deadline", op).get("message").getAsString().contains("Nothing was written"));
+        assertEquals(0, f.writes);
+    }
+
+    @Test
+    void aSpanBeyondOneWindowIsWrittenWindowByWindow() {
+        LauncherFake f = new LauncherFake();
+        clipAt(f, 0);
+        f.slots[0].length = 64;
+        JsonObject out = f.startAndDrain(
+                        long_(f), "notes.set", set(f, 0, null, note(0, 60, 90, 1), note(48, 60, 90, 1)))
+                .result
+                .join();
+        assertEquals("applied", out.get("outcome").getAsString());
+        assertNotNull(f.at(0, 0, 48, 60));
+        assertEquals(2, f.clipNotes(0).size());
     }
 
     // ---- guards ----
 
     @Test
-    void parallelSelectionIsRejectedWhileCursorEditRuns() {
-        LauncherFake f = new LauncherFake();
-        clipAt(f, 0);
-        HostOperation edit = f.start("notes.set", editFixture(f));
-        assertFalse(edit.result.isDone());
-        assertTrue(f.services.selection.held(), "a pending cursor edit holds the selection lease");
-        RpcException e = assertRpcError("busy", f.services.selection::requireFree);
-        assertFalse(e.unknown, "select methods fail fast, not applied");
-        f.drain(edit);
-        assertEquals("applied", edit.result.join().get("outcome").getAsString());
-        f.services.selection.requireFree();
+    void theCursorLeaseIsHeldWhileThePublicPathRuns() {
+        LauncherFake f = riff();
+        HostOperation first = f.start("notes.get", target(f, 0));
+        assertTrue(f.services.selection.held());
+        assertRpcError("busy", f.start("notes.get", target(f, 0)));
+        f.drain(first);
         assertFalse(f.services.selection.held(), "the lease is released with the operation");
     }
 
     @Test
-    void identityAndDeadlineGuards() {
-        LauncherFake f = new LauncherFake();
-        clipAt(f, 0);
-        clipAt(f, 1);
-        HostOperation op = f.start("notes.set", editFixture(f));
-        f.next(); // the cursor identity is observed, the settled binding is scheduled
-        f.selected = 1;
-        f.drain(op);
-        assertUnknown("not_observed", op);
-        assertEquals(0, f.writes, "another selected slot cannot receive explicit writes");
-
-        f = new LauncherFake();
-        clipAt(f, 0);
-        HostOperation expired = new HostOperation(f.tasks.now() - 1);
-        f.services.scheduler.schedule(
-                expired,
-                () -> {
-                    throw new AssertionError("an expired operation ran");
-                },
-                0);
-        f.drain(expired);
-        assertRpcError("deadline", expired);
-        assertEquals(0, f.writes, "expired operations never write");
-
-        f = new LauncherFake();
-        clipAt(f, 0);
-        op = f.start("notes.set", editFixture(f));
-        f.trackId = "22222222-2222-2222-2222-222222222222";
-        f.drain(op);
-        assertTrue(op.result.join().has("reason"), "a track change aborts the edit");
-        assertEquals(0, f.writes, "a track UUID change aborts the cursor edit");
-    }
-
-    @Test
-    void selectionDispatchPreventsNotAppliedFailure() {
-        LauncherFake f = new LauncherFake();
-        clipAt(f, 1);
-        assertEquals(0, f.selected, "the scenario starts with a different selected clip");
-        HostOperation op = f.start("notes.get", window(f, 1));
-        assertEquals(1, f.selected, "the note read already changed the selected clip");
+    void aTrackChangeAfterSelectingIsUnknownAndWritesNothing() {
+        LauncherFake f = riff();
+        HostOperation op = f.start("notes.set", set(f, 0, null, note(3, 48, 90, .5)));
         f.trackId = "22222222-2222-2222-2222-222222222222";
         f.drain(op);
         assertEquals("unknown", op.result.join().get("outcome").getAsString());
-        assertTrue(op.dispatched());
-        assertEquals(0, f.writes, "the context failure occurs before any note edit");
-    }
-
-    @Test
-    void aClipThatNeverBindsIsUnknownNotObserved() {
-        LauncherFake f = new LauncherFake();
-        clipAt(f, 0);
-        f.onSelect = () -> f.slots[0].content = false;
-        HostOperation op = f.startAndDrain("notes.get", window(f));
-        assertTrue(op.dispatched(), "selecting already counts as a dispatch");
-        assertUnknown("not_observed", op);
         assertEquals(0, f.writes);
     }
 
     @Test
-    void cursorLeaseDoesNotBlockLauncherReads() {
-        LauncherFake f = new LauncherFake();
-        clipAt(f, 0);
-        HostOperation first = f.start("notes.get", window(f));
-        assertRpcError("busy", f.start("notes.get", window(f)));
-        JsonObject list = f.call("launcher.list", listParams(f));
-        assertEquals(16, list.getAsJsonArray("slots").size(), "metadata reads proceed while a cursor edit is pending");
-        f.drain(first);
-        assertTrue(first.result.join().getAsJsonArray("notes").isEmpty(), "an empty actual grid read completes");
-        f.call("notes.get", window(f));
-    }
-
-    private static JsonObject listParams(LauncherFake f) {
-        JsonObject p = new JsonObject();
-        p.add("target", f.track());
-        return p;
-    }
-
-    @Test
     void unreadableGridsFailClosed() {
-        LauncherFake grid = riff();
-        grid.unreadableFromStep = 0;
-        JsonObject edit = editing(window(grid), array(set(0, 60, 100, .5)));
-        assertUnknown("not_ready", grid.startAndDrain("notes.set", edit));
-        grid = riff();
-        grid.unreadableFromStep = 1;
-        assertUnknown("not_ready", grid.startAndDrain("notes.set", edit));
-        assertEquals(0, grid.writes);
-        grid = riff();
-        grid.unreadableFromStep = 0;
-        assertUnknown("not_ready", grid.startAndDrain("notes.get", window(grid)));
+        LauncherFake f = riff();
+        f.unreadableFromStep = 0;
+        assertUnknown("not_ready", f.startAndDrain("notes.get", target(f, 0)));
+        assertUnknown("not_ready", f.startAndDrain("notes.set", set(f, 0, null, note(3, 48, 90, .5))));
+        assertEquals(0, f.writes);
     }
 
     @Test
@@ -876,59 +590,40 @@ public final class NoteModuleTest {
         assertFalse(empty.dispatched());
         JsonObject beyond = new JsonObject();
         beyond.add("target", Refs.launcherClip(f.track(), Refs.scene(50, null), "Riff"));
-        assertRpcError("target_not_found", f.startAndDrain("notes.set", editing(beyond, array(set(0, 60, 1, .25)))));
-        assertEquals(0, f.selected);
+        beyond.add("notes", array(note(0, 60, 1, .25)));
+        assertRpcError("target_not_found", f.startAndDrain("notes.set", beyond));
         assertEquals(0, f.scrolls, "nothing scrolled for a scene that does not exist");
     }
-
-    // ---- scenes beyond the first window, stale refs, holds ----
 
     private static LauncherFake farScene() {
         LauncherFake f = new LauncherFake();
         f.scenes = 40;
         f.sceneNames[33] = "Drop";
         clipAt(f, 33);
-        f.put(33, 0, 4, 61, 100, 1);
+        f.put(33, 0, 1, 61, 100, 1);
         return f;
     }
 
     @Test
-    void notesReadBeyondTheFirstWindowCarriesTheClipRefAndTheWindowRests() {
+    void aClipBeyondTheFirstSceneWindowIsReadAndWrittenThere() {
         LauncherFake f = farScene();
-        JsonObject read = f.call("notes.get", window(f, 33));
-        assertEquals(f.clip(33), read.get("ref").getAsJsonObject());
-        assertFalse(read.has("trackId") || read.has("slotIndex"));
-        assertEquals(1, read.getAsJsonArray("notes").size());
-        assertEquals(
-                1.0,
-                read.getAsJsonArray("notes")
-                        .get(0)
-                        .getAsJsonObject()
-                        .get("beat")
-                        .getAsDouble());
-        assertEquals(33, f.selected);
+        JsonObject read = f.call("notes.get", target(f, 33));
+        assertEquals(f.clip(33), read.getAsJsonObject("ref"));
+        assertEquals(1, read.get("count").getAsInt());
         assertEquals(24, f.bankOffset, "the window showed scene 33 while the clip was read");
-    }
-
-    @Test
-    void notesEditBeyondTheFirstWindowCarriesTheClipRefAndTheWindowRests() {
-        LauncherFake f = farScene();
-        JsonObject out = f.call("notes.set", editing(window(f, 33), array(set(2, 65, 90, .5))));
-        assertEquals("applied", out.get("outcome").getAsString());
-        assertEquals(f.clip(33), out.get("ref").getAsJsonObject(), "the result carries the clip ref");
-        assertFalse(out.has("trackId") || out.has("slotIndex"));
-        assertTrue(f.notes.containsKey(LauncherFake.key(33, 0, 8, 65)), "written into the clip of scene 33");
-        assertEquals(24, f.bankOffset);
         assertEquals(
-                2, f.call("notes.get", window(f, 33)).getAsJsonArray("notes").size());
+                "applied",
+                f.call("notes.set", set(f, 33, null, note(2, 65, 90, .5)))
+                        .get("outcome")
+                        .getAsString());
+        assertNotNull(f.at(33, 0, 2, 65));
     }
 
     @Test
     void aStaleSceneNameIsRefusedWithTheCurrentRefBeforeAnythingIsSelected() {
         for (String method : new String[] {"notes.get", "notes.set"}) {
             LauncherFake f = farScene();
-            JsonObject p = window(f, 33);
-            if (method.equals("notes.set")) editing(p, array(set(2, 65, 90, .5)));
+            JsonObject p = method.equals("notes.set") ? set(f, 33, null, note(2, 65, 90, .5)) : target(f, 33);
             f.sceneNames[33] = "Break";
             HostOperation op = f.startAndDrain(method, p);
             RpcException error = assertRpcError("target_changed", op);
@@ -940,70 +635,30 @@ public final class NoteModuleTest {
                             .get("name")
                             .getAsString());
             assertFalse(op.dispatched());
-            assertEquals(0, f.selected, "nothing was selected");
             assertEquals(0, f.writes);
         }
-        LauncherFake f = farScene();
-        JsonObject p = window(f, 33);
-        f.slots[33].name = "Other";
-        RpcException error = assertRpcError("target_changed", f.startAndDrain("notes.get", p));
-        assertEquals("Other", error.current.get("name").getAsString(), "a renamed clip names its current ref");
     }
 
     @Test
-    void anEditIsRefusedWhileAMutationIsUnresolvedForThatAbsoluteScene() {
+    void aWriteIsRefusedWhileAMutationIsUnresolvedForThatAbsoluteScene() {
         LauncherFake f = farScene();
         f.slots[33].content = false;
         f.failCreate = true;
         JsonObject create = obj("{\"loop\":{\"length\":4},\"name\":\"Hook\"}");
         create.add("to", f.slot(33));
         assertUnknown("host_refused", f.startAndDrain("clips.insert", create));
-        assertEquals(1, f.services.holds.list().size(), "the failed create holds scene 33");
         clipAt(f, 33);
         clipAt(f, 3);
-        HostOperation refused = f.startAndDrain("notes.set", editing(window(f, 33), array(set(2, 65, 90, .5))));
+        HostOperation refused = f.startAndDrain("notes.set", set(f, 33, null, note(2, 65, 90, .5)));
         RpcException error = assertRpcError("unresolved", refused);
-        assertTrue(error.getMessage().contains("scene 33"), "names the absolute scene: " + error.getMessage());
-        assertFalse(refused.dispatched(), "a held scene is refused before anything is selected");
-        assertEquals(0, f.writes);
-        assertEquals(
-                1, f.call("notes.get", window(f, 33)).getAsJsonArray("notes").size(), "reads still work");
+        assertTrue(error.getMessage().contains("scene 33"), error.getMessage());
+        assertFalse(refused.dispatched());
+        assertEquals(1, f.call("notes.get", target(f, 33)).get("count").getAsInt(), "reads still work");
         assertEquals(
                 "applied",
-                f.call("notes.set", editing(window(f, 3), array(set(2, 65, 90, .5))))
+                f.call("notes.set", set(f, 3, null, note(2, 65, 90, .5)))
                         .get("outcome")
                         .getAsString(),
                 "another scene of the same track is not held");
-    }
-
-    @Test
-    void anEditIsRefusedWhileASettingsWriteIsUnresolved() {
-        LauncherFake f = farScene();
-        clipAt(f, 3);
-        f.settings.failWrite = true;
-        JsonObject write = new JsonObject();
-        write.add("target", f.clip(3));
-        write.addProperty("nextAction", "stop");
-        HostOperation settings = f.startAndDrain("clips.set", write);
-        assertTrue(settings.result.isDone());
-        assertEquals(1, f.services.holds.list().size(), "the failed settings write is held");
-        HostOperation refused = f.startAndDrain("notes.set", editing(window(f, 33), array(set(2, 65, 90, .5))));
-        assertRpcError("unresolved", refused);
-        assertFalse(refused.dispatched());
-        assertEquals(0, f.writes);
-        assertEquals(0, f.selected);
-    }
-
-    @Test
-    void anEditFacingAnotherWindowIsBusyWhileTheLeaseIsHeld() {
-        LauncherFake f = farScene();
-        clipAt(f, 3);
-        HostOperation first = f.start("notes.get", window(f, 3));
-        assertFalse(first.result.isDone());
-        HostOperation other = f.start("notes.set", editing(window(f, 33), array(set(2, 65, 90, .5))));
-        assertRpcError("busy", other);
-        assertFalse(other.dispatched());
-        f.drain(first);
-        assertTrue(first.result.join().has("notes"), "the first read is undisturbed");
     }
 }

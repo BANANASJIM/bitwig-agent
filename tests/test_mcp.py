@@ -4,8 +4,7 @@ from mcp.shared.exceptions import MCPError
 
 from bitwig_agent.protocol import CLIENT_SIDE, TOOLS
 from bitwig_agent.protocol.base import REASONS
-from bitwig_agent.protocol.clips import NOTE_WINDOW
-from bitwig_agent.protocol.launcher import SLOT_REF
+from bitwig_agent.protocol.launcher import CLIP_REF, SLOT_REF
 
 pytestmark = pytest.mark.anyio
 
@@ -132,10 +131,10 @@ async def test_absent_fields_and_explicit_nullable_fields_remain_distinct_over_m
     assert not response.is_error
     assert host.requests[-1]["params"] == {"target": TRACK_REF, "mute": True}
     response = await mcp_session.call_tool(
-        "notes.set", {**NOTE_WINDOW, "edits": [{"op": "clear", "beat": 0, "pitch": 60}]}
+        "notes.set", {"target": CLIP_REF, "notes": [{"beat": 0, "pitch": 60, "velocity": 40}]}
     )
     assert not response.is_error
-    assert host.requests[-1]["params"]["edits"] == [{"op": "clear", "beat": 0, "pitch": 60}]
+    assert host.requests[-1]["params"]["notes"] == [{"beat": 0, "pitch": 60, "velocity": 40}]
 
 
 @pytest.mark.parametrize(
@@ -169,9 +168,9 @@ async def test_absent_fields_and_explicit_nullable_fields_remain_distinct_over_m
             {"to": {**SLOT_REF, "scene": {"kind": "scene", "index": -1, "name": None}}, "path": "/tmp/audio.wav"},
         ),
         ("clips.import", {"to": SLOT_REF, "path": "/tmp/audio.wav", "overwrite": True}),
-        ("notes.get", {**NOTE_WINDOW, "pitchStart": 127, "pitchCount": 2}),
-        ("notes.set", {**NOTE_WINDOW, "edits": [{"op": "set", "beat": 0, "pitch": 60}]}),
-        ("notes.set", {**NOTE_WINDOW, "edits": [{"op": "clear", "beat": 0, "pitch": 60, "velocity": None}]}),
+        ("notes.get", {"target": CLIP_REF, "range": {"start": 4, "end": 2}}),
+        ("notes.set", {"target": CLIP_REF, "notes": []}),
+        ("notes.set", {"target": CLIP_REF, "notes": [{"beat": 0, "pitch": 60, "velocity": None}]}),
     ],
 )
 async def test_invalid_domain_edits_are_not_dispatched(mcp_session, host, method, params):

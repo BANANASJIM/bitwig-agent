@@ -23,7 +23,6 @@ from tooling import host_paths
 
 from bitwig_agent.protocol import CLIENT_SIDE, TOOLS
 from bitwig_agent.protocol.base import MAX_BEAT, PROTOCOL
-from bitwig_agent.protocol.clips import MIDI_PITCH_COUNT
 from bitwig_agent.protocol.refs import CONTROL_ID, Ref
 
 UUID_PATTERN = r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
@@ -49,20 +48,14 @@ SKIPS: dict[tuple[str, str, str], str] = {
         "accept",
     ): "a note must fit the clip length (loop 4096, arranger 65536), so beat 4194304 is unreachable here",
     (
-        "notes.set",
-        "edits.0.beat",
-        "accept",
-    ): "no explicit window: the host derives a grid of <=128 steps (step<=4 beats, startStep<=1048576) and rejects extremes the schema allows; error names the fix",
-    (
         "clips.insert",
         "notes.0.duration",
         "accept",
-    ): "same derived-grid limit (a 4096-beat note needs >128 steps)",
-    (
-        "notes.set",
-        "edits.0.duration",
-        "accept",
-    ): "same derived-grid limit as edits.0.beat (duration 4096 beats needs >128 steps)",
+    ): "a note must fit the clip length, so a 4096-beat duration is unreachable in the 4-beat example",
+    **{
+        (m, "range.start", "accept"): "range.end must exceed range.start and is capped at the same bound"
+        for m in ("notes.get", "notes.set")
+    },
     **{
         (
             m,
@@ -112,15 +105,25 @@ def project_path(params, value):
         params["path"] = ROOT + filler + tail
 
 
-def window_fix(field):
-    """Keep the explicit note window self-consistent while one window field sweeps."""
+def note_range_fix(field):
+    """Keep a notes range ordered and its listed notes inside it while one range bound sweeps."""
 
     def fix(params, value):
-        if field == "pitchStart" and 0 <= value < MIDI_PITCH_COUNT:
-            params["pitchCount"] = max(1, min(params["pitchCount"], MIDI_PITCH_COUNT - value))
-        if "edits" in params and "stepSize" in params:
-            params["edits"] = [
-                {"op": "clear", "beat": params["startStep"] * params["stepSize"], "pitch": params["pitchStart"]}
+        box = params.get("range")
+        if not isinstance(box, dict) or not isinstance(value, (int, float)):
+            return
+        if field == "start":
+            box["end"] = MAX_BEAT if value >= MAX_BEAT else max(box["end"], min(MAX_BEAT, value + 1))
+        elif field == "end":
+            box["start"] = min(box["start"], max(0, value - 1))
+        elif field == "pitches.0" and "pitches" in box:
+            box["pitches"][1] = max(box["pitches"][1], min(127, value))
+        elif field == "pitches.1" and "pitches" in box:
+            box["pitches"][0] = min(box["pitches"][0], max(0, value))
+        low, high = box.get("pitches", [0, 127])
+        if "notes" in params:
+            params["notes"] = [
+                n for n in params["notes"] if box["start"] <= n["beat"] < box["end"] and low <= n["pitch"] <= high
             ]
 
     return fix
@@ -222,9 +225,9 @@ FIXUPS = {
     ("project.saveAs", "path"): project_path,
     ("export.audio", "directory"): lambda p, v: p.__setitem__("directory", as_path(v)),
     **{
-        (m, f): window_fix(f)
+        (m, f"range.{f}"): note_range_fix(f)
         for m in ("notes.get", "notes.set")
-        for f in ("stepSize", "startStep", "steps", "pitchStart", "pitchCount")
+        for f in ("start", "end", "pitches.0", "pitches.1")
     },
 }
 

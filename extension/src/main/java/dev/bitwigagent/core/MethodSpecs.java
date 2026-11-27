@@ -56,8 +56,7 @@ public final class MethodSpecs {
                 remotePageSlots,
                 parameterResolution,
                 minTimeoutMs,
-                maxRequestBytes,
-                maxResponseBytes,
+                maxMessageBytes,
                 defaultPort,
                 maxClipLength,
                 responseGraceMs;
@@ -71,8 +70,7 @@ public final class MethodSpecs {
             remotePageSlots = integer(object, "remotePageSlots");
             parameterResolution = integer(object, "parameterResolution");
             minTimeoutMs = integer(object, "minTimeoutMs");
-            maxRequestBytes = integer(object, "maxRequestBytes");
-            maxResponseBytes = integer(object, "maxResponseBytes");
+            maxMessageBytes = integer(object, "maxMessageBytes");
             defaultPort = integer(object, "defaultPort");
             maxClipLength = integer(object, "maxClipLength");
             responseGraceMs = integer(object, "responseGraceMs");
@@ -83,7 +81,7 @@ public final class MethodSpecs {
             if (Math.min(Math.min(trackWindow, sceneWindow), Math.min(deviceWindow, sendWindow)) < 1
                     || Math.min(remotePageSlots, minTimeoutMs) < 1
                     || parameterResolution < 2
-                    || Math.min(maxRequestBytes, maxResponseBytes) < 1
+                    || maxMessageBytes < 1
                     || defaultPort < 1
                     || defaultPort > 65535
                     || maxClipLength < 1
