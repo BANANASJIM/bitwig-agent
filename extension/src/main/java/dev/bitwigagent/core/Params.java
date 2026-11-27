@@ -44,6 +44,22 @@ public final class Params {
         }
     }
 
+    /** A file's name without directory and extension: the name Bitwig gives a track, layer or clip made from it. */
+    public static String stem(String path) {
+        String name = Path.of(path).getFileName().toString();
+        int dot = name.lastIndexOf('.');
+        return dot > 0 ? name.substring(0, dot) : name;
+    }
+
+    /**
+     * Whether a device loaded from this file shows the file's stem as its name: a Bitwig preset or device file does;
+     * an audio file loads into a Sampler, which keeps its own name.
+     */
+    public static boolean namesItsDevice(String path) {
+        String lower = path.toLowerCase(java.util.Locale.ROOT);
+        return lower.endsWith(".bwpreset") || lower.endsWith(".bwdevice");
+    }
+
     public static int integer(JsonObject p, String key, int min, int max) {
         JsonElement value = value(p, key);
         if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isNumber())

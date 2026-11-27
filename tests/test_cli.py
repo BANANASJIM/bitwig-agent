@@ -1181,7 +1181,8 @@ def args_of(method, rest):
         ("clips.launch", "clip", CLIP_REF, "target"),
         ("devices.get", "device", DEVICE_REF, "target"),
         ("devices.list", "track", TRACK_REF, "target"),
-        ("clips.import", "slot", SLOT_REF, "to"),
+        ("clips.delete", "clip", CLIP_REF, "target"),
+        ("chains.insert", "device", DEVICE_REF, "to"),
         ("modulators.insert", "device", DEVICE_REF, "to"),
     ],
 )

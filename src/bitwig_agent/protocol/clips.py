@@ -414,6 +414,12 @@ class ClipImportArgs(StatusArgs):
         return self
 
 
+class ClipImportPlacedArgs(ClipImportArgs):
+    to: Destination = Field(  # type: ignore[assignment]
+        description="An empty launcher slot (slot ref), or {track, start}: the arranger timeline of that track at start (beats)."
+    )
+
+
 class LoopExpect(StrictModel):
     length: float
 
@@ -591,6 +597,16 @@ CLIPS_IMPORT_DESCRIPTION = (
     "an observed slot content transition, not file identity or decoded audio verification. An unobserved insertion is "
     "outcome unknown and holds the slot until you inspect it and ack the hold; never retry it."
 )
+CLIPS_IMPORT_ARRANGER = (
+    " to {track, start} puts the file on that track's arranger timeline at start (beats): the API has no arranger "
+    "insertion point, so it is imported into the track's first empty launcher slot, copied to the timeline with "
+    "clips.copy (any overlap is refused) and deleted from the slot with clips.delete; entries has one step each "
+    "(three Undo steps), the first that does not succeed stops the rest, nothing is rolled back and next names a "
+    "launcher clip left behind. Needs an empty slot on the track (else limit_reached: add a scene) and what "
+    "clips.copy needs: a stopped transport, recording/automation-write off and a settled project. Returns ref and "
+    "clip of the arranger clip and file {name, seconds}: the name a clip made from the file gets and "
+    "the audio's length (null for MIDI, or without the optional audio extra), to compare with the clip."
+)
 CLIPS_SET_DESCRIPTION = (
     "Set the supplied fields of ONE existing clip; each fields entry has its own outcome and expect compares bare "
     "current values first (stale/target_changed with observed). Launcher clip: name, color (#rrggbb; Bitwig may snap "
@@ -722,12 +738,17 @@ SPECS: dict[str, ToolSpec] = {
         summary="Create a named MIDI clip in an empty launcher slot (to: slot ref, loop {length}) or on an instrument track's timeline (to {track, start}, length), with optional notes (beats on the 1/128 grid, any duration). Returns the new ref. A launcher create selects it. Unobserved: unknown, ack the hold, never retry.",
     ),
     "clips.import": ToolSpec(
-        ClipImportArgs,
-        CLIPS_IMPORT_DESCRIPTION,
+        ClipImportPlacedArgs,
+        CLIPS_IMPORT_DESCRIPTION + CLIPS_IMPORT_ARRANGER,
         False,
-        examples=({"to": SLOT_REF, "path": "/absolute/path/audio.wav"},),
+        examples=(
+            {"to": SLOT_REF, "path": "/absolute/path/audio.wav"},
+            {"to": {"track": TRACK_REF, "start": 8}, "path": "/absolute/path/audio.wav"},
+        ),
         requires=PROJECT_READY + NOT_RECORDING,
-        summary="Import a local audio or .mid file into an empty launcher slot (to: slot ref); path is absolute and normalized. Never overwrites; applied means a slot content transition was observed, not the file's content. An unobserved insertion is unknown and holds the slot until you inspect it and ack; never retry.",
+        summary="Import a local audio or .mid file (absolute path) into an empty launcher slot (to: slot ref) or onto a track's arranger at a beat (to {track, start}; via an empty slot, clips.copy and clips.delete). Never overwrites; compare file {name, seconds} with the new clip. An unobserved step is unknown and holds its slot; never retry.",
+        wire=ClipImportArgs,
+        wire_description=CLIPS_IMPORT_DESCRIPTION,
     ),
     "clips.set": ToolSpec(
         ClipSetArgs,

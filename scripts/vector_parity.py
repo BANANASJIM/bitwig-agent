@@ -238,6 +238,7 @@ FIXUPS = {
     ("devices.insert", "insert.path"): file_insert,
     ("devices.replace", "insert.path"): file_insert,
     ("clips.import", "path"): lambda p, v: p.__setitem__("path", as_path(v)),
+    ("tracks.insert", "file"): lambda p, v: p.__setitem__("file", as_path(v)),
     ("clips.set", "expect"): lambda p, v: p.__setitem__("expect", {"name": "Hook"}),
     ("project.saveAs", "path"): project_path,
     ("export.audio", "directory"): lambda p, v: p.__setitem__("directory", as_path(v)),

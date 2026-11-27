@@ -7,6 +7,7 @@ import pytest
 import test_audio_pipewire
 import test_batch
 import test_configured_insert
+import test_file_import
 import test_grid_apply
 import test_grid_probe
 import test_grid_render
@@ -64,6 +65,8 @@ CHECKED: dict[str, Callable[..., object]] = {
     "audio.route": test_audio_pipewire.test_route_outcomes,
     "devices.insert": test_configured_insert.test_a_later_failure_keeps_the_ref_and_says_how_to_finish_without_reinserting,
     "modulators.insert": test_configured_insert.test_modulators_insert_sets_controls_then_maps_from_the_new_modulator,
+    "chains.insert": test_configured_insert.test_chains_insert_fills_the_new_pad_chain_with_the_sample,
+    "clips.import": test_file_import.test_an_arranger_import_goes_through_the_first_empty_slot_then_copies_and_deletes,
     "batch": test_batch.test_n_calls_give_n_entries_in_order_and_nothing_runs_after_the_stop,
 }
 

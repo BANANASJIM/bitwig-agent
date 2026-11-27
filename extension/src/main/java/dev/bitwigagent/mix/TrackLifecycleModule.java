@@ -8,6 +8,7 @@ import dev.bitwigagent.core.HostLimits;
 import dev.bitwigagent.core.HostModule;
 import dev.bitwigagent.core.HostOperation;
 import dev.bitwigagent.core.Outcome;
+import dev.bitwigagent.core.Params;
 import dev.bitwigagent.core.PortHandle;
 import dev.bitwigagent.core.Positions;
 import dev.bitwigagent.core.Reason;
@@ -18,12 +19,15 @@ import dev.bitwigagent.host.SelectionLease;
 import dev.bitwigagent.host.TrackRefs;
 import dev.bitwigagent.host.TrackWindow;
 import dev.bitwigagent.host.TransportSafety;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 
 /**
  * tracks.insert, tracks.group, tracks.duplicate and tracks.delete: structure changes of the track list, each attributed
- * by observation.
+ * by observation. tracks.insert with a file drops it between the tracks (Track.before/afterTrackInsertionPoint), where
+ * Bitwig makes an instrument track named after the file with a Sampler holding it.
  */
 public final class TrackLifecycleModule implements HostModule {
     static final Set<String> METHODS = Set.of("tracks.insert", "tracks.group", "tracks.delete", "tracks.duplicate");
@@ -83,8 +87,13 @@ public final class TrackLifecycleModule implements HostModule {
         validateParams(method, p);
     }
 
-    /** What the schema cannot say: a group lists each track once. */
+    /** What the schema cannot say: a group lists each track once; an insertion is a type and name, or a file. */
     static void validateParams(String method, JsonObject p) {
+        if (method.equals("tracks.insert")) {
+            if (p.has("file") ? p.has("type") || p.has("name") : !p.has("type") || !p.has("name"))
+                throw Errors.invalid("tracks.insert takes type and name, or file alone (Bitwig names the track).");
+            if (p.has("file")) Params.absoluteFilePath(p, "file");
+        }
         if (method.equals("tracks.group")) {
             Set<String> seen = new HashSet<>();
             for (JsonElement target : p.getAsJsonArray("targets"))
@@ -140,23 +149,45 @@ public final class TrackLifecycleModule implements HostModule {
                     Reason.UNSUPPORTED_SCOPE,
                     "Track insertion in a grouped project needs every track's parent observed (" + before.tree.reason
                             + "); the insertion position cannot be attributed safely and nothing changed.");
-        String type = p.get("type").getAsString();
+        String file = p.has("file") ? p.get("file").getAsString() : null;
+        String type = file != null ? "instrument" : p.get("type").getAsString();
         int position = position(p.get("position"), type.equals("effect"), before.tree);
+        InsertionPoint point = file != null ? between(position, before.tree, file) : null;
         inserting = op;
         scheduler.check(op);
         op.markDispatched();
         holds.place(INSERTION, "A prior tracks.insert factory remains unattributed.");
-        switch (type) {
-            case "audio":
-                application.createAudioTrack(position);
-                break;
-            case "instrument":
-                application.createInstrumentTrack(position);
-                break;
-            default:
-                application.createEffectTrack(position);
-        }
-        awaitInsertion(op, p, before, position);
+        if (point != null) point.insertFile(file);
+        else
+            switch (type) {
+                case "audio":
+                    application.createAudioTrack(position);
+                    break;
+                case "instrument":
+                    application.createInstrumentTrack(position);
+                    break;
+                default:
+                    application.createEffectTrack(position);
+            }
+        awaitInsertion(op, p, before, position, type);
+    }
+
+    /**
+     * Where a file dropped between the tracks lands at the main-list index {@code position} (-1 appends): before the
+     * top-level main track there, or after the last one. With no main track there is nothing to drop it next to.
+     */
+    private InsertionPoint between(int position, TrackTree tree, String file) {
+        if (!Files.isRegularFile(Path.of(file)) || !Files.isReadable(Path.of(file)))
+            throw Errors.notApplied(Reason.INVALID_FILE, "tracks.insert file requires a readable regular local file.");
+        List<TrackTree.Node> main = tree.topLevel(false);
+        if (main.isEmpty())
+            throw Errors.notApplied(
+                    Reason.UNSUPPORTED_SCOPE,
+                    "A file is dropped next to an existing main track and the project has none: insert one with "
+                            + "tracks.insert {type: instrument, name}, then devices.insert the file onto it.");
+        if (position == -1 || position >= main.size())
+            return window.at(main.get(main.size() - 1).slot).afterTrackInsertionPoint();
+        return window.at(main.get(position).slot).beforeTrackInsertionPoint();
     }
 
     /** The index among the top-level tracks of the list the new track goes to; -1 appends. */
@@ -515,17 +546,21 @@ public final class TrackLifecycleModule implements HostModule {
         return null;
     }
 
-    private void awaitInsertion(HostOperation op, JsonObject p, Creation before, int requested) {
+    private void awaitInsertion(HostOperation op, JsonObject p, Creation before, int requested, String type) {
         String[] candidate = {null};
         scheduler.conclude(
                 op,
                 scheduler.observeUntil(op),
-                () -> insertionStep(op, p, before, requested, candidate),
+                () -> insertionStep(op, p, before, requested, type, candidate),
                 () -> unknownInsertion(op, p, Reason.NOT_OBSERVED, "unique_added_track_not_observed"));
     }
 
-    /** The conclusion once the new track is attributed (seen on two polls in a row) or cannot be; null to keep polling. */
-    private Runnable insertionStep(HostOperation op, JsonObject p, Creation before, int requested, String[] candidate) {
+    /**
+     * The conclusion once the new track is attributed (seen on two polls in a row) or cannot be; null to keep polling.
+     * A track made from a file must also carry the file's name, the evidence that the file made it.
+     */
+    private Runnable insertionStep(
+            HostOperation op, JsonObject p, Creation before, int requested, String type, String[] candidate) {
         Creation after = capture();
         if (after.offset != before.offset || !after.ids.containsAll(before.ids))
             return () -> unknownInsertion(op, p, Reason.TARGET_CHANGED, "track_window_or_existing_targets_changed");
@@ -536,7 +571,6 @@ public final class TrackLifecycleModule implements HostModule {
         if (after.complete && after.total == before.total + 1 && added.size() == 1) {
             String id = added.iterator().next();
             Track track = window.at(window.trackSlot(id));
-            String type = p.get("type").getAsString();
             boolean effect = type.equals("effect");
             if (!before.groups && after.groups)
                 return () -> unknownInsertion(op, p, Reason.SIDE_EFFECT, "group_appeared_during_insertion");
@@ -553,7 +587,10 @@ public final class TrackLifecycleModule implements HostModule {
                 observed = ordinal(track, effect);
             }
             int expected = requested == -1 ? oldSize : Math.min(requested, oldSize);
-            if (track.trackType().get().equalsIgnoreCase(type) && observed != null && observed == expected) {
+            boolean named = !p.has("file")
+                    || Params.stem(p.get("file").getAsString())
+                            .equals(track.name().get());
+            if (track.trackType().get().equalsIgnoreCase(type) && named && observed != null && observed == expected) {
                 if (id.equals(candidate[0]))
                     return () -> insertionAttributed(op, p, before, id, track, type, requested);
                 candidate[0] = id;
@@ -571,7 +608,14 @@ public final class TrackLifecycleModule implements HostModule {
         info.addProperty("observedPosition", track.position().get());
         info.addProperty("type", type);
         info.addProperty("parentScope", before.groups ? "top_level_of_grouped_project" : "flat_project");
-        mix.rename(op, id, p.get("name").getAsString(), info, "insertion");
+        if (!p.has("file")) {
+            mix.rename(op, id, p.get("name").getAsString(), info, "insertion");
+            return;
+        }
+        JsonObject result = Results.outcome(Outcome.APPLIED, Verification.API_READBACK);
+        result.add("ref", trackRefs.ref(window.trackSlot(id)));
+        result.add("insertion", info);
+        op.result.complete(result);
     }
 
     private int ordinal(Track candidate, boolean effect) {

@@ -9,6 +9,7 @@ import dev.bitwigagent.HostFixture;
 import dev.bitwigagent.TestPaths;
 import dev.bitwigagent.core.HostModule;
 import dev.bitwigagent.core.HostOperation;
+import dev.bitwigagent.core.Params;
 import dev.bitwigagent.core.Refs;
 import dev.bitwigagent.core.RpcException;
 import java.util.*;
@@ -311,11 +312,11 @@ public final class DeviceChainModuleTest {
     }
 
     private static JsonObject replace(JsonObject ref) {
-        return params(
-                "target",
-                ref,
-                "insert",
-                params("kind", "file", "path", TestPaths.absolute("/presets/Warm Pad.bwpreset")));
+        return replace(ref, "/presets/Warm Pad.bwpreset");
+    }
+
+    private static JsonObject replace(JsonObject ref, String file) {
+        return params("target", ref, "insert", params("kind", "file", "path", TestPaths.absolute(file)));
     }
 
     @Test
@@ -404,7 +405,29 @@ public final class DeviceChainModuleTest {
                         .get("outcome")
                         .getAsString(),
                 "the requested preset's name is evidence");
-        assertEquals("Warm Pad", DeviceChainModule.stem("/presets/Warm Pad.bwpreset"));
+        assertEquals("Warm Pad", Params.stem("/presets/Warm Pad.bwpreset"));
+
+        DeviceFixture sampled = abc();
+        sampled.top.replacement = new String[] {"Sampler", "audio-effect"};
+        assertEquals(
+                "applied",
+                sampled.finish(sampled.run(
+                                sampled.chains(),
+                                "devices.replace",
+                                replace(sampled.device(1, "B"), "/samples/Kick.wav"),
+                                sampled.host.tasks.after(20)))
+                        .get("outcome")
+                        .getAsString(),
+                "an audio file loads a Sampler, which is not named after the file");
+        DeviceFixture resampled = abc();
+        resampled.top.replacement = new String[] {"B", "audio-effect"};
+        assertUnknown(
+                "not_observed",
+                resampled.finishOrError(resampled.run(
+                        resampled.chains(),
+                        "devices.replace",
+                        replace(resampled.device(1, "B"), "/samples/Kick.wav"),
+                        resampled.host.tasks.after(20))));
 
         DeviceFixture bad = abc();
         assertRpcError(

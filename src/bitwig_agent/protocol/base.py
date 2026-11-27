@@ -266,6 +266,14 @@ STOPPED = ("stopped",)
 """NOT_RECORDING and the transport observed stopped."""
 
 
+def accepts(model: type[BaseModel], arguments: dict[str, Any]) -> bool:
+    try:
+        model.model_validate(arguments)
+    except ValueError:  # pydantic's ValidationError
+        return False
+    return True
+
+
 @dataclass(frozen=True)
 class ToolSpec:
     model: type[BaseModel]
@@ -294,9 +302,10 @@ class ToolSpec:
 
     @property
     def host_examples(self) -> tuple[dict[str, Any], ...]:
-        """The examples the host itself accepts: those without the client-composed fields."""
-        composed = self.model.model_fields.keys() - self.host_model.model_fields.keys()
-        return tuple(example for example in self.examples if not composed & example.keys())
+        """The examples the host itself accepts: those without the client-composed fields or values."""
+        if self.wire is None:
+            return self.examples
+        return tuple(example for example in self.examples if accepts(self.wire, example))
 
     @property
     def project_write(self) -> bool:

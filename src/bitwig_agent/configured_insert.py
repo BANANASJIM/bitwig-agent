@@ -1,6 +1,8 @@
-"""devices.insert {params} and modulators.insert {params, map}: create, then configure, in one call.
+"""devices.insert {params}, modulators.insert {params, map} and chains.insert {insert}: create, then configure or fill,
+in one call.
 
-The insert, each parameters.set and each modulators.map run as the standalone calls would, one entry each, under
+The insert, each parameters.set, each modulators.map and the devices.insert that fills a new chain run as the
+standalone calls would, one entry each, under
 the batch rule: every step is resolved first, then they run in order and stop at the first that does not succeed.
 Once the insert applied, the result keeps the new object's ref and, after a failed step, a next naming the calls
 that finish the job on it: the object exists, so repeating the insert would duplicate it. Nothing is rolled back.
@@ -18,8 +20,14 @@ from bitwig_agent.protocol import TOOLS
 from bitwig_agent.protocol.base import SUCCEEDED, Outcome, shared_verification, worst
 
 MAX_CANDIDATES = 8
-PARAMETER_READ = {"devices.insert": "parameters.list", "modulators.insert": "modulators.get"}
-"""Where the new object's parameter refs are read, by insert method."""
+PARAMETER_READ = {
+    "devices.insert": "parameters.list",
+    "modulators.insert": "modulators.get",
+    "chains.insert": "chains.list",
+}
+"""Where the refs of the new object, or of its parameters, are read, by insert method."""
+CREATED_STEP = {"chains.insert": "chain"}
+"""The entry name of the create step where it is not "insert" (chains.insert's own insert is the fill step)."""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -48,9 +56,10 @@ Planner = Callable[[Any, dict[str, Any], dict[str, Any], int], Awaitable[list[St
 
 def refuse_all(extra: Mapping[str, Any], why: dict[str, Any]) -> list[Step]:
     """Every step the request asks for, in run order, refused for one reason."""
+    fill = [("insert", "devices.insert")] if "insert" in extra else []
     params = [(f"params.{name}", "parameters.set") for name in extra.get("params", {})]
     maps = [(f"map[{i}]", "modulators.map") for i in range(len(extra.get("map", [])))]
-    return [Refused(name, method, why) for name, method in params + maps]
+    return [Refused(name, method, why) for name, method in fill + params + maps]
 
 
 def param_steps(params: Mapping[str, Any], rows: list[Mapping[str, Any]]) -> list[Step]:
@@ -93,6 +102,11 @@ async def modulator_steps(client: Any, created: dict[str, Any], extra: dict[str,
     ]
 
 
+async def chain_steps(client: Any, created: dict[str, Any], extra: dict[str, Any], timeout_ms: int) -> list[Step]:
+    """The new chain is filled by a devices.insert into it."""
+    return [Call("insert", "devices.insert", {"to": created["ref"], "insert": extra["insert"]})]
+
+
 async def run(client: Any, step: Call, timeout_ms: int) -> dict[str, Any]:
     """The step's entry: the call's own result, or its error (nothing changed) as not_applied with that reason."""
     try:
@@ -117,6 +131,8 @@ async def execute(client: Any, steps: list[Step], timeout_ms: int) -> list[dict[
 
 def finish_hint(method: str, created: dict[str, Any], steps: list[Step], entries: list[dict[str, Any]]) -> str:
     """The calls that finish the job on the object the insert created."""
+    if Outcome(created["outcome"]) is Outcome.ALREADY_MATCHED:
+        return f"{method} found it already there, so nothing ran on it: finish with {steps[0].method} on its ref if you still want it."
     if Outcome(created["outcome"]) is not Outcome.APPLIED:
         return str(created.get("next", f"Inspect with {TOOLS[method].inspect} before any further write."))
     read = PARAMETER_READ[method] if "ref" in created else TOOLS[method].inspect
@@ -134,7 +150,7 @@ def finish_hint(method: str, created: dict[str, Any], steps: list[Step], entries
 
 def report(method: str, created: dict[str, Any], steps: list[Step], entries: list[dict[str, Any]]) -> dict[str, Any]:
     """Outcome the worst entry, verification by the leaf rule, the new ref, and the next that finishes the job."""
-    every = [{"step": "insert", **created}, *entries]
+    every = [{"step": CREATED_STEP.get(method, "insert"), **created}, *entries]
     outcome = worst(entry["outcome"] for entry in every)
     result: dict[str, Any] = {"outcome": outcome.value}
     shared = shared_verification(every) if outcome is Outcome.APPLIED else None
@@ -152,13 +168,20 @@ def report(method: str, created: dict[str, Any], steps: list[Step], entries: lis
 async def insert_then(
     planner: Planner, method: str, client: Any, args: dict[str, Any], timeout_ms: int
 ) -> dict[str, Any]:
-    extra: dict[str, Any] = {key: args.pop(key) for key in ("params", "map") if key in args}
+    spec = TOOLS[method]
+    composed = spec.model.model_fields.keys() - spec.host_model.model_fields.keys()
+    extra: dict[str, Any] = {key: args.pop(key) for key in sorted(composed) if key in args}
     # an error from the insert changed nothing: it stays the call's error
     created: dict[str, Any] = await client.call(method, args, timeout_ms)
     if not extra:
         return created
-    if Outcome(created["outcome"]) is Outcome.APPLIED and "ref" in created:
+    outcome = Outcome(created["outcome"])
+    if outcome is Outcome.APPLIED and "ref" in created:
         steps = await planner(client, created, extra, timeout_ms)
+    elif outcome is Outcome.ALREADY_MATCHED:
+        steps = refuse_all(
+            extra, not_applied("target_exists", f"{method} found it already there; nothing was added to it.")
+        )
     else:
         steps = refuse_all(extra, NOT_REACHED)
     return report(method, created, steps, await execute(client, steps, timeout_ms))
@@ -170,3 +193,12 @@ async def devices_insert(client: Any, args: dict[str, Any], timeout_ms: int) -> 
 
 async def modulators_insert(client: Any, args: dict[str, Any], timeout_ms: int) -> dict[str, Any]:
     return await insert_then(modulator_steps, "modulators.insert", client, args, timeout_ms)
+
+
+async def chains_insert(client: Any, args: dict[str, Any], timeout_ms: int) -> dict[str, Any]:
+    """Bitwig renames a chain after the file it is filled with: the filled device's ref carries the chain as read then."""
+    result = await insert_then(chain_steps, "chains.insert", client, args, timeout_ms)
+    filled = result.get("entries", [{}, {}])[1]
+    if filled.get("outcome") == Outcome.APPLIED:
+        result["ref"] = filled["ref"]["chain"]
+    return result

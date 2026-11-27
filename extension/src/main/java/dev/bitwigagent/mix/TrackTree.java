@@ -250,10 +250,16 @@ final class TrackTree {
         return ordinal;
     }
 
+    /** The top-level tracks of the main or the effect list, in order. */
+    List<Node> topLevel(boolean effect) {
+        List<Node> out = new ArrayList<>();
+        for (Node node : nodes)
+            if (!node.master() && node.topLevel && "Effect".equals(node.type) == effect) out.add(node);
+        return out;
+    }
+
     int topLevelCount(boolean effect) {
-        int count = 0;
-        for (Node node : nodes) if (!node.master() && node.topLevel && "Effect".equals(node.type) == effect) count++;
-        return count;
+        return topLevel(effect).size();
     }
 
     /** Child rows for tracks.list; the parent is null when unresolved rather than guessed. {@code refOf} gives a slot's ref. */
