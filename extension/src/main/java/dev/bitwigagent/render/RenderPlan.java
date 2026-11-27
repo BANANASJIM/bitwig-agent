@@ -162,17 +162,21 @@ final class RenderPlan {
     }
 
     /**
-     * The signature an encoder writes first: an ID3v2 tag or an MPEG audio frame sync for mp3; an Ogg page whose first
-     * packet is the Vorbis or Opus identification header for ogg/opus.
+     * The signature an encoder writes first: for mp3 an MPEG audio frame header (sync, version and layer not reserved),
+     * at the start or right after an ID3v2 tag; for ogg/opus an Ogg page whose first packet is the Vorbis or Opus
+     * identification header.
      */
     private static String compressed(RandomAccessFile in, String fileType, JsonObject out) throws IOException {
         byte[] head = new byte[Math.min(64, (int) in.length())];
         in.readFully(head);
         String codec;
         if (fileType.equals("mp3")) {
-            boolean id3 = head.length >= 3 && new String(head, 0, 3, StandardCharsets.ISO_8859_1).equals("ID3");
-            boolean sync = head.length >= 2 && (head[0] & 0xFF) == 0xFF && (head[1] & 0xE0) == 0xE0;
-            if (!id3 && !sync) return "not_mp3";
+            long frame = 0;
+            if (head.length >= 10 && new String(head, 0, 3, StandardCharsets.ISO_8859_1).equals("ID3"))
+                frame = 10
+                        + ((head[6] & 0x7F) << 21 | (head[7] & 0x7F) << 14 | (head[8] & 0x7F) << 7 | head[9] & 0x7F)
+                        + ((head[5] & 0x10) != 0 ? 10 : 0); // syncsafe tag size, plus the footer when flagged
+            if (!mpegFrame(in, frame)) return "not_mp3";
             codec = "mp3";
         } else {
             if (head.length < 28 || !new String(head, 0, 4, StandardCharsets.ISO_8859_1).equals("OggS"))
@@ -188,6 +192,14 @@ final class RenderPlan {
         out.addProperty("fileType", fileType);
         out.addProperty("codec", codec);
         return null;
+    }
+
+    /** An MPEG audio frame header at the offset: 11 sync bits, version not reserved (01), layer not reserved (00). */
+    private static boolean mpegFrame(RandomAccessFile in, long at) throws IOException {
+        if (at + 2 > in.length()) return false;
+        in.seek(at);
+        int first = in.readUnsignedByte(), second = in.readUnsignedByte();
+        return first == 0xFF && (second & 0xE0) == 0xE0 && (second & 0x18) != 0x08 && (second & 0x06) != 0;
     }
 
     private static boolean startsWith(byte[] head, int at, String magic) {

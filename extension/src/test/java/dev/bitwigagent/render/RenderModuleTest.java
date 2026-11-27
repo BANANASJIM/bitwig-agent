@@ -271,6 +271,31 @@ public final class RenderModuleTest {
                         .getAsBoolean(),
                 "an untagged mp3 starts with a frame sync; bit depth and rate are not checked");
         assertEquals("not_mp3", problem(Files.write(dir.resolve("c.mp3"), new byte[64]), none, "mp3"));
+        byte[] tagOnly = java.util.Arrays.copyOf(new byte[] {'I', 'D', '3', 4, 0, 0, 0, 0, 0, 20}, 64);
+        assertEquals(
+                "not_mp3",
+                problem(Files.write(dir.resolve("d.mp3"), tagOnly), none, "mp3"),
+                "a tag with no frame after");
+        byte[] footer = java.util.Arrays.copyOf(new byte[] {'I', 'D', '3', 4, 0, 0x10, 0, 0, 0, 20}, 64);
+        footer[40] = (byte) 0xFF;
+        footer[41] = (byte) 0xFB;
+        assertTrue(
+                RenderPlan.inspect(Files.write(dir.resolve("f.mp3"), footer), none, "mp3", 24, 0)
+                        .get("valid")
+                        .getAsBoolean(),
+                "a flagged footer is skipped with the tag");
+        assertEquals(
+                "not_mp3",
+                problem(Files.write(dir.resolve("g.mp3"), new byte[] {(byte) 0xFF, (byte) 0xF9, 0, 0}), none, "mp3"),
+                "reserved layer");
+        assertEquals(
+                "not_mp3",
+                problem(Files.write(dir.resolve("h.mp3"), new byte[] {(byte) 0xFF, (byte) 0xEB, 0, 0}), none, "mp3"),
+                "reserved version");
+        assertEquals(
+                "not_mp3",
+                problem(Files.write(dir.resolve("i.mp3"), new byte[] {(byte) 0xFF}), none, "mp3"),
+                "too short for a frame header");
         row = RenderPlan.inspect(ogg(dir.resolve("a.ogg"), "\u0001vorbis"), none, "ogg", 24, 0);
         assertTrue(row.get("valid").getAsBoolean()
                 && row.get("codec").getAsString().equals("vorbis"));
@@ -318,10 +343,15 @@ public final class RenderModuleTest {
     }
 
     static Path mp3(Path file, boolean id3) throws IOException {
-        byte[] head = id3
-                ? new byte[] {'I', 'D', '3', 4, 0, 0, 0, 0, 0, 0}
-                : new byte[] {(byte) 0xFF, (byte) 0xFB, (byte) 0x90, 0x64};
-        return Files.write(file, java.util.Arrays.copyOf(head, 128));
+        byte[] frame = {(byte) 0xFF, (byte) 0xFB, (byte) 0x90, 0x64};
+        byte[] out = new byte[128];
+        int at = 0;
+        if (id3) {
+            System.arraycopy(new byte[] {'I', 'D', '3', 4, 0, 0, 0, 0, 0, 20}, 0, out, 0, 10);
+            at = 30; // ten header bytes and a 20-byte tag
+        }
+        System.arraycopy(frame, 0, out, at, frame.length);
+        return Files.write(file, out);
     }
 
     /** One Ogg page with a single segment whose packet starts with the codec's identification magic. */
