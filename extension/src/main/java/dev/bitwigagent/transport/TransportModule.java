@@ -27,7 +27,7 @@ import java.util.*;
 public final class TransportModule implements HostModule {
     static final Set<String> METHODS = Set.of("transport.get", "transport.set");
     private static final String[] ORDER = {
-        "tempoBpm",
+        "tempo",
         "timeSignature",
         "position",
         "metronome",
@@ -44,9 +44,10 @@ public final class TransportModule implements HostModule {
     };
 
     private static final ValueMatch BEATS_AND_TEMPO = ValueMatch.raw(1e-6);
+    private static final Set<String> BEATS_AND_TEMPO_KEYS = Set.of("tempo", "position", "loopStart", "loopLength");
     /** Fields every host reports at startup; a newer field that is not (yet) observed reads null instead of blocking the rest. */
     private static final Set<String> BASE = Set.of(
-            "tempoBpm", "timeSignature", "position", "metronome", "loopStart", "loopLength", "loopEnabled", "playing");
+            "tempo", "timeSignature", "position", "metronome", "loopStart", "loopLength", "loopEnabled", "playing");
 
     private final Transport transport;
     private final Application application;
@@ -69,7 +70,7 @@ public final class TransportModule implements HostModule {
         this.transportSafety = transportSafety;
         this.projectState = projectState;
         observe("playing", transport.isPlaying());
-        Sample tempo = sample("tempoBpm");
+        Sample tempo = sample("tempo");
         transport.tempo().value().addRawValueObserver((DoubleValueChangedCallback) v -> tempo.number(v));
         Sample signature = sample("timeSignature");
         transport.timeSignature().markInterested();
@@ -255,7 +256,7 @@ public final class TransportModule implements HostModule {
                 if (value.getAsBoolean()) transport.play();
                 else transport.stop();
                 break;
-            case "tempoBpm":
+            case "tempo":
                 transport.tempo().value().setRaw(value.getAsDouble());
                 break;
             case "timeSignature":
@@ -365,7 +366,7 @@ public final class TransportModule implements HostModule {
         JsonObject out = new JsonObject();
         out.addProperty("projectName", application.projectName().get());
         out.add("playing", values.get("playing").value);
-        out.add("tempoBpm", values.get("tempoBpm").value);
+        out.add("tempo", values.get("tempo").value);
         return out;
     }
 
@@ -379,7 +380,7 @@ public final class TransportModule implements HostModule {
             result.add(key, unit(key, entry.getValue().value));
         }
         JsonObject units = new JsonObject();
-        units.addProperty("tempoBpm", "bpm_raw");
+        units.addProperty("tempo", "bpm_raw");
         units.addProperty(
                 "timeSignature",
                 "numerator/denominator as the host reports it; time-signature change markers are not in the public API");
@@ -448,7 +449,7 @@ public final class TransportModule implements HostModule {
 
     private static ValueMatch rule(String key) {
         if (key.equals("metronomeVolume")) return ValueMatch.NORMALIZED;
-        if (key.equals("tempoBpm") || key.endsWith("Beats")) return BEATS_AND_TEMPO;
+        if (BEATS_AND_TEMPO_KEYS.contains(key)) return BEATS_AND_TEMPO;
         return ValueMatch.EXACT;
     }
 

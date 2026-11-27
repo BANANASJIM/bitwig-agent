@@ -142,7 +142,7 @@ async def test_absent_fields_and_explicit_nullable_fields_remain_distinct_over_m
     [
         ("transport.set", {}),
         ("transport.set", {"playing": "false"}),
-        ("transport.set", {"tempoBpm": 667}),
+        ("transport.set", {"tempo": 667}),
         ("transport.set", {"playing": None}),
         ("tracks.set", {"target": TRACK_REF}),
         ("tracks.set", {"target": TRACK_REF, "volume": -1}),

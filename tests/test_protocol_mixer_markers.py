@@ -62,4 +62,4 @@ def test_time_signature_rules():
     for wrong in ("4", "0/4", "33/4", "4/3", "4/64", "a/b", " 4/4", "04/4", "4/4/4", "4 / 4", ""):
         bad("transport.set", timeSignature=wrong)
     bad("transport.set", timeSignature=4)
-    ok("transport.set", timeSignature="6/8", tempoBpm=100)
+    ok("transport.set", timeSignature="6/8", tempo=100)

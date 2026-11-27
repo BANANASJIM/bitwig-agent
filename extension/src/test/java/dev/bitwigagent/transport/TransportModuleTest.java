@@ -21,9 +21,9 @@ public final class TransportModuleTest {
         HostFixture f = new HostFixture();
         TransportModule module = f.services.transportModule();
         JsonObject read = f.call(module, "transport.get", new JsonObject());
-        assertTrue(read.get("tempoBpm").getAsDouble() == 120, "tempo is raw BPM, not normalized");
+        assertTrue(read.get("tempo").getAsDouble() == 120, "tempo is raw BPM, not normalized");
         assertTrue(read.get("position").getAsDouble() == 0, "current playback position read");
-        assertTrue(read.getAsJsonObject("units").get("tempoBpm").getAsString().equals("bpm_raw"), "BPM unit explicit");
+        assertTrue(read.getAsJsonObject("units").get("tempo").getAsString().equals("bpm_raw"), "BPM unit explicit");
         assertTrue(
                 read.has("arrangerRecordEnabled")
                         && read.has("arrangerAutomationWriteEnabled")
@@ -39,9 +39,9 @@ public final class TransportModuleTest {
         TransportModule module = f.services.transportModule();
         for (String text : List.of(
                 "{}",
-                "{\"tempoBpm\":19.99}",
-                "{\"tempoBpm\":666.01}",
-                "{\"tempoBpm\":\"120\"}",
+                "{\"tempo\":19.99}",
+                "{\"tempo\":666.01}",
+                "{\"tempo\":\"120\"}",
                 "{\"playing\":1}",
                 "{\"position\":-1}",
                 "{\"loop\":{\"length\":0}}",
@@ -54,14 +54,14 @@ public final class TransportModuleTest {
         }
         for (double invalid : new double[] {Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY}) {
             JsonObject p = new JsonObject();
-            p.addProperty("tempoBpm", invalid);
+            p.addProperty("tempo", invalid);
             assertRpcError("invalid_params", f.submit(module, "transport.set", p));
             assertTrue(f.tasks.isEmpty(), "nonfinite BPM must not schedule");
         }
         assertRpcError("invalid_params", f.submit(module, "transport.get", HostFixture.json("{\"playing\":false}")));
         assertTrue(f.tasks.isEmpty(), "reads reject extra fields");
-        TransportModule.validateParams("transport.set", HostFixture.json("{\"tempoBpm\":20}"));
-        TransportModule.validateParams("transport.set", HostFixture.json("{\"tempoBpm\":666}"));
+        TransportModule.validateParams("transport.set", HostFixture.json("{\"tempo\":20}"));
+        TransportModule.validateParams("transport.set", HostFixture.json("{\"tempo\":666}"));
     }
 
     @Test
@@ -119,7 +119,7 @@ public final class TransportModuleTest {
         TransportModule module = f.services.transportModule();
         FakeHost tempo = f.transport.child("tempo").child("value");
         tempo.notifyWrites = false;
-        HostOperation op = f.submit(module, "transport.set", HostFixture.json("{\"tempoBpm\":130}"));
+        HostOperation op = f.submit(module, "transport.set", HostFixture.json("{\"tempo\":130}"));
         f.next();
         assertTrue(tempo.writes == 1 && !op.result.isDone(), "setter dispatch alone cannot verify tempo");
         f.transport.child("isMetronomeEnabled").emit(true);
@@ -135,7 +135,7 @@ public final class TransportModuleTest {
                 op.result
                         .join()
                         .getAsJsonObject("fields")
-                        .getAsJsonObject("tempoBpm")
+                        .getAsJsonObject("tempo")
                         .get("outcome")
                         .getAsString()
                         .equals("applied"),
@@ -226,7 +226,7 @@ public final class TransportModuleTest {
         TransportModule module = f.services.transportModule();
         f.transport.child("tempo").child("value").notifyWrites = false;
         long deadline = f.tasks.after(300);
-        HostOperation op = f.submit(module, "transport.set", HostFixture.json("{\"tempoBpm\":130}"), deadline);
+        HostOperation op = f.submit(module, "transport.set", HostFixture.json("{\"tempo\":130}"), deadline);
         f.next();
         assertTrue(!op.result.isDone(), "unobserved write keeps polling");
         long lateInsideMargin =
@@ -289,7 +289,7 @@ public final class TransportModuleTest {
         TransportModule module = f.services.transportModule();
         f.transport.child("tempo").child("value").afterWrite =
                 () -> f.transport.child("isArrangerRecordEnabled").emit(true);
-        JsonObject result = f.call(module, "transport.set", HostFixture.json("{\"tempoBpm\":130,\"playing\":true}"));
+        JsonObject result = f.call(module, "transport.set", HostFixture.json("{\"tempo\":130,\"playing\":true}"));
         assertTrue(result.get("outcome").getAsString().equals("not_applied"), "partial write is not full success");
         assertTrue(
                 result.getAsJsonObject("fields")
@@ -303,7 +303,7 @@ public final class TransportModuleTest {
         TransportModule second = closed.services.transportModule();
         closed.transport.child("tempo").child("value").afterWrite = closed.services.scheduler::close;
         JsonObject partial =
-                closed.call(second, "transport.set", HostFixture.json("{\"tempoBpm\":130,\"metronome\":true}"));
+                closed.call(second, "transport.set", HostFixture.json("{\"tempo\":130,\"metronome\":true}"));
         assertTrue(partial.get("reason").getAsString().equals("not_ready"), "close during write reported honestly");
         assertTrue(
                 closed.transport.child("isMetronomeEnabled").writes == 0, "no late second-field write after closure");
@@ -618,13 +618,12 @@ public final class TransportModuleTest {
         TransportModule module = f.services.transportModule();
         FakeHost tempo = f.transport.child("tempo").child("value");
         tempo.afterWrite = () -> tempo.emit(100.0);
-        HostOperation op =
-                f.submit(module, "transport.set", HostFixture.json("{\"tempoBpm\":130}"), f.tasks.after(300));
+        HostOperation op = f.submit(module, "transport.set", HostFixture.json("{\"tempo\":130}"), f.tasks.after(300));
         while (!op.result.isDone() && !f.tasks.isEmpty()) f.next();
         JsonObject result = assertUnknown("readback_mismatch", op);
         assertTrue(
                 result.getAsJsonObject("fields")
-                        .getAsJsonObject("tempoBpm")
+                        .getAsJsonObject("tempo")
                         .get("reason")
                         .getAsString()
                         .equals("readback_mismatch"),

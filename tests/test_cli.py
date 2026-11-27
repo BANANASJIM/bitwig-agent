@@ -83,9 +83,9 @@ async def test_nested_note_arguments_and_raw_json_are_equivalent(host, monkeypat
         ["transport.set", "--playing=1"],
         ["transport.set", "--playing=null"],
         ["transport.set", "--playing=true", "--playing=false"],
-        ["transport.set", "--tempoBpm=NaN"],
-        ["transport.set", "--tempoBpm=1e9999"],
-        ["transport.set", "--tempoBpm=19"],
+        ["transport.set", "--tempo=NaN"],
+        ["transport.set", "--tempo=1e9999"],
+        ["transport.set", "--tempo=19"],
         ["transport.set"],
         ["tracks.set", TARGET_FLAG, "--mute=true", "--volume=2"],
         ["tracks.insert", "--type=instrument", "--position=1.5", "--name=x"],
@@ -522,7 +522,7 @@ def test_unknown_argument_synonyms_hint_but_never_alias():
     target = GRID
     for method, bad, want in (
         ("grid.get", {**target, "offset": 0, "limit": 5}, ["moduleOffset", "moduleLimit"]),
-        ("transport.set", {"tempo": 120}, ["tempoBpm"]),
+        ("transport.set", {"bpm": 120}, ["tempo"]),
         ("grid.connections.set", {**target, "instanceId": "x"}, ["targetModuleId"]),
     ):
         with pytest.raises(ValidationError) as error:
@@ -631,8 +631,8 @@ async def test_json_is_compact_in_a_pipe_and_indented_on_a_terminal(host, monkey
 
 
 def test_flag_forms_bare_boolean_separate_value_and_operand_end():
-    params, timeout = parse_arguments("transport.set", ["--playing", "--timeoutMs", "250", "--", '{"tempoBpm":120}'])
-    assert params == {"playing": True, "tempoBpm": 120}
+    params, timeout = parse_arguments("transport.set", ["--playing", "--timeoutMs", "250", "--", '{"tempo":120}'])
+    assert params == {"playing": True, "tempo": 120}
     assert timeout == 250
     assert parse_arguments("tracks.set", [TARGET_FLAG, "--name", "Bass"])[0]["name"] == "Bass"
     with pytest.raises(ValueError, match="needs a value"):
@@ -642,11 +642,11 @@ def test_flag_forms_bare_boolean_separate_value_and_operand_end():
 async def test_stdin_feeds_one_value_or_the_whole_operand(host, monkeypatch):
     monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
     reply_with(host, {"outcome": "applied"})
-    assert (await execute(["transport", "set", "--tempoBpm=-"], stdin="120.5"))[1] == 0
-    assert host.requests[-1]["params"] == {"tempoBpm": 120.5}
+    assert (await execute(["transport", "set", "--tempo=-"], stdin="120.5"))[1] == 0
+    assert host.requests[-1]["params"] == {"tempo": 120.5}
     assert (await execute(["transport", "set", "-"], stdin='{"playing": false}'))[1] == 0
     assert host.requests[-1]["params"] == {"playing": False}
-    payload, code = await execute(["transport", "set", "--tempoBpm=-", "-"], stdin="1")
+    payload, code = await execute(["transport", "set", "--tempo=-", "-"], stdin="1")
     assert code == 2
     assert "stdin can be read once" in payload["error"]["message"]
     assert len(host.requests) == 2
@@ -657,8 +657,8 @@ async def test_operand_file_and_flags_merge_and_a_repeat_is_an_error(host, monke
     reply_with(host, {"outcome": "applied"})
     path = tmp_path / "args.json"
     path.write_text('{"playing": true}')
-    assert (await execute(["transport", "set", f"@{path}", "--tempoBpm=100"]))[1] == 0
-    assert host.requests[-1]["params"] == {"playing": True, "tempoBpm": 100}
+    assert (await execute(["transport", "set", f"@{path}", "--tempo=100"]))[1] == 0
+    assert host.requests[-1]["params"] == {"playing": True, "tempo": 100}
     payload, code = await execute(["transport", "set", f"@{path}", "--playing=false"])
     assert code == 2
     assert "Given both as flag and in ARGS: playing" in payload["error"]["message"]
@@ -936,7 +936,7 @@ async def test_batch_stops_at_the_first_error_and_names_the_line(host, monkeypat
         ('{"method":"status","extra":1}\n', "line 1: expected"),
         ("\n \n", "no calls"),
         ('{"method":"nope"}\n', "line 1: Unknown method"),
-        ('{"method":"status"}\n{"method":"transport.set","params":{"tempoBpm":19}}\n', "line 2: "),
+        ('{"method":"status"}\n{"method":"transport.set","params":{"tempo":19}}\n', "line 2: "),
     ],
 )
 async def test_batch_validates_every_line_before_sending_any(host, monkeypatch, stdin, fragment):
