@@ -334,7 +334,7 @@ def test_schema_and_cli_surface(tmp_path):
     with pytest.raises(ValueError, match=re.escape("1 validation error for GridApplyArgs")):
         validate_call("grid.apply", {**SPEC, "connections": SPEC["connections"] + [SPEC["connections"][0]]})
     path = tmp_path / "patch.json"
-    path.write_text(json.dumps(SPEC))
+    path.write_text(json.dumps(SPEC), encoding="utf-8")
     params, _ = parse_arguments("grid.apply", [f"@{path}", "--dryRun"])
     assert params["dryRun"] is True
     assert params["connections"][0]["from"] == "H: mul.OUT"
@@ -1346,7 +1346,7 @@ def test_real_apply_returns_a_diagnostics_marker(tmp_path, monkeypatch):
 
     log = tmp_path / "bitwig.log"
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S.000")
-    log.write_text(f"[{now} float-main-app info] Starting application version 6.1.4 revision abc\n")
+    log.write_text(f"[{now} float-main-app info] Starting application version 6.1.4 revision abc\n", encoding="utf-8")
     monkeypatch.setenv("BITWIG_LOG_PATH", str(log))
     result = apply_grid(FakeGrid(), {"target": DEVICE, "modules": [{"name": "a", "type": "Add", "x": 0, "y": 0}]})
     assert isinstance(result.get("diagnosticsMarker"), str)

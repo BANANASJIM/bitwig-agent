@@ -97,7 +97,7 @@ async def test_recipe_stops_after_session_changes_during_creation(tmp_path, monk
     monkeypatch.setattr(recipe, "configured_port", lambda: 61172)
     assert await recipe.create(args) == 1
     assert mutations == ["tracks.insert"]
-    report = json.loads((args.artifacts / "report.json").read_text())
+    report = json.loads((args.artifacts / "report.json").read_text(encoding="utf-8"))
     assert report["status"] == "incomplete_inspect_state"
     if transition == "error_refused":
         assert report["createdTracks"] == []
@@ -236,7 +236,7 @@ async def test_recipe_does_not_report_authored_when_clip_readback_is_wrong(
     monkeypatch.setattr(recipe, "BridgeClient", lambda port: Session())
     monkeypatch.setattr(recipe, "configured_port", lambda: 61172)
     assert await recipe.create(args) == 1
-    report = json.loads((args.artifacts / "report.json").read_text())
+    report = json.loads((args.artifacts / "report.json").read_text(encoding="utf-8"))
     assert report["status"] == "incomplete_inspect_state"
     assert len(creations) == 1
     summary = json.loads(capsys.readouterr().out)

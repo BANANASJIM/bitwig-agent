@@ -99,7 +99,7 @@ def bitwig_processes() -> int | None:
     count = 0
     for p in Path("/proc").glob("[0-9]*/comm"):
         with contextlib.suppress(OSError):
-            count += p.read_text().strip() == "BitwigStudio"
+            count += p.read_text(encoding="utf-8").strip() == "BitwigStudio"
     return count
 
 

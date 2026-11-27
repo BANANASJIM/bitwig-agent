@@ -17,7 +17,7 @@ from bitwig_agent.audio import analysis, loudness, pipewire
 from bitwig_agent.errors import BridgeError
 from bitwig_agent.protocol import validate_call
 
-BASELINE = json.loads((Path(__file__).parent / "fixtures" / "audio_golden_baseline.json").read_text())
+BASELINE = json.loads((Path(__file__).parent / "fixtures" / "audio_golden_baseline.json").read_text(encoding="utf-8"))
 RATE = 48000
 
 # Intended differences from the baseline, each explained in the PR that replaced the stdlib DSP:
