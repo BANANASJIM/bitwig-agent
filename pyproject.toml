@@ -32,6 +32,7 @@ Documentation = "https://github.com/BANANASJIM/bitwig-agent/blob/main/INSTALL.md
 Repository = "https://github.com/BANANASJIM/bitwig-agent"
 Issues = "https://github.com/BANANASJIM/bitwig-agent/issues"
 Releases = "https://github.com/BANANASJIM/bitwig-agent/releases"
+Changelog = "https://github.com/BANANASJIM/bitwig-agent/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 # audio.analyze (and the level report of audio.capture / grid.probe)

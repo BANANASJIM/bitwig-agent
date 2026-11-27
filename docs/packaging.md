@@ -66,7 +66,7 @@ Version `0.5.0` maps the exact Bitwig 6.1.4 and 6.1.7 bindings ([supported versi
 
 The maintainer builds the Python wheel, Python sdist and Java extension from one reviewed source/version snapshot. Java building requires the maintainer's own licensed host JAR (pixi supplies JDK 25); public CI is not supplied with the proprietary JAR. The extension targets Java 11 bytecode but its Bitwig loader superclass requires JDK 25 to read during building/checking.
 
-1. Update matching versions and installation links, resolve the lockfile, and run the applicable [verification layers](../VERIFICATION.md). Record which layers actually ran.
+1. Update matching versions and installation links, resolve the lockfile, and run the applicable [verification layers](../VERIFICATION.md). Record which layers actually ran. In [CHANGELOG.md](../CHANGELOG.md), move the `Unreleased` entries into a new `X.Y.Z` section dated with the release day, leave an empty `Unreleased`, and update the compare and release links at the bottom.
 2. Build wheel and sdist with `pixi run dist`, and the extension with every supported host JAR: `BITWIG_HOST_JARS=<dir of <version>.jar> pixi run python scripts/build.py --release`.
 3. Inspect packaged contents and licenses. Do not include the host JAR, proprietary factory assets, credentials, private diagnostics or machine configuration.
 4. Record real SHA-256 values in `SHA256SUMS` using exactly the three bare asset filenames. Finalize and validate the Arch recipe and `.SRCINFO` from those same bytes before committing/tagging; its exclusion from the sdist avoids checksum recursion.
@@ -88,6 +88,7 @@ sha256sum dist/bitwig_agent-X.Y.Z-py3-none-any.whl dist/bitwig_agent-X.Y.Z.tar.g
 - `SHA256SUMS` has exactly three unique **bare asset filenames**; strip the local `dist/` and `build/` prefixes.
 - Finalize the [Arch recipe](https://github.com/BANANASJIM/bitwig-agent/tree/main/packaging/aur) and regenerate `.SRCINFO` **before tagging**; validate it in an isolated Arch environment. `packaging/` is excluded from the sdist, so updating its hashes does not require rebuilding it.
 - Publish the recipe through the separate AUR Git repository's `master` branch ([maintenance](#maintaining-the-recipe)); confirm the public package version and maintainer before announcing helper-based installation.
+- The changelog is the source of the release notes: the GitHub Release body is the release's `X.Y.Z` section of [CHANGELOG.md](../CHANGELOG.md), plus the verification actually run and the `SHA256SUMS` contents. Do not write release notes that are not in the changelog.
 - Create the GitHub Release as a **draft**, attach all four assets, verify them, and only then publish it: publishing the release automatically starts `publish-pypi.yml` (and `aur.yml`), and its publish job waits for the `pypi` environment approval. Approve only when explicitly authorized ([prerequisites](#external-accountenvironment-prerequisites)). A manual `publish=false` run on the tag remains available for validation only.
 - Neither a pending PyPI publisher nor an AUR recipe establishes public package availability; retain GitHub release assets as an alternative installation source.
 
