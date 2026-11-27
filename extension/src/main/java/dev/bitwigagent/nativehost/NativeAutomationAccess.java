@@ -257,7 +257,7 @@ public final class NativeAutomationAccess implements AutomationModule.Access {
             String trackId,
             AutomationModule.Target target,
             String expectedHash,
-            List<AutomationModule.Point> requested,
+            List<AutomationModule.Request> requested,
             double[] range,
             Runnable check,
             Runnable beforeWrite) {
@@ -265,28 +265,19 @@ public final class NativeAutomationAccess implements AutomationModule.Access {
         List<Object> before = lane.natives();
         List<AutomationModule.Point> current = lane.describe(before);
         AutomationModule.requireExpected(current, expectedHash);
-        List<AutomationModule.Point> desired = AutomationModule.desired(current, range, requested);
+        AutomationModule.Edit<Object> edit = new AutomationModule.Edit<>(before, current, requested, range);
         boolean existed = lane.lane != null;
         if (existed) lane.valueRange();
         else if (!rangeType.isInstance(a.invoke(referenceRange, lane.ref)))
             throw Errors.notApplied(
                     Reason.UNSUPPORTED_SCOPE, "Only continuous (decimal) automation lanes are supported.");
-        if (AutomationModule.same(AutomationModule.withoutBasePoint(current, desired), desired)) {
+        if (edit.matched(current)) {
             lane.guard(check);
-            JsonObject out = written(Outcome.ALREADY_MATCHED, lane, current, range, current, 0, 0, false);
+            JsonObject out =
+                    written(Outcome.ALREADY_MATCHED, lane, current, range, current, edit.summary(false), false);
             out.addProperty("nativeUndo", false);
             return out;
         }
-        List<Object> removed = new ArrayList<>(), kept = new ArrayList<>();
-        int first = 0;
-        for (int i = 0; i < before.size(); i++) {
-            if (AutomationModule.inRange(current.get(i).beat, range)) removed.add(before.get(i));
-            else {
-                kept.add(before.get(i));
-                if (range != null && current.get(i).beat < range[0]) first++;
-            }
-        }
-        final int insertAt = first;
         lane.guard(check);
         beforeWrite.run();
         lane.transaction("Set Automation Points", () -> {
@@ -296,34 +287,34 @@ public final class NativeAutomationAccess implements AutomationModule.Access {
                     throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Bitwig did not create the automation lane.");
             }
             Object valueRange = lane.valueRange();
-            for (Object point : removed) a.invoke(delete, lane.timeline, point);
-            for (int i = 0; i < requested.size(); i++) {
-                AutomationModule.Point p = requested.get(i);
-                Object point = a.invoke(newPoint, valueRange, p.beat, p.value, p.linear ? linear : hold, 0.0);
+            for (Object point : edit.delete) a.invoke(delete, lane.timeline, point);
+            for (int i = 0; i < edit.insert.size(); i++) {
+                AutomationModule.Point p = edit.insert.get(i);
+                Object point = a.invoke(newPoint, valueRange, p.beat, p.value, p.linear ? linear : hold, p.curve);
                 if (point == null)
                     throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Bitwig did not create an automation point.");
-                a.invoke(insert, lane.timeline, point, insertAt + i);
+                a.invoke(insert, lane.timeline, point, edit.at.get(i));
             }
         });
         lane.guard(check);
         List<Object> after = lane.natives();
         Set<Object> present = Collections.newSetFromMap(new IdentityHashMap<>());
         present.addAll(after);
-        for (Object point : kept)
+        for (Object point : edit.kept)
             if (!present.contains(point))
                 throw Errors.unknown(
                         Reason.READBACK_MISMATCH,
-                        "A point outside the range disappeared during the write; inspect automation.points.get.");
+                        "A point the write did not touch disappeared; inspect automation.points.get.");
         List<AutomationModule.Point> actual = lane.describe(after);
-        List<AutomationModule.Point> settled = AutomationModule.withoutBasePoint(actual, desired);
+        List<AutomationModule.Point> settled = AutomationModule.withoutBasePoint(actual, edit.desired);
         Object base = settled == actual ? null : after.get(0);
-        for (Object point : removed)
+        for (Object point : edit.delete)
             if (present.contains(point) && point != base)
                 throw Errors.unknown(
                         Reason.READBACK_MISMATCH,
                         "A replaced point is still on the lane; inspect automation.points.get.");
-        AutomationModule.verify(desired, settled);
-        return written(Outcome.APPLIED, lane, actual, range, current, removed.size(), requested.size(), !existed);
+        AutomationModule.verify(edit.desired, settled);
+        return written(Outcome.APPLIED, lane, actual, range, current, edit.summary(true), !existed);
     }
 
     private JsonObject written(
@@ -332,8 +323,7 @@ public final class NativeAutomationAccess implements AutomationModule.Access {
             List<AutomationModule.Point> all,
             double[] range,
             List<AutomationModule.Point> previous,
-            int removed,
-            int inserted,
+            JsonObject summary,
             boolean created) {
         JsonObject out = AutomationModule.lane(
                 Results.outcome(outcome, Verification.NATIVE_READBACK), lane.lane != null, all, range);
@@ -342,8 +332,7 @@ public final class NativeAutomationAccess implements AutomationModule.Access {
         before.addProperty("count", previous.size());
         before.addProperty("pointsHash", AutomationModule.hash(previous));
         out.add("previous", before);
-        out.addProperty("removed", removed);
-        out.addProperty("inserted", inserted);
+        out.add("summary", summary);
         out.addProperty("laneCreated", created);
         out.addProperty("nativeUndo", true);
         out.addProperty("undoGroupingVerified", false);

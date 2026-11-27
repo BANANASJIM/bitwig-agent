@@ -24,6 +24,11 @@ SET: dict[str, Any] = {
 }
 
 
+def test_get_takes_no_range_all():
+    with pytest.raises(ValidationError):
+        validate_call("automation.points.get", {"target": PAN, "range": "all"})
+
+
 def test_get_takes_a_track_or_grid_parameter_ref_and_a_range():
     for target in (VOLUME, PAN, GRID):
         args = {"target": target}
@@ -61,7 +66,7 @@ def test_a_device_owned_parameter_is_unsupported_scope():
     assert (error["code"], error["reason"]) == ("invalid_params", "unsupported_scope")
 
 
-def test_set_whole_lane_range_and_clear():
+def test_set_upsert_range_all_and_clear():
     assert validate_call("automation.points.set", SET)[0] == SET
     ranged = {**SET, "target": GRID, "range": {"start": 0, "end": 4.5}}
     assert validate_call("automation.points.set", ranged)[0] == ranged
@@ -69,6 +74,8 @@ def test_set_whole_lane_range_and_clear():
     assert validate_call("automation.points.set", clear)[0]["points"] == []
     unguarded = {key: value for key, value in SET.items() if key != "expect"}
     assert validate_call("automation.points.set", unguarded)[0] == unguarded
+    whole = {**SET, "range": "all", "points": [{"beat": 9, "value": 0.5}]}
+    assert validate_call("automation.points.set", whole)[0] == whole
 
 
 @pytest.mark.parametrize(
@@ -81,6 +88,7 @@ def test_set_whole_lane_range_and_clear():
         {"points": [{**SET["points"][0], "curve": 0.5}]},
         {"range": {"start": 1, "end": 2}},
         {"range": {"start": 5, "end": 4}},
+        {"range": "everything"},
         {"expect": {"pointsHash": EMPTY_HASH.upper()}},
         {"expect": {"pointsHash": "abc"}},
         {"expect": {}},

@@ -44,10 +44,11 @@ def main() -> None:
     api = build.api_jar()
     gson = build.gson_jar()
     junit = build.junit_jar()
+    jqwik = build.jqwik_jars()
     sources = [*build.verification_sources(), *sorted(TEST_ROOT.rglob("*.java"))]
-    build.compile_java(sources, classes, [gson, api, junit], build.lint_flag(api))
+    build.compile_java(sources, classes, [gson, api, junit, *jqwik], build.lint_flag(api))
     build.write_resources(classes)
-    classpath = os.pathsep.join(map(str, [classes, gson, api]))
+    classpath = os.pathsep.join(map(str, [classes, gson, api, *jqwik]))
     agent = (
         [f"-javaagent:{dependency('jacoco-agent')}=destfile={args.jacoco.resolve()},includes=dev.bitwigagent.*"]
         if args.jacoco
@@ -65,6 +66,10 @@ def main() -> None:
             "--disable-banner",
             "--disable-ansi-colors",
             "--fail-if-no-tests",
+            "--config",
+            f"jqwik.database={build.BUILD / 'jqwik-database'}",
+            "--config",
+            "jqwik.reporting.onlyfailures=true",
             "--details=tree",
             "--class-path",
             classpath,

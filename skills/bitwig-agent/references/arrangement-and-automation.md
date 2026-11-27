@@ -74,6 +74,6 @@ When editing, tell apart a clip's playback window, its audio event and the sourc
 
 6.0 has one Automation Write control for both sequencers, and recording note or audio clips can capture automation (a preference on by default for both), so check it before a performance or tweak. Launcher automation clips launch with their parent but can also be triggered on their own, and a track stop applies to automation lanes too: the audible note loop does not describe every automation loop.
 
-`automation points get` reads a lane and `automation points set` replaces a beat range. Pass `expect.pointsHash` from the read when the user may have edited the lane, so their change is refused-over rather than overwritten (`bitwig-agent help values`).
+`automation points get` reads a lane. `automation points set` without `--range` adds or updates only the points you list and removes nothing; with `--range='{"start":32,"end":64}'` that region becomes exactly your points (points outside it are untouched), and `--range=all` does that for the whole lane. To reshape part of a curve, read that range, edit the points, and write them back with the same range. Pass `expect.pointsHash` from the read when the user may have edited the lane, so their change is refused-over rather than overwritten (`bitwig-agent help values`).
 
 If a knob will not stay where you set it, look at automation and modulation instead of resending. If a curve exists but seems inactive, check the override state and the controlling sequencer before deleting it.

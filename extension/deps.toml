@@ -16,6 +16,18 @@ url = "https://repo.maven.apache.org/maven2/org/junit/platform/junit-platform-co
 sha256 = "b016ef6b1c3454d6d7c2c88ce081dabf289699686af6622d6e4e2e1b54b4a2fc"
 max_bytes = 4194304
 
+[jqwik-api]
+file = "jqwik-api-1.9.2.jar"
+url = "https://repo.maven.apache.org/maven2/net/jqwik/jqwik-api/1.9.2/jqwik-api-1.9.2.jar"
+sha256 = "60244aefd583d349cb26e81f5cc3ef9f66d309d49b6534ab7c9b63be38954054"
+max_bytes = 1048576
+
+[jqwik-engine]
+file = "jqwik-engine-1.9.2.jar"
+url = "https://repo.maven.apache.org/maven2/net/jqwik/jqwik-engine/1.9.2/jqwik-engine-1.9.2.jar"
+sha256 = "623d105e90cd94b688baaa527bd0c4e284001c07c1f53e3b9a2db179ea57a70a"
+max_bytes = 2097152
+
 [palantir-native-linux-x86_64]
 file = "palantir-java-format-2.102.0-linux-glibc_x86-64.bin"
 url = "https://repo1.maven.org/maven2/com/palantir/javaformat/palantir-java-format-native/2.102.0/palantir-java-format-native-2.102.0-nativeImage-linux-glibc_x86-64.bin"
