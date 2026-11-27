@@ -244,10 +244,16 @@ public final class MixModuleTest {
                 "already_matched",
                 f.call(module, "tracks.sends.set", p).get("outcome").getAsString());
         assertEquals(0, mode.writes);
+        p.add("expect", HostFixture.json("{\"mode\":\"POST\"}"));
+        HostOperation mismatch = f.submit(module, "tracks.sends.set", p);
+        f.next();
+        assertRpcError("target_changed", mismatch);
+        p.add("expect", HostFixture.json("{\"mode\":\"auto\"}"));
         p.addProperty("mode", "pre");
         JsonObject pre = f.call(module, "tracks.sends.set", p);
         assertEquals("applied", pre.get("outcome").getAsString());
-        assertEquals("PRE", mode.data, "the listed id is written");
+        assertEquals("PRE", mode.data, "the listed id is written; expect \"auto\" matched the AUTO it reads");
+        assertEquals(1, mode.writes, "nothing was written on the expect mismatch");
     }
 
     @Test

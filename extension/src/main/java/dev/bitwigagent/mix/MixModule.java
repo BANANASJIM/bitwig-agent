@@ -427,8 +427,16 @@ public final class MixModule implements HostModule {
         JsonObject current = Refs.send(trackRefs.ref(trackSlot), index, name.getAsString());
         if (!Refs.matches(ref, current, true))
             throw Errors.targetChanged("Another send is at this index than the one read.", current);
-        if (p.has("expect")) requireExpectedSend(state, prefix, p.getAsJsonObject("expect"));
         Send send = (Send) state.track.sendBank().getItemAt(slot);
+        if (p.has("expect")) {
+            JsonObject expect = p.getAsJsonObject("expect");
+            if (expect.has("mode"))
+                expect.addProperty(
+                        "mode",
+                        EnumOptions.canonical(
+                                send.sendMode(), expect.get("mode").getAsString()));
+            requireExpectedSend(state, prefix, expect);
+        }
         if (p.has("mode")) {
             p.addProperty(
                     "mode", EnumOptions.canonical(send.sendMode(), p.get("mode").getAsString()));
