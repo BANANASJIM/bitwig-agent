@@ -56,6 +56,7 @@ INSPECT: dict[str, str] = {
     "project.save": "status",
     "project.saveAs": "status",
     "project.activateEngine": "status",
+    "project.key.set": "project.key.get",
     "ack": "status",
     "tracks.set": "tracks.get",
     "tracks.sends.set": "tracks.get",
