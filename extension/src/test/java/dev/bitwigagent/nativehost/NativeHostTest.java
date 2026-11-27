@@ -71,8 +71,11 @@ public final class NativeHostTest {
                         + executor + "\",\"model.object\":\"" + executor + "\"},\"members\":{"
                         + "\"app.singleton\":{\"owner\":\"app\",\"name\":\"q1\"},"
                         + "\"app.asyncExec\":{\"owner\":\"app\",\"name\":\"q2\"},"
-                        + "\"app.isDocumentThread\":{\"owner\":\"app\",\"name\":\"q3\"},"
-                        + "\"app.none\":{\"owner\":\"app\",\"name\":\"q4\"},"
+                        + "\"app.isDocumentThread\":{\"owner\":\"app\",\"name\":\"q3\",\"desc\":\"()Z\"},"
+                        + "\"app.otherDescriptor\":{\"owner\":\"app\",\"name\":\"q3\",\"desc\":\"()I\"},"
+                        + "\"app.none\":{\"owner\":\"app\",\"name\":\"q4\",\"desc\":\"L"
+                        + app.replace('.', '/') + ";\"},"
+                        + "\"app.otherConstant\":{\"owner\":\"app\",\"name\":\"q4\",\"desc\":\"I\"},"
                         + "\"model.executor.isModelThread\":{\"owner\":\"model.executor\",\"name\":\"q5\"},"
                         + "\"model.object.executor\":{\"owner\":\"model.object\",\"name\":\"q6\"}}}")
                 .getAsJsonObject();
@@ -97,6 +100,18 @@ public final class NativeHostTest {
             assertSame(host, access.exactConstructor("app").getDeclaringClass());
             assertThrows(
                     NoSuchMethodException.class, () -> access.exactMethod("app.isDocumentThread", int.class, false));
+            // The table's desc is not compared at runtime: the binding reports the code's types for the offline check.
+            java.util.Map<String, String> bound = new java.util.HashMap<>();
+            runtime.onBound(bound::put);
+            assertEquals(
+                    "q3",
+                    access.exactMethod("app.otherDescriptor", boolean.class, false)
+                            .getName());
+            assertSame(host, access.exactConstant("app.otherConstant", host).getClass());
+            assertEquals(
+                    java.util.Map.of(
+                            "app.otherDescriptor", "()Z", "app.otherConstant", "L" + app.replace('.', '/') + ";"),
+                    bound);
             boolean[] ran = {false};
             access.execute(() -> ran[0] = true);
             assertTrue(ran[0], "execute dispatches through the table's asyncExec binding");
@@ -169,7 +184,7 @@ public final class NativeHostTest {
                 RpcException translated = assertThrows(
                         RpcException.class, () -> NativeHost.invoke(reader, new ThrowingRead(nativeRejection)));
                 assertTrue(
-                        translated.is(Reason.NATIVE_UNAVAILABLE) && NativeHost.isInvocationFailure(translated),
+                        translated.is(Reason.NATIVE_UNAVAILABLE) && Errors.isHostCallFailure(translated),
                         "native rejection is classified as a failed invocation");
                 assertTrue(
                         translated.getCause() instanceof InvocationTargetException
@@ -177,7 +192,7 @@ public final class NativeHostTest {
                         "translation preserves the actual invocation boundary and native throwable identity");
             }
             assertTrue(
-                    !NativeHost.isInvocationFailure(nativeRejection),
+                    !Errors.isHostCallFailure(nativeRejection),
                     "ordinary controller cancellation remains distinct from reflected invocation failure");
         }
     }

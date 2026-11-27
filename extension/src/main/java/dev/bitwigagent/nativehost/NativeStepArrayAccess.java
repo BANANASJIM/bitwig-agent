@@ -40,7 +40,7 @@ final class NativeStepArrayAccess implements GridStepArrayWriter.Access {
                         "Expected the inspected final steps.base set(float[]) array operation.");
             setter = candidate;
         } catch (ReflectiveOperationException | RuntimeException | LinkageError error) {
-            setterError = NativeHost.diagnostic(error);
+            setterError = Errors.diagnostic(error);
         }
     }
 

@@ -56,7 +56,7 @@ final class NativeStringPanelAccess implements GridStringPanelWriter.Access {
                         "Expected the inspected final panel.stringBase set(String) string operation.");
             setter = candidate;
         } catch (ReflectiveOperationException | RuntimeException | LinkageError error) {
-            setterError = NativeHost.diagnostic(error);
+            setterError = Errors.diagnostic(error);
         }
     }
 

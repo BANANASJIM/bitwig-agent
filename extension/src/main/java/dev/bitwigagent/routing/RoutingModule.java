@@ -9,18 +9,16 @@ import dev.bitwigagent.core.HostLimits;
 import dev.bitwigagent.core.HostModule;
 import dev.bitwigagent.core.HostOperation;
 import dev.bitwigagent.core.MethodSpecs;
+import dev.bitwigagent.core.PortHandle;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.Scheduler;
 import dev.bitwigagent.core.SharedData;
 import dev.bitwigagent.host.DeviceSources;
-import dev.bitwigagent.host.NativeRuntime;
 import dev.bitwigagent.host.RequestSnapshot;
 import dev.bitwigagent.host.TrackRefs;
 import dev.bitwigagent.host.TrackWindow;
 import dev.bitwigagent.host.TransportSafety;
-import dev.bitwigagent.nativehost.NativeHost;
-import dev.bitwigagent.nativehost.NativeRoutingAccess;
 import dev.bitwigagent.routing.RoutingPort.TrackRef;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicLong;
@@ -39,11 +37,10 @@ public final class RoutingModule implements HostModule {
     private final TrackRefs trackRefs;
     private final DeviceSources sources;
     private final TransportSafety transportSafety;
-    private final NativeRuntime natives;
+    private final PortHandle<RoutingPort> access;
     private final Holds holds;
     private final MethodSpecs specs;
     private final AtomicLong epoch = new AtomicLong();
-    private RoutingPort access;
     private static final String PENDING = "routing.pending", QUARANTINE = "routing.quarantine";
     private static final String HOLD = "A routing or sidechain write is pending or unresolved.";
 
@@ -53,31 +50,17 @@ public final class RoutingModule implements HostModule {
             TrackRefs trackRefs,
             DeviceSources sources,
             TransportSafety transportSafety,
-            NativeRuntime natives,
+            PortHandle<RoutingPort> access,
             Holds holds,
             MethodSpecs specs) {
-        this(scheduler, window, trackRefs, sources, transportSafety, natives, holds, specs, null);
-    }
-
-    public RoutingModule(
-            Scheduler scheduler,
-            TrackWindow window,
-            TrackRefs trackRefs,
-            DeviceSources sources,
-            TransportSafety transportSafety,
-            NativeRuntime natives,
-            Holds holds,
-            MethodSpecs specs,
-            RoutingPort access) {
         this.scheduler = scheduler;
         this.window = window;
         this.trackRefs = trackRefs;
         this.sources = sources;
         this.transportSafety = transportSafety;
-        this.natives = natives;
+        this.access = access;
         this.holds = holds;
         this.specs = specs;
-        this.access = access;
         for (int i = 0; i < HostLimits.TRACKS; i++) {
             Track track = window.at(i);
             track.channelId().addValueObserver((StringValueChangedCallback) v -> epoch.incrementAndGet());
@@ -130,15 +113,7 @@ public final class RoutingModule implements HostModule {
                                 + "-track window; nothing changed.");
         }
         Runnable safety = () -> transportSafety.recheck(op);
-        if (access == null) {
-            try {
-                access = new NativeRoutingAccess(natives.get(op).access());
-            } catch (ReflectiveOperationException | LinkageError error) {
-                throw Errors.notApplied(
-                        Reason.NATIVE_UNAVAILABLE,
-                        "Exact routing descriptors unavailable: " + NativeHost.diagnostic(error));
-            }
-        }
+        RoutingPort bridge = access.get(op);
         long generation = epoch.get();
         Runnable check = () -> {
             scheduler.check(op);
@@ -153,7 +128,6 @@ public final class RoutingModule implements HostModule {
             op.markDispatched();
             holds.place(QUARANTINE, HOLD);
         };
-        RoutingPort bridge = access;
         TrackRef target = self;
         boolean choices = p.has("includeChoices") && p.get("includeChoices").getAsBoolean();
         holds.inFlight(PENDING, HOLD);

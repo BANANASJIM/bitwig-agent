@@ -6,16 +6,15 @@ import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.HostModule;
 import dev.bitwigagent.core.HostOperation;
 import dev.bitwigagent.core.Outcome;
+import dev.bitwigagent.core.PortHandle;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.Scheduler;
 import dev.bitwigagent.core.Verification;
-import dev.bitwigagent.host.NativeRuntime;
 import dev.bitwigagent.host.SelectionLease;
 import dev.bitwigagent.host.TrackRefs;
 import dev.bitwigagent.host.TrackWindow;
 import dev.bitwigagent.host.TransportSafety;
-import dev.bitwigagent.nativehost.NativeTrackReshapeAccess;
 import java.util.*;
 
 /**
@@ -61,9 +60,8 @@ public final class TrackReshapeModule implements HostModule {
     private final TrackRefs trackRefs;
     private final TransportSafety transportSafety;
     private final SelectionLease selection;
-    private final NativeRuntime natives;
+    private final PortHandle<Access> access;
     private final MixModule mix;
-    private Access access;
 
     public TrackReshapeModule(
             Scheduler scheduler,
@@ -71,17 +69,15 @@ public final class TrackReshapeModule implements HostModule {
             TrackRefs trackRefs,
             TransportSafety transportSafety,
             SelectionLease selection,
-            NativeRuntime natives,
-            MixModule mix,
-            Access access) {
+            PortHandle<Access> access,
+            MixModule mix) {
         this.scheduler = scheduler;
         this.window = window;
         this.trackRefs = trackRefs;
         this.transportSafety = transportSafety;
         this.selection = selection;
-        this.natives = natives;
-        this.mix = mix;
         this.access = access;
+        this.mix = mix;
     }
 
     @Override
@@ -106,19 +102,6 @@ public final class TrackReshapeModule implements HostModule {
         else ungroup(op, target, slot, type.getAsString());
     }
 
-    private Access bound(HostOperation op) {
-        if (access == null) {
-            try {
-                access = new NativeTrackReshapeAccess(natives.get(op).access());
-            } catch (ReflectiveOperationException error) {
-                throw Errors.notApplied(
-                        Reason.NATIVE_UNAVAILABLE,
-                        "Exact track command descriptors unavailable: " + error.getMessage());
-            }
-        }
-        return access;
-    }
-
     /** One native command: given the bound access, the safety check and the hook to run right before writing. */
     private interface Command {
         JsonObject run(Access access, Runnable check, Runnable beforeWrite);
@@ -126,7 +109,7 @@ public final class TrackReshapeModule implements HostModule {
 
     /** Runs a native command with the selection lease held and finishes with {@code observe} on the controller thread. */
     private void run(HostOperation op, Command command, java.util.function.Consumer<JsonObject> observe) {
-        Access bound = bound(op);
+        Access bound = access.get(op);
         Runnable check = () -> {
             scheduler.check(op);
             transportSafety.recheck(op);

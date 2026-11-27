@@ -54,8 +54,7 @@ public final class NativeRoutingAccess implements RoutingPort {
             inSet,
             inClear,
             inAccepts;
-    private NativeHardwareInputs hardware;
-    private String hardwareError;
+    private final LazyBinding<NativeHardwareInputs> hardware = new LazyBinding<>("native_unavailable: ");
     private final Method busOwner,
             busName,
             descendants,
@@ -203,15 +202,12 @@ public final class NativeRoutingAccess implements RoutingPort {
     }
 
     /** The hardware input bindings, bound on first use; null (with why) where this host lacks one of their keys. */
-    private NativeHardwareInputs hardware() {
-        if (hardware == null && hardwareError == null) {
-            try {
-                hardware = new NativeHardwareInputs(a);
-            } catch (ReflectiveOperationException | LinkageError | RpcException error) {
-                hardwareError = "native_unavailable: " + NativeHost.diagnostic(error);
-            }
-        }
-        return hardware;
+    NativeHardwareInputs hardware() {
+        return hardwareError() == null ? hardware.get(() -> new NativeHardwareInputs(a)) : null;
+    }
+
+    private String hardwareError() {
+        return hardware.unavailable(() -> new NativeHardwareInputs(a));
     }
 
     // ---- shared resolution ----
@@ -426,7 +422,7 @@ public final class NativeRoutingAccess implements RoutingPort {
         NativeHardwareInputs inputs = hardware();
         if (inputs == null)
             throw Errors.notApplied(
-                    Reason.NATIVE_UNAVAILABLE, "Hardware input bindings are unavailable: " + hardwareError);
+                    Reason.NATIVE_UNAVAILABLE, "Hardware input bindings are unavailable: " + hardwareError());
         NativeHardwareInputs.Listing listing =
                 request.kind.equals("hardware_audio_input") ? inputs.audio() : inputs.notes();
         if (listing.unavailable != null)
@@ -502,7 +498,7 @@ public final class NativeRoutingAccess implements RoutingPort {
             }
             NativeHardwareInputs inputs = hardware();
             if (inputs == null) {
-                why[i] = hardwareError;
+                why[i] = hardwareError();
                 continue;
             }
             NativeHardwareInputs.Listing listing = i == 0 ? inputs.audio() : inputs.notes();

@@ -664,7 +664,7 @@ public final class ModulatorModuleTest {
             devices.child("itemCount").emit(1);
             DeviceSources.Source source = host.services.sources.roots[0][0];
             model = new ModulatorEditorTest.Fake(source);
-            edits = host.services.modulatorEdits(new ModulatorEditor(model));
+            edits = host.services.modulatorEdits(model);
             module = host.services.modulator(adapter, edits);
             parameters = host.services.parameters(host.services.remote(), edits);
             ref = source.ref();

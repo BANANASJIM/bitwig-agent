@@ -9,19 +9,18 @@ import dev.bitwigagent.core.HostModule;
 import dev.bitwigagent.core.HostOperation;
 import dev.bitwigagent.core.Outcome;
 import dev.bitwigagent.core.Params;
+import dev.bitwigagent.core.PortHandle;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Refs;
 import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.RpcException;
 import dev.bitwigagent.core.Scheduler;
+import dev.bitwigagent.core.SharedData;
 import dev.bitwigagent.core.Verification;
-import dev.bitwigagent.host.NativeRuntime;
 import dev.bitwigagent.host.TrackEpochs;
 import dev.bitwigagent.host.TrackRefs;
 import dev.bitwigagent.host.TrackWindow;
 import dev.bitwigagent.host.TransportSafety;
-import dev.bitwigagent.nativehost.NativeHost;
-import dev.bitwigagent.nativehost.NativeRenderAccess;
 import dev.bitwigagent.project.ProjectSaveAsPlan;
 import dev.bitwigagent.recovery.JobsModule;
 import java.nio.file.Path;
@@ -206,11 +205,10 @@ public final class RenderModule implements HostModule, JobsModule.Source {
     private final TrackRefs trackRefs;
     private final Project project;
     private final TransportSafety transportSafety;
-    private final NativeRuntime natives;
+    private final PortHandle<Access> access;
     private final Holds holds;
     private final TrackEpochs epochs;
 
-    private Access access;
     private final LauncherContent launcher;
     private volatile Job job;
     private int sequence;
@@ -222,9 +220,9 @@ public final class RenderModule implements HostModule, JobsModule.Source {
             TrackRefs trackRefs,
             Project project,
             TransportSafety transportSafety,
-            NativeRuntime natives,
+            PortHandle<Access> access,
             Holds holds) {
-        this(scheduler, window, trackRefs, project, transportSafety, natives, holds, null, null);
+        this(scheduler, window, trackRefs, project, transportSafety, access, holds, null);
     }
 
     public RenderModule(
@@ -233,21 +231,8 @@ public final class RenderModule implements HostModule, JobsModule.Source {
             TrackRefs trackRefs,
             Project project,
             TransportSafety transportSafety,
-            NativeRuntime natives,
+            PortHandle<Access> access,
             Holds holds,
-            Access access) {
-        this(scheduler, window, trackRefs, project, transportSafety, natives, holds, access, null);
-    }
-
-    public RenderModule(
-            Scheduler scheduler,
-            TrackWindow window,
-            TrackRefs trackRefs,
-            Project project,
-            TransportSafety transportSafety,
-            NativeRuntime natives,
-            Holds holds,
-            Access access,
             LauncherContent launcher) {
         this.launcher = launcher;
         this.scheduler = scheduler;
@@ -255,7 +240,6 @@ public final class RenderModule implements HostModule, JobsModule.Source {
         this.trackRefs = trackRefs;
         this.project = project;
         this.transportSafety = transportSafety;
-        this.natives = natives;
         this.holds = holds;
         holds.job(JOB, this::rendering, this::returned, this::abandon);
         holds.job(FINISHED, this::finishedUnverified, this::returned, this::abandon);
@@ -369,7 +353,7 @@ public final class RenderModule implements HostModule, JobsModule.Source {
         for (String m : List.of(EXPORT, BOUNCE)) methods.add(m);
         result.add("methods", methods);
         try {
-            access(op);
+            access.get(op);
             result.addProperty("available", true);
         } catch (RpcException error) {
             if (!error.is(Reason.NATIVE_UNAVAILABLE) && !error.is(Reason.HOST_MISMATCH)) throw error;
@@ -378,14 +362,9 @@ public final class RenderModule implements HostModule, JobsModule.Source {
         }
         result.addProperty(
                 "binding",
-                "exact_" + NativeHost.SUPPORTED
+                "exact_" + SharedData.hostVersions()
                         + "_hash_gated_export_audio_and_bounce_in_place_jobs_with_native_latch");
         return result;
-    }
-
-    private Access access(HostOperation op) {
-        if (access == null) access = NativeRenderAccess.bind(natives.get(op).access());
-        return access;
     }
 
     @Override
@@ -449,7 +428,7 @@ public final class RenderModule implements HostModule, JobsModule.Source {
                 next.typesBefore.put(
                         ids.get(i), ((Track) proxies.get(i)).trackType().get());
         }
-        Access bridge = access(op);
+        Access bridge = access.get(op);
         Runnable check = () -> {
             scheduler.check(op);
             transportSafety.recheck(op);
@@ -818,7 +797,7 @@ public final class RenderModule implements HostModule, JobsModule.Source {
         scheduler.check(op);
         Job current = job;
         if (current == null || !current.dispatched || !current.id.equals(id)) throw JobsModule.unknownJob(id);
-        Access bridge = access(op);
+        Access bridge = access.get(op);
         JsonObject row = new JsonObject();
         row.addProperty("id", current.id);
         if (current.abandoned) row.addProperty("acknowledged", true);

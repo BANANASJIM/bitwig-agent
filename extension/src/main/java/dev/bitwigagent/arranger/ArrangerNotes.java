@@ -3,7 +3,6 @@ package dev.bitwigagent.arranger;
 import com.google.gson.*;
 import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.Verification;
-import dev.bitwigagent.nativehost.NativeArrangerAccess;
 import java.util.*;
 
 /**
@@ -12,6 +11,9 @@ import java.util.*;
  * every row and reads channel and key through their own getters, so it does not depend on that argument order.
  */
 public final class ArrangerNotes {
+    /** Beats within this distance are the same position or length; the arranger's tolerance, not the host's. */
+    public static final double EPS = 1e-6;
+
     private ArrangerNotes() {}
 
     public interface Host {
@@ -94,6 +96,6 @@ public final class ArrangerNotes {
     }
 
     private static boolean near(double a, double b) {
-        return Math.abs(a - b) <= NativeArrangerAccess.EPS;
+        return Math.abs(a - b) <= EPS;
     }
 }

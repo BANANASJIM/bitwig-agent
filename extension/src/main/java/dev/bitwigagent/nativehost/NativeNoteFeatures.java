@@ -2,7 +2,6 @@ package dev.bitwigagent.nativehost;
 
 import com.bitwig.extension.controller.api.NoteOccurrence;
 import dev.bitwigagent.core.Errors;
-import dev.bitwigagent.core.LazyBinding;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.launcher.Note;
 import dev.bitwigagent.launcher.NoteFeatures;
@@ -25,27 +24,31 @@ import java.util.Map;
  * not bind is unread and refused, and plain notes stay native.
  */
 final class NativeNoteFeatures {
-    private final LazyBinding<Operators> operators;
-    private final LazyBinding<Expressions> expressions;
+    private final LazyBinding<Operators> operators = new LazyBinding<>("");
+    private final LazyBinding<Expressions> expressions = new LazyBinding<>("");
+    private final LazyBinding.Bind<Operators> bindOperators;
+    private final LazyBinding.Bind<Expressions> bindExpressions;
 
     NativeNoteFeatures(NativeHost.Access a) {
-        operators = new LazyBinding<>(() -> new Operators(a));
-        expressions = new LazyBinding<>(() -> new Expressions(a));
+        bindOperators = () -> new Operators(a);
+        bindExpressions = () -> new Expressions(a);
     }
 
     /** The record keys of the groups that do not bind on this host. */
     List<String> unread() {
         List<String> out = new ArrayList<>();
-        if (operators.unavailable() != null) out.addAll(NoteFeatures.OPERATOR_KEYS);
-        if (expressions.unavailable() != null) out.addAll(NoteFeatures.EXPRESSION_KEYS);
+        if (operators.unavailable(bindOperators) != null) out.addAll(NoteFeatures.OPERATOR_KEYS);
+        if (expressions.unavailable(bindExpressions) != null) out.addAll(NoteFeatures.EXPRESSION_KEYS);
         return out;
     }
 
     /** The note's operators and expressions; a group that does not bind reads as default (listed by unread()). */
     NoteFeatures read(Object note) {
         NoteFeatures.Builder b = new NoteFeatures.Builder();
-        if (operators.unavailable() == null) operators.get().read(note, b);
-        if (expressions.unavailable() == null) expressions.get().read(note, b);
+        if (operators.unavailable(bindOperators) == null)
+            operators.get(bindOperators).read(note, b);
+        if (expressions.unavailable(bindExpressions) == null)
+            expressions.get(bindExpressions).read(note, b);
         return b.build();
     }
 
@@ -53,7 +56,7 @@ final class NativeNoteFeatures {
     void requireExpressions(Object clip, Iterable<Note> notes) {
         for (Note n : notes)
             if (n.features.hasExpression()) {
-                expressions.get().requireClip(clip);
+                expressions.get(bindExpressions).requireClip(clip);
                 return;
             }
     }
@@ -64,8 +67,8 @@ final class NativeNoteFeatures {
      * differ from that.
      */
     void writeNew(Object clip, Object note, NoteFeatures f) {
-        if (f.hasOperators()) operators.get().write(note, f);
-        if (f.hasExpression()) expressions.get().write(clip, note, f);
+        if (f.hasOperators()) operators.get(bindOperators).write(note, f);
+        if (f.hasExpression()) expressions.get(bindExpressions).write(clip, note, f);
     }
 
     private static boolean on(NativeHost.Access a, Method getter, Object note) {

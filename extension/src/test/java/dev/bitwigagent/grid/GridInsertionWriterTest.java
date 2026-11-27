@@ -491,7 +491,7 @@ public final class GridInsertionWriterTest {
                     "actual Method.invoke conversion failure is cleaned once and quarantined before settlement");
             assertTrue(
                     f.cleanupError instanceof RpcException
-                            && NativeHost.isInvocationFailure(f.cleanupError)
+                            && Errors.isHostCallFailure(f.cleanupError)
                             && f.cleanupError.getCause() instanceof java.lang.reflect.InvocationTargetException
                             && f.cleanupError.getCause().getCause() == cause,
                     "RPC translation retains reflection boundary and original native throwable identity");
@@ -523,7 +523,7 @@ public final class GridInsertionWriterTest {
                     f.cleanups == 1
                             && !f.guard.quarantined()
                             && !op.result.isDone()
-                            && !NativeHost.isInvocationFailure(f.cleanupError),
+                            && !Errors.isHostCallFailure(f.cleanupError),
                     "ordinary deadline/context validation remains a cleanup-and-settle rejection");
             f.next();
             f.guard.requireAvailable(device(f));

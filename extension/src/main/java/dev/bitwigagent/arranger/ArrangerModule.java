@@ -9,11 +9,11 @@ import dev.bitwigagent.core.HostLimits;
 import dev.bitwigagent.core.HostModule;
 import dev.bitwigagent.core.HostOperation;
 import dev.bitwigagent.core.MethodSpecs;
+import dev.bitwigagent.core.PortHandle;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Refs;
 import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.Scheduler;
-import dev.bitwigagent.host.NativeRuntime;
 import dev.bitwigagent.host.ProjectState;
 import dev.bitwigagent.host.TrackRefs;
 import dev.bitwigagent.host.TrackWindow;
@@ -22,7 +22,6 @@ import dev.bitwigagent.launcher.LauncherState;
 import dev.bitwigagent.launcher.Note;
 import dev.bitwigagent.launcher.NoteFeatures;
 import dev.bitwigagent.launcher.NoteModule;
-import dev.bitwigagent.nativehost.NativeArrangerAccess;
 import java.math.BigDecimal;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicLongArray;
@@ -72,12 +71,11 @@ public final class ArrangerModule implements HostModule {
     private final TrackRefs trackRefs;
     private final ProjectState projectState;
     private final TransportSafety transportSafety;
-    private final NativeRuntime natives;
+    private final PortHandle<Access> access;
     private final Holds holds;
     private final MarkerModule markers;
     private final Transport transport;
     private final AtomicLongArray epochs = new AtomicLongArray(HostLimits.TRACKS);
-    private Access access;
     private volatile String signature;
     private volatile Double tempo;
     private static final String PENDING = "arranger.pending", QUARANTINE = "arranger.quarantine";
@@ -88,21 +86,19 @@ public final class ArrangerModule implements HostModule {
             TrackRefs trackRefs,
             ProjectState projectState,
             TransportSafety transportSafety,
-            NativeRuntime natives,
+            PortHandle<Access> access,
             Holds holds,
             MarkerModule markers,
-            Transport transport,
-            Access access) {
+            Transport transport) {
         this.scheduler = scheduler;
         this.window = window;
         this.trackRefs = trackRefs;
         this.projectState = projectState;
         this.transportSafety = transportSafety;
-        this.natives = natives;
+        this.access = access;
         this.holds = holds;
         this.markers = markers;
         this.transport = transport;
-        this.access = access;
         transport.tempo().value().addRawValueObserver((DoubleValueChangedCallback) v -> tempo = v);
         transport.timeSignature().addValueObserver((StringValueChangedCallback) v -> signature = (String) v);
         for (int i = 0; i < HostLimits.TRACKS; i++) {
@@ -300,7 +296,7 @@ public final class ArrangerModule implements HostModule {
         String where = ids.length == 1 ? "track " + ids[0] : ids.length + " tracks";
         if (write) op.inspect = dev.bitwigagent.core.Refs.read("clip:arranger");
         Runnable safety = write ? transportSafety.atLeast(op, MethodSpecs.Transport.STOPPED) : null;
-        if (access == null) access = NativeArrangerAccess.bind(natives.get(op).access());
+        Access bridge = access.get(op);
         Runnable check = () -> {
             scheduler.check(op);
             boolean moved = offset >= 0 && window.sceneOffset() != offset;
@@ -316,7 +312,6 @@ public final class ArrangerModule implements HostModule {
             op.markDispatched();
             holds.place(QUARANTINE, "An arranger clip write on " + where + " has an unknown outcome until read back.");
         };
-        Access bridge = access;
         holds.inFlight(PENDING, "A native arranger operation on " + where + " is running.");
         try {
             bridge.execute(() -> {

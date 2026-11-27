@@ -5,12 +5,11 @@ import dev.bitwigagent.core.BoundedJson;
 import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.HostModule;
 import dev.bitwigagent.core.HostOperation;
+import dev.bitwigagent.core.PortHandle;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.RpcException;
 import dev.bitwigagent.core.Scheduler;
 import dev.bitwigagent.host.DeviceSources;
-import dev.bitwigagent.host.NativeRuntime;
-import dev.bitwigagent.nativehost.NativeModulatorAdapter;
 import java.util.Set;
 import java.util.UUID;
 
@@ -20,20 +19,17 @@ public final class ModulatorModule implements HostModule {
     static final int MAX_RESPONSE_CHARS = 240000;
     private final Scheduler scheduler;
     private final DeviceSources sources;
-    private final NativeRuntime natives;
+    private final PortHandle<ModulatorAdapter> adapters;
     private final ModulatorEditModule edits;
-    private ModulatorAdapter adapter;
 
     public ModulatorModule(
             Scheduler scheduler,
             DeviceSources sources,
-            NativeRuntime natives,
-            ModulatorAdapter injected,
+            PortHandle<ModulatorAdapter> adapters,
             ModulatorEditModule edits) {
         this.scheduler = scheduler;
         this.sources = sources;
-        this.natives = natives;
-        adapter = injected;
+        this.adapters = adapters;
         this.edits = edits;
     }
 
@@ -49,8 +45,7 @@ public final class ModulatorModule implements HostModule {
     public void dispatch(HostOperation op, String method, JsonObject p) {
         scheduler.check(op);
         ModulatorEditor editor = edits.editor(op);
-        if (adapter == null)
-            adapter = new NativeModulatorAdapter(natives.get(op).access());
+        ModulatorAdapter adapter = adapters.get(op);
         boolean one = method.equals("modulators.get");
         JsonObject modulatorRef = one ? p.getAsJsonObject("target") : null;
         DeviceSources.Source device =
@@ -69,7 +64,7 @@ public final class ModulatorModule implements HostModule {
                 };
                 check.run();
                 JsonObject value = editor.read(device, deviceRef, offset, limit, only, check);
-                addPanels(value, device, check);
+                addPanels(adapter, value, device, check);
                 JsonObject result = one ? single(value) : value;
                 check.run();
                 final String serialized = BoundedJson.serialize(
@@ -113,7 +108,8 @@ public final class ModulatorModule implements HostModule {
     }
 
     /** Each modulator's string panels as read-only rows; Bitwig shows them as text fields that have no ref to write. */
-    private void addPanels(JsonObject page, DeviceSources.Source device, Runnable check) {
+    private static void addPanels(
+            ModulatorAdapter adapter, JsonObject page, DeviceSources.Source device, Runnable check) {
         JsonArray rows = page.getAsJsonArray("modulators");
         if (rows.size() == 0) return;
         int first = rows.get(0).getAsJsonObject().get("index").getAsInt();

@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.HostOperation;
+import dev.bitwigagent.core.PortHandle;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.grid.GridRemotePageWriter;
 import dev.bitwigagent.host.DeviceSources;
@@ -83,13 +84,8 @@ public final class NativeRemoteValuesTest {
         DeviceFixture f = DeviceFixture.twins();
         Object main = new Object();
         FakeChains.Param mapped = new FakeChains.Param("Gain", .6);
-        int[] bound = {0};
         NativeRemoteValues model = new NativeRemoteValues(
-                op -> {
-                    bound[0]++;
-                    return pages(List.of(main), Map.of(main, "Main"), mapped);
-                },
-                f.services.chains);
+                PortHandle.of(pages(List.of(main), Map.of(main, "Main"), mapped)), f.services.chains);
         DeviceSources.Source device = f.services.sources.device(f.twin(1), false);
         List<Double> held = new ArrayList<>();
         List<RuntimeException> failed = new ArrayList<>();
@@ -97,7 +93,6 @@ public final class NativeRemoteValuesTest {
         model.read(new HostOperation(Long.MAX_VALUE), device, 0, "Main", 2, 0, held::add, failed::add);
         assertEquals(Arrays.asList(.6, null), held);
         assertTrue(failed.isEmpty());
-        assertEquals(1, bound[0], "the binding is made once");
     }
 
     @Test

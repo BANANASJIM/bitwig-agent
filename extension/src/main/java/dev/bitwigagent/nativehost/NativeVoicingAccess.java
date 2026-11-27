@@ -68,7 +68,7 @@ final class NativeVoicingAccess implements GridVoicingWriter.Access {
             bindSetter("stealSameKey", base, "voicing.setStealSameKey", boolean.class);
             bindSetter("allowOverlappingNotes", base, "voicing.setAllowOverlappingNotes", boolean.class);
         } catch (ReflectiveOperationException | RuntimeException | LinkageError error) {
-            setterError = NativeHost.diagnostic(error);
+            setterError = Errors.diagnostic(error);
         }
     }
 

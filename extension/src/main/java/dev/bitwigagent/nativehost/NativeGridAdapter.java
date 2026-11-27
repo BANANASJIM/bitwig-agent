@@ -1,7 +1,7 @@
 package dev.bitwigagent.nativehost;
 
+import static dev.bitwigagent.core.Errors.diagnostic;
 import static dev.bitwigagent.grid.GridSnapshotReader.Field.*;
-import static dev.bitwigagent.nativehost.NativeHost.diagnostic;
 
 import com.google.gson.JsonObject;
 import dev.bitwigagent.core.Errors;
