@@ -24,7 +24,9 @@ class AutomationRange(StrictModel):
 class AutomationPoint(StrictModel):
     beat: float = Field(ge=0, le=MAX_BEAT, description="Arrangement position in beats (quarter notes).")
     value: UnitValue = Field(description="Normalized 0..1 parameter value.")
-    interpolation: Literal["linear", "hold"]
+    interpolation: Literal["linear", "hold"] = omitted(
+        description="Omitted: a new point is linear, an updated point keeps its interpolation."
+    )
 
 
 class AutomationPointsGetArgs(StatusArgs):
@@ -43,10 +45,10 @@ class PointsExpect(Expect):
 class AutomationPointsSetArgs(StatusArgs):
     target: AutomationParameterRef
     points: Annotated[list[AutomationPoint], Field(max_length=1024)] = Field(
-        description="Replacement points, strictly increasing beats, inside range if given."
+        description="Points to write, strictly increasing beats, inside range if given. A point at the beat of an existing one updates it."
     )
-    range: AutomationRange = omitted(
-        description="Replace only points with start <= beat <= end; without it the whole lane is replaced."
+    range: AutomationRange | Literal["all"] = omitted(
+        description='Without range only the listed points are written and nothing is removed. {start, end}: the points with start <= beat <= end become exactly the listed ones. "all": the whole lane does.'
     )
     expect: PointsExpect = omitted(description="The lane's current pointsHash; a mismatch writes nothing.")
 
@@ -55,7 +57,7 @@ class AutomationPointsSetArgs(StatusArgs):
         beats = [point.beat for point in self.points]
         if any(b <= a for a, b in itertools.pairwise(beats)):
             raise ValueError("point beats must be strictly increasing")
-        if "range" in self.model_fields_set and any(not self.range.start <= b <= self.range.end for b in beats):
+        if isinstance(self.range, AutomationRange) and any(not self.range.start <= b <= self.range.end for b in beats):
             raise ValueError("every point must lie inside range")
         return self
 
@@ -79,7 +81,7 @@ GRID_CUTOFF = {
     "id": "CUTOFF",
 }
 AUTOMATION_POINTS_GET_DESCRIPTION = "Read the arranger automation points of one parameter on an audio/instrument track: target is the parameter ref tracks.get returned for volume or pan, or a Grid module parameter ref (an owner gridModule ref as grid.export read it, id the parameter key) for a float Grid control; other owners are unsupported_scope. Returns ref, lane {exists, count, pointsHash} for the whole lane (pass pointsHash as expect to automation.points.set) and points [{beat, value (normalized 0..1), interpolation linear|hold, curve}] inside the optional range, at most 1024 (truncated says more exist). Beats are quarter notes from the arrangement start. Launcher-clip automation and automation clips are not read. Native read (inspected Bitwig 6.1.4 JAR); no selection."
-AUTOMATION_POINTS_SET_DESCRIPTION = "Replace the arranger automation points of one parameter (targets as automation.points.get): every point with start <= beat <= end (the whole lane without range) is replaced by points [{beat, value 0..1, interpolation linear|hold}], strictly increasing, inside range. expect.pointsHash, when given, must equal a fresh automation.points.get (else stale/target_changed with observed, nothing changed). Creates the lane when missing; an empty points list clears the range, leaving only Bitwig's own base point at beat 0, which counts as cleared. One native undoable edit, verified by reading the whole lane back; new points get curve 0. Needs stopped transport with recording/automation-write off. An unknown outcome refuses further automation writes until you inspect automation.points.get and ack the hold; never retry."
+AUTOMATION_POINTS_SET_DESCRIPTION = 'Write the arranger automation points of one parameter (targets as automation.points.get). points [{beat, value 0..1, interpolation linear|hold}] are strictly increasing; a point at the beat of an existing one updates it, keeping the interpolation and curve it omits; a new point is linear unless given, curve 0. Without range only the listed points are written and nothing is removed; range {start, end} makes the points with start <= beat <= end exactly the listed ones (they must lie inside it); range "all" does that for the whole lane. Points read by automation.points.get can be written back as {beat, value, interpolation}: the same request again is already_matched. expect.pointsHash, when given, must equal a fresh automation.points.get (else stale/target_changed with observed, nothing changed). Creates the lane when missing; an empty points list with a range clears it, leaving only Bitwig\'s own base point at beat 0, which counts as cleared. Returns summary {inserted, updated, removed, unchanged}. One native undoable edit, verified by reading the whole lane back; untouched points stay the same native objects. Needs stopped transport with recording/automation-write off. An unknown outcome refuses further automation writes until you inspect automation.points.get and ack the hold; never retry.'
 
 
 SPECS: dict[str, ToolSpec] = {
@@ -98,7 +100,8 @@ SPECS: dict[str, ToolSpec] = {
         AUTOMATION_POINTS_SET_DESCRIPTION,
         False,
         examples=(
-            {"target": TRACK_PAN, "points": [{"beat": 0, "value": 0.5, "interpolation": "hold"}]},
+            {"target": TRACK_PAN, "points": [{"beat": 0, "value": 0.5, "interpolation": "hold"}], "range": "all"},
+            {"target": TRACK_VOLUME, "points": [{"beat": 8, "value": 0.7}, {"beat": 12, "value": 0.4}]},
             {
                 "target": TRACK_VOLUME,
                 "points": [
@@ -117,6 +120,6 @@ SPECS: dict[str, ToolSpec] = {
                 "range": {"start": 32, "end": 64},
             },
         ),
-        summary="Replace the points of one parameter ref in range (default the whole lane); optional expect.pointsHash. Stopped transport only.",
+        summary='Write points of one parameter ref: without range only the listed points (nothing removed); range {start,end} or "all" becomes exactly the listed points. Optional expect.pointsHash. Stopped transport only.',
     ),
 }

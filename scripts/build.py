@@ -30,6 +30,11 @@ def junit_jar():
     return dependency("junit-console")
 
 
+def jqwik_jars():
+    """Property-based testing for JUnit: the API to compile against and the engine the console launcher discovers."""
+    return [dependency("jqwik-api"), dependency("jqwik-engine")]
+
+
 def api_jar():
     """Installed host jar when BITWIG_API_JAR is set, else the checksum-pinned public extension API."""
     setting = os.environ.get("BITWIG_API_JAR")
