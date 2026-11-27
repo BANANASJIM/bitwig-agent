@@ -30,6 +30,14 @@ class Outcome(StrEnum):
     UNKNOWN = "unknown"
 
 
+class Verification(StrEnum):
+    """How a result was confirmed: the `verification` field of a result."""
+
+    NATIVE_READBACK = "native_readback"
+    API_READBACK = "api_readback"
+    FILE_READBACK = "file_readback"
+
+
 SUCCEEDED = frozenset({Outcome.ALREADY_MATCHED, Outcome.APPLIED, Outcome.SENT})
 
 
@@ -115,6 +123,7 @@ def vocabulary() -> dict[str, Any]:
         "protocol": PROTOCOL,
         "outcomes": [o.value for o in Outcome],
         "errorCodes": [c.value for c in ErrorCode],
+        "verifications": [v.value for v in Verification],
         "reasons": {reason: code.value for reason, code in REASONS.items()},
     }
 

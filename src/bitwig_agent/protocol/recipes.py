@@ -42,8 +42,8 @@ def _json(value: Any) -> str:
 
 RECIPES = (
     "Poly Grid bass (subtractive): sawtooth oscillator, low-pass filter at a fixed cutoff, envelope as the amplifier, "
-    "Audio Out. 1) tracks.insert an instrument track. 2) devices.catalog, then devices.insert kind=file with the path "
-    "of Poly Grid. 3) devices.list for its device ref. 4) grid.apply with target = that ref and the spec below. "
+    "Audio Out. 1) tracks.insert an instrument track. 2) devices.catalog, then devices.insert with the insert "
+    "object of the Poly Grid row. 3) devices.list for its device ref. 4) grid.apply with target = that ref and the spec below. "
     "pruneAll:true makes the spec the device's whole graph: it deletes every module the spec does not declare (a fresh "
     "Poly Grid's default oscillator, envelope and output included), so use it only on a new device; to change an "
     "existing patch run grid.export and edit what it returns. Union is a multi-wave oscillator (sawtooth by default); "

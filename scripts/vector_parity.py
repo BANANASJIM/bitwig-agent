@@ -40,7 +40,7 @@ REF_MODELS = {model.__name__ for model in Ref.__subclasses__()}
 SKIPS: dict[tuple[str, str, str], str] = {
     (
         "devices.insert",
-        "id",
+        "insert.id",
         "accept",
     ): "per-kind id caps (clap 256, vst3 32) make the shared 4096 unreachable; rejects still run",
     (
@@ -96,9 +96,7 @@ def as_path(value):
 
 
 def file_insert(params, value):
-    params["kind"] = "file"
-    params.pop("id", None)
-    params["path"] = as_path(value)
+    params["insert"] = {"kind": "file", "path": as_path(value)}
 
 
 def project_path(params, value):
@@ -216,7 +214,7 @@ FIXUPS = {
     ("grid.modules.insert", "modules.0.typeName"): drop("modules.0.typeId"),
     ("grid.parameters.set", "display"): drop("value"),
     ("transport.set", "timeSignature"): lambda p, v: p.__setitem__("timeSignature", "3/4"),
-    ("devices.insert", "path"): file_insert,
+    ("devices.insert", "insert.path"): file_insert,
     ("clips.import", "path"): lambda p, v: p.__setitem__("path", as_path(v)),
     ("clips.set", "expect"): lambda p, v: p.__setitem__("expect", {"name": "Hook"}),
     ("project.saveAs", "path"): project_path,

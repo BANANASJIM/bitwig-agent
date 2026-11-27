@@ -82,8 +82,7 @@ public final class NativeTrackGroupAccess implements TrackLifecycleModule.GroupA
         out.addProperty("nativeOperation", "track_group.group_tracks");
         out.addProperty("nativeUndo", true);
         out.addProperty("undoGrouping", name == null ? "group_transaction" : "group_and_name_one_transaction");
-        out.addProperty("nativeVersion", a.hostVersion());
-        out.addProperty("nativeJarSha256", a.actualHash());
+        a.provenance(out);
         return out;
     }
 

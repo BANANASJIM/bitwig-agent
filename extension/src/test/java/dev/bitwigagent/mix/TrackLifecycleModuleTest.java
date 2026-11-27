@@ -114,7 +114,7 @@ public final class TrackLifecycleModuleTest {
                 result.getAsJsonObject("insertion")
                         .get("verification")
                         .getAsString()
-                        .equals("unique_added_uuid_count_type_position"),
+                        .equals("api_readback"),
                 "creation evidence declared");
         assertTrue(
                 f.tracks[2].child("name").writes == 1
@@ -872,7 +872,7 @@ public final class TrackLifecycleModuleTest {
                 "the new group is identified and named");
         JsonObject info = result.getAsJsonObject("group");
         assertTrue(
-                info.get("verification").getAsString().startsWith("unique_added_group_uuid")
+                info.get("verification").getAsString().equals("api_readback")
                         && info.getAsJsonArray("children").size() == 2
                         && info.get("parent").isJsonNull(),
                 "group evidence lists children and parent");

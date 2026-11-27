@@ -6,6 +6,7 @@ import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.Outcome;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Results;
+import dev.bitwigagent.core.Verification;
 import dev.bitwigagent.grid.GridSnapshotReader;
 import dev.bitwigagent.host.NativeReadContext;
 import java.lang.reflect.Method;
@@ -245,7 +246,9 @@ public final class NativeAutomationAccess implements AutomationModule.Access {
         Lane lane = new Lane(trackProxy, trackId, target, check);
         List<AutomationModule.Point> points = lane.describe(lane.natives());
         lane.guard(check);
-        return AutomationModule.lane(new JsonObject(), a.hostVersion(), lane.lane != null, points, range);
+        JsonObject out = AutomationModule.lane(new JsonObject(), lane.lane != null, points, range);
+        a.provenance(out);
+        return out;
     }
 
     @Override
@@ -332,8 +335,8 @@ public final class NativeAutomationAccess implements AutomationModule.Access {
             int removed,
             int inserted,
             boolean created) {
-        JsonObject out =
-                AutomationModule.lane(Results.outcome(outcome), a.hostVersion(), lane.lane != null, all, range);
+        JsonObject out = AutomationModule.lane(Results.outcome(outcome), lane.lane != null, all, range);
+        a.provenance(out);
         JsonObject before = new JsonObject();
         before.addProperty("count", previous.size());
         before.addProperty("pointsHash", AutomationModule.hash(previous));
@@ -341,7 +344,7 @@ public final class NativeAutomationAccess implements AutomationModule.Access {
         out.addProperty("removed", removed);
         out.addProperty("inserted", inserted);
         out.addProperty("laneCreated", created);
-        out.addProperty("verification", "native_lane_readback");
+        Verification.NATIVE_READBACK.put(out);
         out.addProperty("nativeUndo", true);
         out.addProperty("undoGroupingVerified", false);
         return out;

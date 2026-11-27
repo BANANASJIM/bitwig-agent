@@ -14,6 +14,7 @@ import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Refs;
 import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.Scheduler;
+import dev.bitwigagent.core.Verification;
 import dev.bitwigagent.host.DeviceSources;
 import dev.bitwigagent.host.TrackRefs;
 import dev.bitwigagent.host.TrackWindow;
@@ -71,10 +72,10 @@ public final class DeviceChainModule implements HostModule {
 
     @Override
     public void validate(String method, JsonObject params) {
-        if (method.equals("devices.insert")) validateInsertion(params);
+        if (method.equals("devices.insert")) validateInsertion(params.getAsJsonObject("insert"));
     }
 
-    /** The kind-specific shape of an insertion, which the schema cannot state. */
+    /** The kind-specific shape of an insert object, which the schema cannot state. */
     static void validateInsertion(JsonObject p) {
         String kind = Params.string(p, "kind");
         if (kind.equals("file")) {
@@ -121,7 +122,7 @@ public final class DeviceChainModule implements HostModule {
             throw Errors.notApplied(Reason.BUSY, "Another device chain edit is awaiting observations.");
         mutation = op;
         boolean inChain = method.equals("devices.insert")
-                ? "chain".equals(Refs.kind(insertion(p).getAsJsonObject("parent")))
+                ? "chain".equals(Refs.kind(p.getAsJsonObject("to")))
                 : NativeChains.nested(p.getAsJsonObject("target"));
         switch (method) {
             case "devices.insert":
@@ -137,12 +138,8 @@ public final class DeviceChainModule implements HostModule {
             default:
                 if (inChain) {
                     transportSafety.requirePlaybackSafe();
-                    nested.move(
-                            op,
-                            p.getAsJsonObject("target"),
-                            p.getAsJsonObject("to"),
-                            transportSafety::requirePlaybackSafe);
-                } else move(op, p.getAsJsonObject("target"), p.getAsJsonObject("to"));
+                    nested.move(op, p, transportSafety::requirePlaybackSafe);
+                } else move(op, p);
         }
     }
 
@@ -276,23 +273,18 @@ public final class DeviceChainModule implements HostModule {
 
     // ---------------------------------------------------------------- insert
 
-    /** The {@code to} of devices.insert: {@code {parent, position?}}, shaped like a devices.move destination. */
-    static JsonObject insertion(JsonObject p) {
-        return p.getAsJsonObject("to");
-    }
-
     private void insert(HostOperation op, JsonObject p) {
-        JsonObject to = insertion(p);
-        Parent parent = parentOf(to.getAsJsonObject("parent"));
-        JsonElement position = to.get("position");
+        Parent parent = parentOf(p.getAsJsonObject("to"));
+        JsonElement position = p.get("position");
         int index = sources.insertionIndex(parent.ref(), position);
         State state = parent.capture("The chain changed before dispatch.");
         InsertionPoint point = insertionPoint(parent, position);
         scheduler.check(op);
         if (!parent.context().getAsBoolean() || !parent.prefixMatches(prefix(state, index)))
             throw Errors.notApplied(Reason.TARGET_CHANGED, "The chain changed before dispatch.");
-        String kind = p.get("kind").getAsString();
-        String value = p.get(kind.equals("file") ? "path" : "id").getAsString();
+        JsonObject insert = p.getAsJsonObject("insert");
+        String kind = insert.get("kind").getAsString();
+        String value = insert.get(kind.equals("file") ? "path" : "id").getAsString();
         Edit edit = new Edit(parent, DeviceChainEdit.Plan.insert(index, state.before), state, index);
         edit.extra.addProperty("requestedIdentifierVerified", false);
         edit.extra.add("parent", parent.ref());
@@ -350,14 +342,14 @@ public final class DeviceChainModule implements HostModule {
         observeEdit(op, edit);
     }
 
-    private void move(HostOperation op, JsonObject target, JsonObject to) {
-        DeviceSources.Source device = sources.device(target, true);
+    private void move(HostOperation op, JsonObject p) {
+        DeviceSources.Source device = sources.device(p.getAsJsonObject("target"), true);
         Parent parent = parentOf(device);
-        if (to.has("parent") && !sameParent(parent, to.getAsJsonObject("parent")))
+        if (p.has("to") && !sameParent(parent, p.getAsJsonObject("to")))
             throw Errors.notApplied(
                     Reason.UNSUPPORTED_SCOPE, "Moving a device to another chain or track is not supported yet.");
         int from = device.position;
-        int insertion = sources.insertionIndex(parent.ref(), to.get("position"));
+        int insertion = sources.insertionIndex(parent.ref(), p.get("position"));
         int dest = insertion > from ? insertion - 1 : insertion;
         transportSafety.requirePlaybackSafe();
         State state = parent.capture("The chain changed before dispatch.");
@@ -389,7 +381,7 @@ public final class DeviceChainModule implements HostModule {
         if (plan.indistinguishable()) {
             edit.extra.addProperty(
                     "hint", "Same names and types in the same order: the host cannot show whether anything moved.");
-            finishEdit(op, edit, DeviceChainEdit.Observation.ambiguous());
+            finishEdit(op, edit, DeviceChainEdit.Observation.AMBIGUOUS);
             return;
         }
         observeEdit(op, edit);
@@ -436,7 +428,7 @@ public final class DeviceChainModule implements HostModule {
 
     private DeviceChainEdit.Observation observedEdit(Edit edit) {
         return !edit.parent.prefixMatches(edit.prefixRevisions)
-                ? DeviceChainEdit.Observation.ambiguous()
+                ? DeviceChainEdit.Observation.AMBIGUOUS
                 : DeviceChainEdit.observe(edit.view, edit.plan);
     }
 
@@ -446,7 +438,7 @@ public final class DeviceChainModule implements HostModule {
         JsonObject result = outcome.ok ? Results.outcome(Outcome.APPLIED) : Results.outcome(Outcome.UNKNOWN);
         if (!outcome.ok)
             result.addProperty("reason", (outcome.pending ? Reason.NOT_OBSERVED : Reason.READBACK_MISMATCH).wire());
-        if (outcome.ok) result.addProperty("verification", outcome.verification);
+        if (outcome.ok) Verification.API_READBACK.put(result);
         result.addProperty("beforeCount", plan.before.count);
         result.addProperty("afterCount", view.count());
         result.add("before", DeviceChainEdit.before(plan.before));

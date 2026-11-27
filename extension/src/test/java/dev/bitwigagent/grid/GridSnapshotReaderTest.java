@@ -1582,7 +1582,7 @@ public final class GridSnapshotReaderTest {
                         && result.get("previousValue").getAsString().equals("before")
                         && result.get("requestedValue").getAsString().equals(text)
                         && result.get("mutationDispatched").getAsBoolean()
-                        && result.get("verification").getAsString().equals("exact_native_string_panel_readback")
+                        && result.get("verification").getAsString().equals("native_readback")
                         && !result.get("undoGroupingVerified").getAsBoolean()
                         && !result.get("engineAcknowledgement").getAsBoolean(),
                 "string panel write performs one native operation, preserves text verbatim and reads it back");

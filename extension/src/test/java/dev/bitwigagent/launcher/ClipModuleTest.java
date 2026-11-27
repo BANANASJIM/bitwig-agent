@@ -168,7 +168,7 @@ public final class ClipModuleTest {
         LauncherFake f = new LauncherFake();
         JsonObject out = f.call("clips.insert", insertAt(f.slot(0), 4, "Melody + chords 鼓"));
         assertEquals("applied", out.get("outcome").getAsString());
-        assertEquals("slot_content_name_length", out.get("verification").getAsString());
+        assertEquals("api_readback", out.get("verification").getAsString());
         assertEquals(4.0, out.getAsJsonObject("loop").get("lengthBeats").getAsDouble());
         assertEquals("Melody + chords 鼓", f.slots[0].name);
         assertEquals(Refs.launcherClip(f.track(), f.scene(0), "Melody + chords 鼓"), out.get("ref"));
@@ -242,7 +242,7 @@ public final class ClipModuleTest {
         f.scenes = 40;
         JsonObject out = f.call("clips.insert", withNotes(insertAt(f.slot(33), 4, "Hook")));
         assertEquals("applied", out.get("outcome").getAsString());
-        assertEquals("slot_content_name_length", out.get("verification").getAsString());
+        assertEquals("api_readback", out.get("verification").getAsString());
         JsonObject write = out.getAsJsonObject("noteWrite");
         assertEquals("applied", write.get("outcome").getAsString());
         assertEquals(3, write.getAsJsonObject("summary").get("verified").getAsInt());
@@ -285,7 +285,7 @@ public final class ClipModuleTest {
         LauncherFake refused = new LauncherFake();
         refused.failWriteAt = 1;
         JsonObject kept = refused.call("clips.insert", withNotes(insertParams(refused, 0)));
-        assertEquals("slot_content_name_length", kept.get("verification").getAsString());
+        assertEquals("api_readback", kept.get("verification").getAsString());
         assertTrue(refused.slots[0].content, "an observed create survives a failing note stage");
         assertEquals("unknown", kept.get("outcome").getAsString());
         assertEquals(
@@ -457,7 +457,7 @@ public final class ClipModuleTest {
         f.drain(op);
         JsonObject out = op.result.join();
         assertEquals("applied", out.get("outcome").getAsString());
-        assertEquals("slot_content_transition", out.get("verification").getAsString());
+        assertEquals("api_readback", out.get("verification").getAsString());
         assertFalse(out.get("requestedFileVerified").getAsBoolean());
         assertEquals("Host content", out.getAsJsonObject("slot").get("name").getAsString());
         assertEquals(Refs.launcherClip(f.track(), f.scene(33), "Host content"), out.get("ref"));
@@ -861,7 +861,7 @@ public final class ClipModuleTest {
         occupy(f, 0, "Riff");
         JsonObject out = f.call("clips.delete", clipParams(f, 0));
         assertEquals("applied", out.get("outcome").getAsString());
-        assertEquals("slot_empty", out.get("verification").getAsString());
+        assertEquals("api_readback", out.get("verification").getAsString());
         assertFalse(f.slots[0].content);
         assertEquals(1, f.deletes);
         assertTrue(f.services.holds.list().isEmpty());
@@ -920,7 +920,7 @@ public final class ClipModuleTest {
         occupy(f, 0, "Riff");
         JsonObject out = f.call("clips.copy", params("from", f.clip(0), "to", f.slot(1)));
         assertEquals("applied", out.get("outcome").getAsString());
-        assertEquals("target_content_and_name", out.get("verification").getAsString());
+        assertEquals("api_readback", out.get("verification").getAsString());
         assertEquals(Refs.launcherClip(f.track(), f.scene(1), "Riff"), out.get("ref"));
         assertTrue(f.slots[1].content && f.slots[0].content);
         assertEquals(1, f.copies);

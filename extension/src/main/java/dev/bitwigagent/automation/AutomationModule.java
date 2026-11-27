@@ -250,8 +250,7 @@ public final class AutomationModule implements HostModule {
     }
 
     /** Lane summary into {@code out}: whole-lane count and hash, plus the points inside range (bounded). */
-    public static JsonObject lane(
-            JsonObject out, String nativeVersion, boolean exists, List<Point> all, double[] range) {
+    public static JsonObject lane(JsonObject out, boolean exists, List<Point> all, double[] range) {
         JsonObject lane = new JsonObject();
         lane.addProperty("exists", exists);
         lane.addProperty("count", all.size());
@@ -273,7 +272,6 @@ public final class AutomationModule implements HostModule {
         out.add("points", rows);
         out.addProperty("pointsInRange", inRange);
         out.addProperty("truncated", inRange > rows.size());
-        out.addProperty("nativeVersion", nativeVersion);
         out.addProperty("selectionSideEffect", "none");
         return out;
     }

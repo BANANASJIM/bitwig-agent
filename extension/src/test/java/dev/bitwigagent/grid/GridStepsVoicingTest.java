@@ -314,7 +314,7 @@ public final class GridStepsVoicingTest {
                 row.getAsJsonArray("values").size() == 4
                         && row.getAsJsonArray("values").get(1).getAsDouble() == 0.1
                         && result.get("mutationDispatched").getAsBoolean()
-                        && result.get("verification").getAsString().equals("exact_native_step_array_readback")
+                        && result.get("verification").getAsString().equals("native_readback")
                         && result.getAsJsonArray("previousValues").size() == 4
                         && result.getAsJsonArray("requestedValues").size() == 3
                         && !result.get("undoGroupingVerified").getAsBoolean()
@@ -661,7 +661,7 @@ public final class GridStepsVoicingTest {
                                         .get("voices")
                                         .getAsInt()
                                 == 1
-                        && result.get("verification").getAsString().equals("exact_native_voicing_readback")
+                        && result.get("verification").getAsString().equals("native_readback")
                         && result.getAsJsonArray("changedUnrequested").size() == 0
                         && !result.get("undoGroupingVerified").getAsBoolean()
                         && !result.get("engineAcknowledgement").getAsBoolean(),

@@ -96,6 +96,12 @@ public final class NativeHost {
             return actualHash;
         }
 
+        /** Which host binary answered: the result's nativeVersion and nativeJarSha256. */
+        public void provenance(JsonObject out) {
+            out.addProperty("nativeVersion", hostVersion);
+            out.addProperty("nativeJarSha256", actualHash);
+        }
+
         public String gateError() {
             return gateError;
         }

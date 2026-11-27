@@ -51,9 +51,12 @@ public final class DeviceModuleTest {
                 else if (name.equals("v9 Hat Open")) hat = item;
                 else mystery = item;
                 assertTrue(
-                        item.get("kind").getAsString().equals("file")
-                                && item.get("path").getAsString().endsWith(name + ".bwdevice"),
-                        "kind=file path usable by devices.insert");
+                        item.getAsJsonObject("insert").get("kind").getAsString().equals("file")
+                                && item.getAsJsonObject("insert")
+                                        .get("path")
+                                        .getAsString()
+                                        .endsWith(name + ".bwdevice"),
+                        "insert {kind: file, path} usable by devices.insert");
             }
             assertTrue(
                     poly.get("category").getAsString().equals("The Grid")

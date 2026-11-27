@@ -776,12 +776,8 @@ public final class RenderModuleTest {
                             document.add(work);
                         }
 
-                        public String nativeVersion() {
-                            return "simulated";
-                        }
-
-                        public String nativeJarSha256() {
-                            return "simulated";
+                        public void provenance(JsonObject out) {
+                            out.addProperty("nativeVersion", "simulated");
                         }
 
                         public RenderModule.Handle export(

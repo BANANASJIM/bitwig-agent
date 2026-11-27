@@ -13,6 +13,7 @@ import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.SafetyObservation;
 import dev.bitwigagent.core.Scheduler;
+import dev.bitwigagent.core.Verification;
 import dev.bitwigagent.host.NativeRuntime;
 import dev.bitwigagent.host.SelectionLease;
 import dev.bitwigagent.host.TrackRefs;
@@ -320,7 +321,7 @@ public final class TrackLifecycleModule implements HostModule {
             HostOperation op, JsonObject p, List<String> ids, String parent, JsonObject nativeInfo, String found) {
         holds.release(GROUP);
         JsonObject info = nativeInfo.deepCopy();
-        info.addProperty("verification", "unique_added_group_uuid_and_every_track_parent_observed_twice");
+        Verification.API_READBACK.put(info);
         JsonArray children = new JsonArray();
         for (String id : ids) children.add(trackRefs.ref(window.trackSlot(id)));
         info.add("children", children);
@@ -476,7 +477,7 @@ public final class TrackLifecycleModule implements HostModule {
             HostOperation op, JsonObject p, Creation before, String id, Track track, String type, int requested) {
         holds.release(INSERTION);
         JsonObject info = new JsonObject();
-        info.addProperty("verification", "unique_added_uuid_count_type_position");
+        Verification.API_READBACK.put(info);
         info.addProperty("identityScope", "observed_addition_not_factory_return_identity");
         info.addProperty("requestedPosition", requested);
         info.addProperty("observedPosition", track.position().get());

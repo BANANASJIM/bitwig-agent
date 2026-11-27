@@ -16,6 +16,7 @@ import dev.bitwigagent.core.RpcException;
 import dev.bitwigagent.core.SafetyObservation;
 import dev.bitwigagent.core.Scheduler;
 import dev.bitwigagent.core.ValueMatch;
+import dev.bitwigagent.core.Verification;
 import dev.bitwigagent.host.EnumOptions;
 import dev.bitwigagent.host.TrackRefs;
 import dev.bitwigagent.host.TrackWindow;
@@ -395,7 +396,7 @@ public final class ClipModule implements HostModule {
         state.addClipMetadata(out);
         out.addProperty("undo", undo);
         if (matches) {
-            out.addProperty("verification", "slot_content_name_length");
+            Verification.API_READBACK.put(out);
             state.finishMutation();
         }
         if (matches && p.has("notes")) {
@@ -468,7 +469,7 @@ public final class ClipModule implements HostModule {
                     () -> {
                         JsonObject out = LauncherState.written(Outcome.APPLIED);
                         out.add("ref", state.clipRef(target));
-                        out.addProperty("verification", "slot_content_transition");
+                        Verification.API_READBACK.put(out);
                         out.addProperty("requestedFileVerified", false);
                         out.add("slot", state.slotJson(target));
                         state.finishMutation();
@@ -527,7 +528,7 @@ public final class ClipModule implements HostModule {
                             && !api.hasContent().get(),
                     () -> {
                         JsonObject out = LauncherState.written(Outcome.APPLIED);
-                        out.addProperty("verification", "slot_empty");
+                        Verification.API_READBACK.put(out);
                         out.add("slot", state.slotJson(target));
                         state.finishMutation();
                         op.result.complete(out);
@@ -598,7 +599,7 @@ public final class ClipModule implements HostModule {
         Runnable ok = () -> {
             String copied = to.slot.api.name().get();
             JsonObject out = LauncherState.written(Outcome.APPLIED);
-            out.addProperty("verification", copied.equals(name) ? "target_content_and_name" : "target_content");
+            Verification.API_READBACK.put(out);
             out.add("ref", state.clipRef(to));
             if (!copied.equals(name)) {
                 JsonObject changed = new JsonObject();
@@ -1150,11 +1151,11 @@ public final class ClipModule implements HostModule {
         return out;
     }
 
-    private JsonObject clipResult(LauncherState.Target target, String kind, Outcome outcome, String verification) {
+    private JsonObject clipResult(LauncherState.Target target, String kind, Outcome outcome) {
         JsonObject out = LauncherState.written(outcome);
         out.addProperty("op", kind);
         out.add("ref", state.clipRef(target));
-        if (verification != null) out.addProperty("verification", verification);
+        if (outcome == Outcome.APPLIED) Verification.API_READBACK.put(out);
         return out;
     }
 
@@ -1204,13 +1205,7 @@ public final class ClipModule implements HostModule {
         Runnable complete = () -> {
             Map<Integer, double[]> after = onsets(w);
             List<Integer> afterPitches = pitches(after);
-            JsonObject out = clipResult(
-                    target,
-                    kind,
-                    Outcome.APPLIED,
-                    kind.equals("transpose")
-                            ? "onset_cells_shifted"
-                            : kind.equals("quantize") ? "invariants_preserved_cells_changed" : "loop_length_doubled");
+            JsonObject out = clipResult(target, kind, Outcome.APPLIED);
             summary.addProperty("notesAfter", after.size());
             summary.addProperty(
                     "loopLengthBeatsAfter", state.clip.getLoopLength().get());
@@ -1273,7 +1268,7 @@ public final class ClipModule implements HostModule {
                 if (amount == 1
                         && sameCells(onsets(w), before)
                         && state.clip.getLoopLength().get() == loop) {
-                    JsonObject out = clipResult(target, kind, Outcome.UNKNOWN, null);
+                    JsonObject out = clipResult(target, kind, Outcome.UNKNOWN);
                     out.addProperty("reason", Reason.NOT_OBSERVED.wire());
                     out.addProperty(
                             "note",

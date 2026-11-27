@@ -5,6 +5,7 @@ import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.Outcome;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Results;
+import dev.bitwigagent.core.Verification;
 import dev.bitwigagent.host.DeviceSources;
 import java.util.*;
 import java.util.regex.Pattern;
@@ -124,7 +125,7 @@ public final class GridVoicingWriter {
             if (!request.set.containsKey(field) && !before.get(field).equals(current.get(field))) side.add(field);
         result.add("changedUnrequested", side);
         result.addProperty("mutationDispatched", changed);
-        result.addProperty("verification", "exact_native_voicing_readback");
+        Verification.NATIVE_READBACK.put(result);
         result.addProperty("nativeMutation", changed);
         result.addProperty("nativeUndo", changed);
         result.addProperty(

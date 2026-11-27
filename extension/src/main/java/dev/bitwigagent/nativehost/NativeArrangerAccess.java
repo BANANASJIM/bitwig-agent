@@ -10,6 +10,7 @@ import dev.bitwigagent.core.Refs;
 import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.RpcException;
 import dev.bitwigagent.core.ValueMatch;
+import dev.bitwigagent.core.Verification;
 import dev.bitwigagent.host.NativeReadContext;
 import dev.bitwigagent.render.RenderModule;
 import java.lang.reflect.Method;
@@ -198,7 +199,7 @@ public final class NativeArrangerAccess implements ArrangerModule.Access {
         for (int i = 0; i < clips.size(); i++) rows.add(describe(clips.get(i), i));
         out.add("clips", rows);
         out.addProperty("count", clips.size());
-        out.addProperty("nativeVersion", a.hostVersion());
+        a.provenance(out);
         out.addProperty("selectionSideEffect", "none");
         return out;
     }
@@ -260,7 +261,7 @@ public final class NativeArrangerAccess implements ArrangerModule.Access {
         int index = clip == null ? -1 : after.indexOf(clip);
         out.add("clip", index < 0 ? JsonNull.INSTANCE : describe(clip, index));
         if (previous != null) out.add("previous", previous);
-        out.addProperty("verification", "native_timeline_readback");
+        Verification.NATIVE_READBACK.put(out);
         out.addProperty("nativeUndo", true);
         out.addProperty("undoGroupingVerified", false);
         return out;

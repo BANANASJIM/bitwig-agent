@@ -20,7 +20,7 @@ Note calls select the clip in the editor (that is what moves `cursorClip`), so d
 
 ## Make a new part
 
-1. **Find a source that fits the job.** A playable synth is not automatically a distorted guitar. Prefer an exact installed preset (`presets search`, then `devices insert`); native types come from `devices catalog`, and a display name is not an id. If nothing fits the requested sound, deliver a labeled draft and name the gap instead of calling it done. Finish a small instrument-and-notes loop before researching a custom Grid graph.
+1. **Find a source that fits the job.** A playable synth is not automatically a distorted guitar. Prefer an exact installed preset (`presets search`, then `devices insert` with the hit's `insert` object unchanged); native types come from `devices catalog`, and a display name is not an id. If nothing fits the requested sound, deliver a labeled draft and name the gap instead of calling it done. Finish a small instrument-and-notes loop before researching a custom Grid graph.
 2. **Insert one device, then configure it.** Read the outcome and the new ref, then read Remote Controls or `parameters list` and change only the few values that differ, with the refs those reads returned.
 3. **Audition a short A/B before expanding.** Same notes, same passage, matched level: [controlled A/B](sound-design.md#controlled-ab). Parameter readback is not style, and a reviewer without audio cannot pass the sound.
 4. **Write the phrase once.** `launcher list` finds an empty slot; `clips insert` creates the named clip with its `notes` in one call, so compose the phrase off the host first. Then one `notes read` of the affected range.

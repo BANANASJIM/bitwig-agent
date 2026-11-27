@@ -93,16 +93,17 @@ public final class MethodSpecs {
         }
     }
 
-    /** The wire vocabulary: protocol version, outcomes in rising severity, error codes and reason to code. */
+    /** The wire vocabulary: protocol version, outcomes in rising severity, error codes, verifications, reason to code. */
     public static final class Vocabulary {
         public final String protocol;
-        public final List<String> outcomes, errorCodes;
+        public final List<String> outcomes, errorCodes, verifications;
         public final Map<String, String> reasons;
 
         private Vocabulary(JsonObject root) {
             protocol = root.get("protocol").getAsString();
             outcomes = strings(root.getAsJsonArray("outcomes"));
             errorCodes = strings(root.getAsJsonArray("errorCodes"));
+            verifications = strings(root.getAsJsonArray("verifications"));
             Map<String, String> map = new TreeMap<>();
             for (Map.Entry<String, JsonElement> entry :
                     root.getAsJsonObject("reasons").entrySet()) {

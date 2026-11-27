@@ -6,6 +6,7 @@ import dev.bitwigagent.core.Outcome;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Refs;
 import dev.bitwigagent.core.RpcException;
+import dev.bitwigagent.core.Verification;
 import dev.bitwigagent.host.DeviceSources;
 import dev.bitwigagent.host.NativeReadContext;
 import dev.bitwigagent.routing.RoutingModule;
@@ -258,12 +259,16 @@ public final class NativeRoutingAccess implements RoutingModule.Access {
         return value == null ? "" : value;
     }
 
-    /** A copyable entry {kind, trackId?}; only kind other carries its exact name and native type (its CAS identity). */
+    /** A copyable entry {kind, track?}; only kind other carries its exact name and native type (its CAS identity). */
     private JsonObject entry(String kind, Object channelModel, Object bus) {
         JsonObject out = new JsonObject();
         out.addProperty("kind", kind);
-        if (channelModel != null)
-            out.addProperty("trackId", resolver.identity(channelModel).toString());
+        if (channelModel != null) {
+            JsonObject track = new JsonObject();
+            track.addProperty("kind", "track");
+            track.addProperty("id", resolver.identity(channelModel).toString());
+            out.add("track", track);
+        }
         return out;
     }
 
@@ -344,7 +349,7 @@ public final class NativeRoutingAccess implements RoutingModule.Access {
     private Object destination(JsonObject request, Map<String, Channel> channels) {
         String kind = request.get("kind").getAsString();
         if (kind.equals("none")) return null;
-        Channel to = find(channels, request.get("trackId").getAsString());
+        Channel to = find(channels, RoutingModule.trackId(request));
         if (to == null)
             throw Errors.notApplied(
                     Reason.TARGET_NOT_FOUND,
@@ -374,7 +379,7 @@ public final class NativeRoutingAccess implements RoutingModule.Access {
                 bus = a.invoke(onscreen, ports);
                 break;
             default: {
-                Channel from = find(channels, request.get("trackId").getAsString());
+                Channel from = find(channels, RoutingModule.trackId(request));
                 if (from == null)
                     throw Errors.notApplied(
                             Reason.TARGET_NOT_FOUND,
@@ -514,7 +519,7 @@ public final class NativeRoutingAccess implements RoutingModule.Access {
         out.addProperty(
                 "coverage",
                 "tracks_of_the_16_track_bank_only; hardware_and_device_output_entries_read_as_other_and_not_settable");
-        out.addProperty("nativeVersion", a.hostVersion());
+        a.provenance(out);
         out.addProperty("selectionSideEffect", "none");
         return out;
     }
@@ -593,7 +598,7 @@ public final class NativeRoutingAccess implements RoutingModule.Access {
             String kind = request.get("kind").getAsString();
             if (!kind.equals("none") && !RoutingModule.OUTPUT_GROUP.containsKey(kind))
                 throw Errors.notApplied(Reason.KIND_MISMATCH, "Output kind " + kind + " is not a destination kind.");
-            if (request.has("trackId") && request.get("trackId").getAsString().equalsIgnoreCase(ref.id))
+            if (request.has("track") && RoutingModule.trackId(request).equalsIgnoreCase(ref.id))
                 throw Errors.notApplied(
                         Reason.ROUTING_CYCLE, "A track cannot route its output to itself; nothing was dispatched.");
             Object bus = destination(request, channels);
@@ -621,7 +626,7 @@ public final class NativeRoutingAccess implements RoutingModule.Access {
                         Reason.KIND_MISMATCH,
                         "A " + self.ref.type + " track's input accepts " + RoutingModule.sourceKinds(view.inputGroups)
                                 + ", not " + kind + "; nothing was dispatched.");
-            if (request.has("trackId") && request.get("trackId").getAsString().equalsIgnoreCase(ref.id))
+            if (request.has("track") && RoutingModule.trackId(request).equalsIgnoreCase(ref.id))
                 throw Errors.notApplied(
                         Reason.ROUTING_CYCLE, "A track cannot be its own input; nothing was dispatched.");
             Object bus = source(request, channels, ports);
@@ -635,13 +640,10 @@ public final class NativeRoutingAccess implements RoutingModule.Access {
         }
         if (changes.size() == 2
                 && changes.stream().noneMatch(change -> change.already || change.requested == null)
-                && changes.get(0).request.has("trackId")
-                && changes.get(1).request.has("trackId")
-                && changes.get(0)
-                        .request
-                        .get("trackId")
-                        .getAsString()
-                        .equalsIgnoreCase(changes.get(1).request.get("trackId").getAsString()))
+                && changes.get(0).request.has("track")
+                && changes.get(1).request.has("track")
+                && RoutingModule.trackId(changes.get(0).request)
+                        .equalsIgnoreCase(RoutingModule.trackId(changes.get(1).request)))
             throw Errors.notApplied(
                     Reason.ROUTING_CYCLE,
                     "output and input name the same track, which would loop through this track; Bitwig checks each against the current graph only, so this pair is refused (set them in two calls if one is meant to replace the other). Nothing changed.");
@@ -717,10 +719,10 @@ public final class NativeRoutingAccess implements RoutingModule.Access {
         out.addProperty(
                 "outcome", (unknown ? Outcome.UNKNOWN : any ? Outcome.APPLIED : Outcome.ALREADY_MATCHED).wire());
         if (unknown) out.addProperty("reason", Reason.READBACK_MISMATCH.wire());
-        if (any) out.addProperty("verification", "native_selector_identity_readback");
+        if (any) Verification.NATIVE_READBACK.put(out);
         out.addProperty("nativeUndo", any);
         out.addProperty("undoGroupingVerified", false);
-        out.addProperty("nativeJarSha256", a.actualHash());
+        a.provenance(out);
         if (unknown)
             out.addProperty(
                     "next",
@@ -831,7 +833,7 @@ public final class NativeRoutingAccess implements RoutingModule.Access {
         out.addProperty(
                 "coverage",
                 "routing_components_of_this_device_its_modulators_and_grid_modules; nested_devices_excluded");
-        out.addProperty("nativeVersion", a.hostVersion());
+        a.provenance(out);
         out.addProperty("selectionSideEffect", "none");
         scope.guard(check);
         targets.guard(device, check);

@@ -17,6 +17,7 @@ import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.RpcException;
 import dev.bitwigagent.core.Scheduler;
+import dev.bitwigagent.core.Verification;
 import dev.bitwigagent.host.NativeRuntime;
 import dev.bitwigagent.host.ProjectState;
 import dev.bitwigagent.nativehost.NativeHost;
@@ -47,9 +48,7 @@ public final class ProjectModule implements HostModule, JobsModule.Source {
     public interface SaveAsAccess {
         void execute(Runnable work);
 
-        String nativeVersion();
-
-        String nativeJarSha256();
+        void provenance(JsonObject out);
         /** Bitwig's configured projects folder; native document thread. */
         Path projectsRoot();
         /** Dispatch once on the native document thread; failures before beforeDispatch are not_applied. */
@@ -228,7 +227,7 @@ public final class ProjectModule implements HostModule, JobsModule.Source {
         result.addProperty(
                 "binding",
                 "exact_" + NativeHost.SUPPORTED + "_hash_gated_save_project_pipeline_with_native_completion_callback");
-        result.addProperty("verification", "native_callback_file_written_isModified_false_and_project_name");
+        Verification.FILE_READBACK.put(result);
         return result;
     }
 
@@ -379,8 +378,7 @@ public final class ProjectModule implements HostModule, JobsModule.Source {
         result.addProperty("expectedProjectName", plan.name);
         result.addProperty("projectName", application.projectName().get());
         result.add("projectModified", Results.modified(projectState.modified()));
-        result.addProperty("nativeVersion", bridge.nativeVersion());
-        result.addProperty("nativeJarSha256", bridge.nativeJarSha256());
+        bridge.provenance(result);
         result.addProperty("verificationScope", "native_callback_file_and_model_flags_not_reopen");
     }
 

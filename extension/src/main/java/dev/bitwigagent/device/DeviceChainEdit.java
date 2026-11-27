@@ -120,36 +120,28 @@ final class DeviceChainEdit {
         }
     }
 
-    /** pending=true means keep observing; otherwise `ok` says it was observed and `verification` says how. */
+    /** pending=true means keep observing; otherwise `ok` says whether the edit was observed. */
     static final class Observation {
         final boolean pending, ok;
-        final String verification;
 
-        private Observation(boolean pending, boolean ok, String verification) {
+        private Observation(boolean pending, boolean ok) {
             this.pending = pending;
             this.ok = ok;
-            this.verification = verification;
         }
 
-        static final Observation PENDING = new Observation(true, false, null);
-
-        static Observation ok(String verification) {
-            return new Observation(false, true, verification);
-        }
-
-        static Observation ambiguous() {
-            return new Observation(false, false, "ambiguous_chain_change");
-        }
+        static final Observation PENDING = new Observation(true, false);
+        static final Observation OK = new Observation(false, true);
+        static final Observation AMBIGUOUS = new Observation(false, false);
     }
 
     static Observation observe(View v, Plan p) {
         Before b = p.before;
         int n = b.count, w = v.window(), c = v.count();
         boolean consistent = p.kind == INSERT ? c >= n && c <= n + 1 : p.kind == DELETE ? c >= n - 1 && c <= n : c == n;
-        if (!consistent) return Observation.ambiguous();
+        if (!consistent) return Observation.AMBIGUOUS;
         // Slots before an edit point must be exactly what they were; a moved range has no fixed prefix.
         int fixed = p.kind == MOVE ? 0 : Math.min(p.index, Math.min(n, w));
-        for (int i = 0; i < fixed; i++) if (!v.exists(i) || !same(v, i, b, i)) return Observation.ambiguous();
+        for (int i = 0; i < fixed; i++) if (!v.exists(i) || !same(v, i, b, i)) return Observation.AMBIGUOUS;
         if (p.kind == MOVE) return observeMove(v, p, n, w);
         int expected = p.kind == INSERT ? n + 1 : n - 1;
         if (c != expected || v.countSequence() <= b.countSequence) return Observation.PENDING;
@@ -159,7 +151,7 @@ final class DeviceChainEdit {
             if (!v.exists(i) || !v.ready(i) || (i + 1 < b.names.length && !same(v, i, b, i + 1)))
                 return Observation.PENDING;
         for (int i = n - 1; i < w; i++) if (v.exists(i)) return Observation.PENDING;
-        return Observation.ok("observed_count_decrement_and_shifted_suffix");
+        return Observation.OK;
     }
 
     private static Observation observeInsert(View v, Plan p, int n, int w) {
@@ -170,9 +162,7 @@ final class DeviceChainEdit {
         for (int i = k + 1; i < Math.min(n + 1, w); i++)
             if (!v.exists(i) || !v.ready(i) || !same(v, i, b, i - 1)) return Observation.PENDING;
         for (int i = n + 1; i < w; i++) if (v.exists(i)) return Observation.PENDING;
-        if (k >= w) return Observation.ok("observed_count_increment_beyond_window");
-        return Observation.ok(
-                k == n ? "observed_count_increment_and_unchanged_prefix" : "observed_count_increment_shifted_suffix");
+        return Observation.OK;
     }
 
     private static Observation observeMove(View v, Plan p, int n, int w) {
@@ -186,7 +176,7 @@ final class DeviceChainEdit {
                     || !Objects.equals(v.name(i), p.expectedNames[i])
                     || !Objects.equals(v.type(i), p.expectedTypes[i])) return Observation.PENDING;
         }
-        return Observation.ok("observed_expected_arrangement");
+        return Observation.OK;
     }
 
     private static boolean same(View v, int slot, Before b, int old) {

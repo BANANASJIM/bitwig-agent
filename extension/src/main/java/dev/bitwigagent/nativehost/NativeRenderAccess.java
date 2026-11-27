@@ -1,5 +1,6 @@
 package dev.bitwigagent.nativehost;
 
+import com.google.gson.JsonObject;
 import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.render.RenderModule;
@@ -134,13 +135,8 @@ public final class NativeRenderAccess implements RenderModule.Access {
     }
 
     @Override
-    public String nativeJarSha256() {
-        return a.actualHash();
-    }
-
-    @Override
-    public String nativeVersion() {
-        return a.hostVersion();
+    public void provenance(JsonObject out) {
+        a.provenance(out);
     }
 
     private Object project(Object projectProxy) {

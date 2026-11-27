@@ -10,6 +10,7 @@ import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.RpcException;
 import dev.bitwigagent.core.ValueInput;
 import dev.bitwigagent.core.ValueMatch;
+import dev.bitwigagent.core.Verification;
 import dev.bitwigagent.grid.GridParameterWriter;
 import dev.bitwigagent.host.DeviceSources;
 import java.util.*;
@@ -659,7 +660,6 @@ public final class ModulatorEditor implements ParameterResolver.ModuleOwners {
         written(
                 result,
                 changed,
-                "exact_native_model_readback",
                 "native_undo_aware_controller_operation_not_verified_grouping",
                 "observed_nonrecording_nonautomation_not_native_transport_atomicity");
         return result;
@@ -809,7 +809,6 @@ public final class ModulatorEditor implements ParameterResolver.ModuleOwners {
                 written(
                         result,
                         changed,
-                        "exact_native_mapping_readback",
                         r.unmap
                                 ? "native_clear_modulation_undo_transaction_not_verified_grouping"
                                 : "native_modulation_undo_transaction_not_verified_grouping");
@@ -870,11 +869,7 @@ public final class ModulatorEditor implements ParameterResolver.ModuleOwners {
                             "Membership after delete is not the previous list minus this modulator; read modulators.list.");
                 JsonObject result = new JsonObject();
                 result.addProperty("count", expected.size());
-                written(
-                        result,
-                        true,
-                        "exact_native_membership_readback",
-                        "native_delete_modulators_undo_transaction_not_verified_grouping");
+                written(result, true, "native_delete_modulators_undo_transaction_not_verified_grouping");
                 complete.accept(result);
             } catch (RuntimeException error) {
                 fail.accept(error);
@@ -967,28 +962,22 @@ public final class ModulatorEditor implements ParameterResolver.ModuleOwners {
         result.addProperty("requestedX", x);
         result.addProperty("requestedY", y);
         result.addProperty("count", after.size());
-        written(
-                result,
-                true,
-                "exact_native_membership_and_type_readback",
-                "native_browser_insertion_point_undo_not_verified");
+        written(result, true, "native_browser_insertion_point_undo_not_verified");
         return result;
     }
 
-    private static void written(JsonObject result, boolean changed, String verification, String undoScope) {
+    private static void written(JsonObject result, boolean changed, String undoScope) {
         written(
                 result,
                 changed,
-                verification,
                 undoScope,
                 "observed_stopped_nonrecording_nonautomation_not_native_transport_atomicity");
     }
 
-    private static void written(
-            JsonObject result, boolean changed, String verification, String undoScope, String safetyScope) {
+    private static void written(JsonObject result, boolean changed, String undoScope, String safetyScope) {
         result.addProperty("mutationDispatched", changed);
         result.addProperty("outcome", (changed ? Outcome.APPLIED : Outcome.ALREADY_MATCHED).wire());
-        if (changed) result.addProperty("verification", verification);
+        if (changed) Verification.NATIVE_READBACK.put(result);
         result.addProperty("nativeMutation", changed);
         result.addProperty("nativeUndo", changed);
         result.addProperty("nativeUndoScope", changed ? undoScope : "no_native_operation");

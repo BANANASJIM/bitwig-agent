@@ -6,7 +6,7 @@ from pydantic import TypeAdapter, ValidationError
 
 from bitwig_agent.core.invoke import invalid_params
 from bitwig_agent.protocol import TOOLS, export_bundle, invalid_params_reason
-from bitwig_agent.protocol.positions import DeviceDestination, DevicePosition, TrackDestination, TrackPosition
+from bitwig_agent.protocol.positions import DEVICE_POSITION, DevicePosition, TrackDestination, TrackPosition
 from bitwig_agent.protocol.refs import (
     PARAMETER_VARIANTS,
     READS,
@@ -157,13 +157,10 @@ def test_positions_are_an_edge_or_an_anchor_ref():
     assert position.validate_python("start") == "start"
     assert position.validate_python({"after": DEVICE}).after.index == 1
     for wrong in ("middle", {"before": TRACK}, {"before": DEVICE, "after": DEVICE}, 2):
-        with pytest.raises(ValidationError):
+        with pytest.raises(ValidationError, match=DEVICE_POSITION.replace("|", r"\|").replace("{", r"\{")):
             position.validate_python(wrong)
     track_position: TypeAdapter[Any] = TypeAdapter(TrackPosition)
     assert track_position.validate_python({"before": TRACK}).before.id == TRACK["id"]
-    moved = DeviceDestination.model_validate({"parent": CHAIN, "position": "end"})
-    assert moved.parent.kind == "chain"
-    assert "parent" not in DeviceDestination.model_validate({"position": "end"}).model_fields_set
     assert TrackDestination.model_validate({"position": {"after": TRACK}}).position
 
 

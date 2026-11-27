@@ -1,5 +1,6 @@
 package dev.bitwigagent.nativehost;
 
+import com.google.gson.JsonObject;
 import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.project.ProjectModule;
@@ -80,13 +81,8 @@ public final class NativeProjectSaveAsAccess implements ProjectModule.SaveAsAcce
     }
 
     @Override
-    public String nativeJarSha256() {
-        return a.actualHash();
-    }
-
-    @Override
-    public String nativeVersion() {
-        return a.hostVersion();
+    public void provenance(JsonObject out) {
+        a.provenance(out);
     }
 
     private Object app() {

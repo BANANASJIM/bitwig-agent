@@ -15,6 +15,7 @@ import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.RpcException;
 import dev.bitwigagent.core.SafetyObservation;
 import dev.bitwigagent.core.Scheduler;
+import dev.bitwigagent.core.Verification;
 import dev.bitwigagent.host.NativeRuntime;
 import dev.bitwigagent.host.TrackEpochs;
 import dev.bitwigagent.host.TrackRefs;
@@ -108,9 +109,7 @@ public final class RenderModule implements HostModule, JobsModule.Source {
     public interface Access {
         void execute(Runnable work);
 
-        String nativeVersion();
-
-        String nativeJarSha256();
+        void provenance(JsonObject out);
         /** Document thread: refuse what the native job would refuse or ask about, then dispatch once. null source = master. */
         Handle export(
                 Object projectProxy,
@@ -368,7 +367,6 @@ public final class RenderModule implements HostModule, JobsModule.Source {
                 "binding",
                 "exact_" + NativeHost.SUPPORTED
                         + "_hash_gated_export_audio_and_bounce_in_place_jobs_with_native_latch");
-        result.addProperty("verification", "native_job_latch_then_file_headers_or_arranger_readback");
         return result;
     }
 
@@ -731,7 +729,7 @@ public final class RenderModule implements HostModule, JobsModule.Source {
             result.add("tracks", evaluation.get("tracks"));
             trackTypes(current, evaluation.getAsJsonArray("tracks"));
             result.addProperty("nativeUndo", true);
-            result.addProperty("verification", "native_job_latch_and_arranger_readback");
+            Verification.NATIVE_READBACK.put(result);
         } else {
             result.add("files", evaluation.get("files"));
             result.addProperty("mayOpenFileManager", true);
@@ -741,7 +739,7 @@ public final class RenderModule implements HostModule, JobsModule.Source {
                 result.add("warnings", warnings);
                 result.addProperty("next", fixNext(current.fixes));
             }
-            result.addProperty("verification", "native_job_latch_and_file_headers");
+            Verification.FILE_READBACK.put(result);
         }
         op.result.complete(result);
     }
@@ -797,8 +795,7 @@ public final class RenderModule implements HostModule, JobsModule.Source {
         current.done();
         long end = current.handle != null && current.settled ? current.doneAt : scheduler.now();
         result.addProperty("elapsedMs", TimeUnit.NANOSECONDS.toMillis(end - current.started));
-        result.addProperty("nativeVersion", bridge.nativeVersion());
-        result.addProperty("nativeJarSha256", bridge.nativeJarSha256());
+        bridge.provenance(result);
     }
 
     @Override

@@ -459,7 +459,7 @@ async def create(args: argparse.Namespace) -> int:  # noqa: C901, PLR0912, PLR09
                 raise RuntimeError("Owned new track does not have a completely observed empty device chain")
             await call(
                 "devices.insert",
-                {"to": {"parent": owned}, "kind": "file", "path": factory_path if scratch else str(path)},
+                {"to": owned, "insert": {"kind": "file", "path": factory_path if scratch else str(path)}},
             )
             devices = await call("devices.list", {"target": owned})
             if devices["window"].get("complete") is not True or len(devices["devices"]) != 1:

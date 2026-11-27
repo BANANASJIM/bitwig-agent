@@ -109,8 +109,7 @@ public final class NativeLauncherSettingsAccess implements LauncherSettingsModul
         }
         after.addProperty("name", (String) a.invoke(launcher.name, value));
         after.add("fields", fields);
-        after.addProperty("nativeVersion", a.hostVersion());
-        after.addProperty("nativeJarSha256", a.actualHash());
+        a.provenance(after);
         after.addProperty("scope", "source_bound_launcher_clip_settings");
         after.addProperty("selectionSideEffect", "none");
         after.addProperty("verificationScope", "native_model_values_not_playback_or_save_reopen");

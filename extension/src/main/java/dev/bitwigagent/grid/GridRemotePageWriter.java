@@ -8,6 +8,7 @@ import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Refs;
 import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.RpcException;
+import dev.bitwigagent.core.Verification;
 import dev.bitwigagent.host.DeviceSources;
 import java.util.*;
 
@@ -191,7 +192,7 @@ public final class GridRemotePageWriter {
         result.add("slots", slots);
         result.add("operations", operations);
         result.add("pages", visibleNames(host));
-        return finish(result, dispatched, "exact_native_remote_page_readback");
+        return finish(result, dispatched);
     }
 
     public JsonObject deletePage(DeviceSources.Source source, JsonObject ref, Runnable check, Runnable dispatch) {
@@ -234,7 +235,7 @@ public final class GridRemotePageWriter {
         JsonObject result = Results.outcome(Outcome.APPLIED);
         result.addProperty("deletedPage", pageName);
         result.add("pages", visibleNames(host));
-        return finish(result, true, "native_page_absent_after_delete");
+        return finish(result, true);
     }
 
     // ---- reads -----------------------------------------------------------------------------------------------
@@ -449,9 +450,9 @@ public final class GridRemotePageWriter {
         return result;
     }
 
-    private static JsonObject finish(JsonObject result, boolean dispatched, String verification) {
+    private static JsonObject finish(JsonObject result, boolean dispatched) {
         result.addProperty("mutationDispatched", dispatched);
-        result.addProperty("verification", verification);
+        Verification.NATIVE_READBACK.put(result);
         result.addProperty("nativeMutation", dispatched);
         result.addProperty("nativeUndo", dispatched);
         result.addProperty(
