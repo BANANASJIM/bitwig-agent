@@ -380,7 +380,10 @@ public final class DeviceChainModule implements HostModule {
         String value = insert.get(kind.equals("file") ? "path" : "id").getAsString();
         Edit edit = new Edit(
                 parent,
-                DeviceChainEdit.Plan.replace(index, state.before, kind.equals("file") ? stem(value) : null),
+                DeviceChainEdit.Plan.replace(
+                        index,
+                        state.before,
+                        kind.equals("file") && Params.namesItsDevice(value) ? Params.stem(value) : null),
                 state,
                 index);
         edit.extra.add(
@@ -389,13 +392,6 @@ public final class DeviceChainModule implements HostModule {
         op.markDispatched();
         insertAt(device.device.replaceDeviceInsertionPoint(), kind, value);
         observeEdit(op, edit);
-    }
-
-    /** A file's name without directory and extension: the name Bitwig shows for a loaded preset or device file. */
-    static String stem(String path) {
-        String name = new java.io.File(path).getName();
-        int dot = name.lastIndexOf('.');
-        return dot > 0 ? name.substring(0, dot) : name;
     }
 
     // ---------------------------------------------------------------- delete and move

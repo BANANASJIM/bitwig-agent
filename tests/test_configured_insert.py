@@ -281,3 +281,57 @@ def test_next_names_the_finishing_calls_in_run_order():
     }
     result = call(host, "modulators.insert", args)
     assert "Not done: params.Rate, map[0]; finish with parameters.set and modulators.map" in result["next"]
+
+
+DRUMS = {**DEVICE_REF, "name": "Drum Machine"}
+PAD_CHAIN = {"kind": "chain", "device": DRUMS, "id": "abcdef01-2345-6789-abcd-0123456789ab", "name": "Snare"}
+SAMPLER = {"kind": "device", "chain": PAD_CHAIN, "index": 0, "name": "Sampler"}
+SNARE = {"kind": "file", "path": "/samples/Snare.wav"}
+
+
+def chain_host(created, filled=None):
+    return Host(
+        **{
+            "chains.insert": {**APPLIED_NATIVE, "ref": PAD_CHAIN, "pad": 38} if created is None else created,
+            "devices.insert": filled or {**APPLIED_NATIVE, "ref": SAMPLER},
+        }
+    )
+
+
+def test_chains_insert_fills_the_new_pad_chain_with_the_sample():
+    host = chain_host(None)
+    result = call(host, "chains.insert", {"to": DRUMS, "pad": 38, "insert": SNARE})
+    assert host.calls == [
+        ("chains.insert", {"to": DRUMS, "pad": 38}),
+        ("devices.insert", {"to": PAD_CHAIN, "insert": SNARE}),
+    ]
+    assert steps(result) == [("chain", "applied", None), ("insert", "applied", None)]
+    assert result["ref"] == PAD_CHAIN
+    assert result["entries"][1]["ref"] == SAMPLER
+    assert result["verification"] == "native_readback"
+    assert leaf_rule_holds(result)
+
+
+def test_a_pad_that_already_has_a_chain_is_not_filled():
+    host = chain_host({"outcome": "already_matched", "ref": PAD_CHAIN, "pad": 38})
+    result = call(host, "chains.insert", {"to": DRUMS, "pad": 38, "insert": SNARE})
+    assert [method for method, _ in host.calls] == ["chains.insert"]
+    assert steps(result) == [("chain", "already_matched", None), ("insert", "not_applied", "target_exists")]
+    assert result["reason"] == "target_exists"
+    assert "devices.insert on its ref" in result["next"]
+
+
+def test_a_failed_fill_keeps_the_chain_and_finishes_with_devices_insert():
+    refused = bridge_error("invalid_target", "The host knows no file for this file.")
+    host = chain_host(None, refused)
+    result = call(host, "chains.insert", {"to": DRUMS, "pad": 38, "insert": SNARE})
+    assert steps(result) == [("chain", "applied", None), ("insert", "not_applied", "invalid_target")]
+    assert result["ref"] == PAD_CHAIN
+    assert "do not repeat chains.insert" in result["next"]
+    assert "finish with devices.insert" in result["next"]
+
+
+def test_without_insert_chains_insert_is_the_plain_host_call():
+    host = chain_host(None)
+    result = call(host, "chains.insert", {"to": DRUMS, "pad": 38})
+    assert result == {**APPLIED_NATIVE, "ref": PAD_CHAIN, "pad": 38}

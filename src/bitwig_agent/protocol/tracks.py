@@ -5,7 +5,15 @@ from typing import Annotated, Literal, Self
 from pydantic import Field, model_validator
 
 from bitwig_agent.protocol.annotations import ADD, REMOVE, SET
-from bitwig_agent.protocol.base import PROJECT_READY, Nonempty, StatusArgs, ToolSpec, UnitValue, omitted
+from bitwig_agent.protocol.base import (
+    PROJECT_READY,
+    Nonempty,
+    StatusArgs,
+    ToolSpec,
+    UnitValue,
+    omitted,
+    validate_local_path,
+)
 from bitwig_agent.protocol.limits import MAX_TIMEOUT_MS, MIN_TIMEOUT_MS, TRACK_WINDOW
 from bitwig_agent.protocol.positions import TrackPosition
 from bitwig_agent.protocol.refs import SendRef, TrackRef
@@ -97,11 +105,24 @@ class MetersGetArgs(StatusArgs):
 
 
 class TrackInsertArgs(StatusArgs):
-    type: Literal["audio", "instrument", "effect"]
-    name: Nonempty
-    position: TrackPosition = omitted(
-        description='"start", "end" (default) or {before: trackRef} / {after: trackRef}. The anchor must be a top-level track of the same list: a main track for audio and instrument, an effect track for effect.'
+    type: Literal["audio", "instrument", "effect"] = omitted(description="Required unless file is given.")
+    name: Nonempty = omitted(description="Required unless file is given.")
+    file: Nonempty = omitted(
+        description="An absolute normalized path of an audio file, instead of type and name: Bitwig makes an instrument track named after the file with a Sampler holding it."
     )
+    position: TrackPosition = omitted(
+        description='"start", "end" (default) or {before: trackRef} / {after: trackRef}. The anchor must be a top-level track of the same list: a main track for audio, instrument and file, an effect track for effect.'
+    )
+
+    @model_validator(mode="after")
+    def validate_shape(self) -> Self:
+        if self.file is not None:
+            if self.type is not None or self.name is not None:
+                raise ValueError("file makes the track and names it after the file: give type and name, or file alone")
+            validate_local_path(self.file)
+        elif self.type is None or self.name is None:
+            raise ValueError("tracks.insert needs type and name, or file")
+        return self
 
 
 class TrackGroupArgs(StatusArgs):
@@ -129,7 +150,7 @@ TRACKS_SET_DESCRIPTION = "Set only the given fields of one track by its ref; omi
 TRACKS_SENDS_SET_DESCRIPTION = 'Set one send, addressed by the send ref tracks.get returned (a send\'s name is compared, so a reordered send is stale). value is normalized 0..1 or {display: "-12 dB"}, verified by display readback; enabled switches the send; mode sets the pre/post-fader tap (one of the mode options tracks.get lists); a level write already turns a disabled send on (autoEnabled in the result). Written in order, each read back: level, then enabled, mode last. expect compares bare current values first. Inspect outcome and fields[].outcome/reason; never retry unknown.'
 METERS_GET_DESCRIPTION = f"Read VU meter peak and RMS (left/right, steps 0..127; the public API publishes no dB mapping) over windowMs for 1..{TRACK_WINDOW} track refs. Meters only move while audio renders, so start playback first (transport.set playing=true; consider audio.route silent). Returns per track ref, peakMax, rmsMax, rmsMean, callbacks, silent. Not LUFS: use audio.capture + audio.analyze mode=loudness for that."
 TRACKS_SELECT_DESCRIPTION = "Select a track in the host UI by its ref. Returns outcome sent: the command was dispatched and navigation is not observed; a selected snapshot does not acknowledge it. Inspect the actual UI and possible automatic arming before dependent edits; never blindly retry. Reads do not require selection."
-TRACKS_INSERT_DESCRIPTION = 'Insert and name a top-level track. position is "start", "end" (default) or {before|after: trackRef} of a top-level track of the same list (main tracks for audio/instrument, effect tracks for effect; groups count, their children do not). In a project with groups, tracks.list tree.complete must be true. Returns ref of the new track. An unresolved insertion holds further inserts (reason unresolved); inspect actual state, never blindly retry or reset to bypass ambiguity.'
+TRACKS_INSERT_DESCRIPTION = 'Insert a top-level track: type and name, or file alone. file is an audio file dropped between the tracks as in Bitwig: an instrument track named after the file (its name without extension) with a Sampler holding it, verified by the new track\'s type, position and that name; it needs a main track to land next to. position is "start", "end" (default) or {before|after: trackRef} of a top-level track of the same list (main tracks for audio/instrument/file, effect tracks for effect; groups count, their children do not). In a project with groups, tracks.list tree.complete must be true. Returns ref of the new track. An unresolved insertion holds further inserts (reason unresolved); inspect actual state, never blindly retry or reset to bypass ambiguity.'
 TRACKS_GROUP_DESCRIPTION = f"Put existing tracks into one new group track (the guide's select + Ctrl+G), without using the UI selection. targets must be adjacent tracks of one parent, in order (top level or the same group); effect and master tracks are refused. The new group is inserted where the first of them was, their order is kept, and the native operation selects the group. The targets must be adjacent siblings of one parent (moving tracks comes later). A named group is created and named inside one native transaction, so a single Undo (Group Tracks) restores the tree; after Redo the group comes back collapsed and its children are not listed until it is expanded (a bank limitation). Verified by one new group whose children are exactly targets, every other parent unchanged; returns ref of the group. Version-gated; needs recording/automation-write off, at most {TRACK_WINDOW - 1} tracks in the window and every parent observed. Unknown outcomes hold tracks.insert/tracks.group until you inspect tracks.list and ack the hold id; never retry."
 TRACKS_DELETE_DESCRIPTION = f"Delete one audio/instrument/hybrid/effect or group track by its ref (Track.deleteObject; never master); the ref's name must still match. A group is deleted with every track inside it (tracks.list tree.complete must be true and the group and any group inside it expanded, so their tracks are listed; a collapsed one is not_ready: expand it in Bitwig first): the result lists them in deletedChildren. Needs observed stopped transport with recording/automation write off. Verified by exactly those tracks leaving the bank and the count dropping by their number (outcome applied); outcome unknown (not_observed) means inspect state and never retry. Only while the whole project fits the {TRACK_WINDOW}-track bank window (offset 0, at most {TRACK_WINDOW} tracks incl. group children and effect tracks), else not_ready/not_applied. Destructive: removes the tracks' clips and devices; Bitwig's own Undo is the only recovery (one Undo restores them with the same UUIDs)."
 TRACKS_DUPLICATE_DESCRIPTION = f"Duplicate one audio/instrument/hybrid/effect track by its ref (Channel.duplicate: clips, devices and settings; never group or master). The copy lands right after the source in the same parent. Verified by exactly one new track of the same type directly after the source with the same parent and the same device count (deviceCount); returns ref of the copy (its name is Bitwig's). Needs recording/automation write off, at most {TRACK_WINDOW - 1} tracks in the whole-project window and, in a grouped project, every parent observed. An unattributed copy holds tracks.insert/tracks.group/tracks.duplicate until you inspect tracks.list and ack the hold id; never retry."
@@ -175,8 +196,10 @@ SPECS: dict[str, ToolSpec] = {
             {"type": "instrument", "name": "Agent Sketch"},
             {"type": "audio", "name": "Bass", "position": {"after": EXAMPLE_TRACK}},
             {"type": "effect", "name": "Verb", "position": {"before": EXAMPLE_OTHER}},
+            {"file": "/samples/Kick.wav", "position": {"after": EXAMPLE_TRACK}},
         ),
         requires=PROJECT_READY,
+        summary='Insert a top-level track: type and name, or file alone (an audio file: Bitwig makes an instrument track named after it with a Sampler holding it). position is "start", "end" (default) or {before|after: trackRef} of a top-level track of the same list. Returns ref of the new track. An unresolved insertion holds further inserts; inspect, never blindly retry.',
     ),
     "tracks.group": ToolSpec(
         TrackGroupArgs,

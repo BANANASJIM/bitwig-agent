@@ -9,7 +9,12 @@ import dev.bitwigagent.HostFixture;
 import dev.bitwigagent.core.HostLimits;
 import dev.bitwigagent.core.HostOperation;
 import dev.bitwigagent.core.Refs;
+import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.RpcException;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
@@ -1140,6 +1145,105 @@ public final class TrackLifecycleModuleTest {
         HostOperation op = f.submit(lifecycle(f), "tracks.group", groupRequest(f, HostFixture.A));
         f.next();
         assertRpcError("host_mismatch", op);
+    }
+
+    /** A file dropped at the given insertion point of the track in {@code slot} makes instrument track C named so. */
+    private static List<String> dropsFile(HostFixture f, int slot, String point, String name) {
+        List<String> drops = new ArrayList<>();
+        f.tracks[slot].child(point).on("insertFile", args -> {
+            f.mutation();
+            drops.add(slot + ":" + point + ":" + args[0]);
+            f.addTrack(2, HostFixture.C, "Instrument");
+            f.tracks[2].child("name").emit(name);
+            return null;
+        });
+        return drops;
+    }
+
+    private static JsonObject fileInsert(Path file, String position) {
+        JsonObject p = new JsonObject();
+        p.addProperty("file", file.toString());
+        if (position != null) p.addProperty("position", position);
+        return p;
+    }
+
+    private static Path sample() throws IOException {
+        Path dir = Files.createTempDirectory("x8-samples");
+        Path file = dir.resolve("Kick.wav");
+        Files.write(file, new byte[] {0});
+        file.toFile().deleteOnExit();
+        dir.toFile().deleteOnExit();
+        return file;
+    }
+
+    @Test
+    void aFileBecomesAnInstrumentTrackNamedAfterItWithoutARename() throws IOException {
+        Path file = sample();
+        HostFixture f = new HostFixture();
+        TrackLifecycleModule module = lifecycle(f);
+        List<String> drops = dropsFile(f, 1, "afterTrackInsertionPoint", "Kick");
+        HostOperation op = f.submit(module, "tracks.insert", fileInsert(file, null));
+        while (!op.result.isDone() && !f.tasks.isEmpty()) f.next();
+        JsonObject result = op.result.join();
+        assertEquals(List.of("1:afterTrackInsertionPoint:" + file), drops, "dropped after the last main track");
+        assertEquals("applied", result.get("outcome").getAsString(), result.toString());
+        assertEquals("api_readback", result.get("verification").getAsString());
+        assertEquals(HostFixture.C, id(result));
+        assertEquals(
+                "instrument", result.getAsJsonObject("insertion").get("type").getAsString());
+        assertEquals(0, f.application.actions, "no track factory is called");
+        assertEquals(0, f.tracks[2].child("name").writes, "Bitwig's own name is kept");
+        assertTrue(Results.leafRuleHolds(result), result.toString());
+    }
+
+    @Test
+    void aFileGoesBeforeTheTrackAtItsIndex() throws IOException {
+        Path file = sample();
+        HostFixture f = new HostFixture();
+        List<String> drops = dropsFile(f, 0, "beforeTrackInsertionPoint", "Kick");
+        f.tracks[0].child("beforeTrackInsertionPoint").on("insertFile", args -> {
+            f.mutation();
+            drops.add("0:before:" + args[0]);
+            f.addTrack(2, HostFixture.C, "Instrument");
+            f.tracks[2].child("name").emit("Kick");
+            for (int slot = 0; slot < 3; slot++)
+                f.tracks[slot].child("position").emit((slot + 1) % 3);
+            return null;
+        });
+        HostOperation op = f.submit(lifecycle(f), "tracks.insert", fileInsert(file, "start"));
+        while (!op.result.isDone() && !f.tasks.isEmpty()) f.next();
+        assertEquals(List.of("0:before:" + file), drops);
+        JsonObject result = op.result.join();
+        assertEquals("applied", result.get("outcome").getAsString(), result.toString());
+        assertEquals(
+                0, result.getAsJsonObject("insertion").get("observedPosition").getAsInt());
+    }
+
+    @Test
+    void aTrackWithoutTheFilesNameIsNeverAttributed() throws IOException {
+        Path file = sample();
+        HostFixture f = new HostFixture();
+        dropsFile(f, 1, "afterTrackInsertionPoint", "Inst 3");
+        HostOperation op = f.submit(lifecycle(f), "tracks.insert", fileInsert(file, null), f.tasks.after(400));
+        while (!op.result.isDone() && !f.tasks.isEmpty()) f.next();
+        assertUnknown("not_observed", op);
+    }
+
+    @Test
+    void aFileNeedsAMainTrackToLandNextToAndAReadableFile() throws IOException {
+        HostFixture f = new HostFixture();
+        f.tracks[0].child("trackType").emit("Effect");
+        f.tracks[1].child("trackType").emit("Effect");
+        refuse(f, lifecycle(f), "unsupported_scope", fileInsert(sample(), null));
+        HostFixture g = new HostFixture();
+        refuse(g, lifecycle(g), "invalid_file", fileInsert(sample().resolveSibling("missing.wav"), null));
+        assertRpcError(
+                "invalid_params",
+                () -> TrackLifecycleModule.validateParams(
+                        "tracks.insert", HostFixture.json("{\"file\":\"/a.wav\",\"type\":\"audio\"}")));
+        assertRpcError(
+                "invalid_params",
+                () -> TrackLifecycleModule.validateParams("tracks.insert", HostFixture.json("{\"type\":\"audio\"}")));
     }
 
     @Test

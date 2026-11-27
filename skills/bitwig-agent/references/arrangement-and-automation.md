@@ -28,7 +28,7 @@ The Launcher is for trying combinations and the Arranger for fixed placement. Ea
 
 ## Arrange and capture
 
-1. Stop the transport. `clips copy` and `clips insert` take `to` as a slot or a track and start beat; `--help` shows both forms. Read the whole arrangement with `arranger list` (no target: every track's clips in track order, by start within a track, with `bar`, markers, tempo and time signature) before placing sections.
+1. Stop the transport. `clips copy`, `clips insert` and `clips import` take `to` as a slot or a track and start beat; `--help` shows both forms. An audio file goes straight onto the timeline with `clips import` `to {track, start}` (it passes through an empty slot of the track, three Undo steps); compare the result's `file.seconds` with the clip's length. Read the whole arrangement with `arranger list` (no target: every track's clips in track order, by start within a track, with `bar`, markers, tempo and time signature) before placing sections.
 2. Overlaps are refused, not overwritten: lay sections end to end and read the lane back.
 3. Before capturing a launcher performance check the recording start, existing material, record arms, automation writing and the alias-capture option.
 4. Afterwards read the arranger clips and return tracks to Arranger control before judging the linear arrangement. `markers insert` makes form and export range explicit.

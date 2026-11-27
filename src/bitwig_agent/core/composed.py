@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from bitwig_agent import configured_insert, modulator_docs, presets
+from bitwig_agent import configured_insert, file_import, modulator_docs, presets
 from bitwig_agent.audio import pipewire
 from bitwig_agent.core import batch
 from bitwig_agent.diagnostics import diagnostics
@@ -44,6 +44,8 @@ async def presets_search(client: Any, args: dict[str, Any], timeout_ms: int) -> 
 HANDLERS = {
     "batch": batch_calls,
     "devices.insert": configured_insert.devices_insert,
+    "chains.insert": configured_insert.chains_insert,
+    "clips.import": file_import.clips_import,
     "modulators.insert": configured_insert.modulators_insert,
     "modulators.describe": modulators_describe,
     "grid.apply": grid_apply,

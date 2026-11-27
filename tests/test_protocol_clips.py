@@ -107,7 +107,6 @@ def test_import_preserves_local_path_without_filesystem_checks(path):
     [
         {"to": TRACK_REF},
         {"to": None},
-        {"to": START},
         {"to": CLIP_REF},
         {"path": "file:///tmp/audio.wav"},
         {"path": "relative.wav"},
@@ -120,6 +119,14 @@ def test_import_preserves_local_path_without_filesystem_checks(path):
 def test_import_rejects_invalid_targets_and_extra_fields(override):
     with pytest.raises(ValidationError):
         validate_call("clips.import", {"to": SLOT, "path": "/absolute/path/audio.wav", **override})
+
+
+def test_an_arranger_import_is_composed_by_the_client_and_never_reaches_the_host():
+    args = {"to": START, "path": "/absolute/path/audio.wav"}
+    assert validate_call("clips.import", args)[0] == args
+    with pytest.raises(ValidationError):
+        validate_call("clips.import", args, host=True)
+    assert TOOLS["clips.import"].host_examples == TOOLS["clips.import"].examples[:1]
 
 
 @pytest.mark.parametrize("field", ["to", "path"])

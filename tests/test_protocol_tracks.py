@@ -131,6 +131,22 @@ def test_insert_positions_are_the_shared_vocabulary_and_only_the_top_level_is_op
             validate_call("tracks.insert", {"type": "audio", "name": "x", **bad})
 
 
+def test_a_file_insert_takes_the_file_alone():
+    args = {"file": "/samples/Kick.wav", "position": {"after": TRACK}}
+    assert validate_call("tracks.insert", args)[0] == args
+    for bad in (
+        {"file": "/samples/Kick.wav", "type": "instrument"},
+        {"file": "/samples/Kick.wav", "name": "Kick"},
+        {"file": "samples/Kick.wav"},
+        {"file": "/samples/../Kick.wav"},
+        {"type": "audio"},
+        {"name": "Bass"},
+        {},
+    ):
+        with pytest.raises(ValidationError):
+            validate_call("tracks.insert", bad)
+
+
 def test_group_and_delete_and_meters_take_refs():
     assert resolve("tracks.group", TOOLS["tracks.group"].annotations) == ADD
     args = {"targets": [TRACK, OTHER], "name": "Drums"}
