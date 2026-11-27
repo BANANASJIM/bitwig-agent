@@ -153,7 +153,7 @@ Chain and parameter observations do not establish native write isolation, DSP, w
 
 ## Domain controls
 
-`T` below means `trackId`; `D` means `trackId`, `deviceIndex`, `expectedDeviceName`; `G` means `target`, a device ref from `devices.list` (`{kind:"device", track:{kind:"track", id, name}, index, name}`), the Grid methods' only device address. These abbreviations describe the contract only: requests use full field names. Required keys are listed first; “optional” keys are omitted unless requested, never filled with implicit mutation defaults. Schemas and runnable examples are available through `bitwig-agent help METHOD`.
+`G` below means `target`, a device ref from `devices.list` (`{kind:"device", track:{kind:"track", id, name}, index, name}`), the Grid methods' only device address. These abbreviations describe the contract only: requests use full field names. Required keys are listed first; “optional” keys are omitted unless requested, never filled with implicit mutation defaults. Schemas and runnable examples are available through `bitwig-agent help METHOD`.
 
 | Method | Parameters / operation |
 |---|---|
