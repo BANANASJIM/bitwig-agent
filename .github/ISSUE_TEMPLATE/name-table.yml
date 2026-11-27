@@ -1,0 +1,57 @@
+name: "Name table: new platform or Bitwig version"
+description: Add private feature support for a platform or Bitwig release that has no name table yet.
+title: "Name table: Bitwig <version> on <platform>"
+labels: ["name-table"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping. Read the [name table guide](https://github.com/BANANASJIM/bitwig-agent/blob/main/docs/name-tables.md) first; it has the steps, what to submit and a [prompt for your coding agent](https://github.com/BANANASJIM/bitwig-agent/blob/main/docs/name-tables.md#start-with-your-coding-agent).
+        Never attach or paste `bitwig.jar`, other Bitwig files or decompiled code. Hashes and symbol names are fine.
+  - type: input
+    id: bitwig-version
+    attributes:
+      label: Bitwig Studio version
+      description: As shown in Bitwig's About dialog.
+      placeholder: "6.1.7"
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Windows
+        - macOS
+        - Linux (new Bitwig version)
+    validations:
+      required: true
+  - type: input
+    id: jar-sha256
+    attributes:
+      label: SHA-256 of your bitwig.jar
+      placeholder: "64 hex characters"
+    validations:
+      required: true
+  - type: dropdown
+    id: plan
+    attributes:
+      label: What you plan to do
+      options:
+        - Generate and submit the table myself
+        - Run checks and the native smoke on a table someone else makes
+        - Only report that this version or platform is missing
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Remap report summary or questions (optional)
+      description: Keys that were not mapped exact or confident, or anything you are unsure about. No local paths.
+  - type: checkboxes
+    id: boundaries
+    attributes:
+      label: Boundaries
+      options:
+        - label: I will not submit bitwig.jar, other Bitwig files, decompiled code or personal paths.
+          required: true

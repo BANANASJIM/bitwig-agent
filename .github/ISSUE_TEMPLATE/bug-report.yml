@@ -1,0 +1,62 @@
+name: Bug report
+description: Something in bitwig-agent does not behave as documented.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Remove credentials, project contents, personal paths, user names and unrelated process or network information from everything you paste. Security issues go through the private route in [SECURITY.md](https://github.com/BANANASJIM/bitwig-agent/blob/main/SECURITY.md), not here.
+  - type: input
+    id: bitwig-version
+    attributes:
+      label: Bitwig Studio version
+      description: As shown in Bitwig's About dialog.
+      placeholder: "6.1.7"
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Linux
+        - Windows
+        - macOS
+    validations:
+      required: true
+  - type: input
+    id: agent-version
+    attributes:
+      label: bitwig-agent version and install route
+      placeholder: "0.5.0 from pipx / AUR / source checkout at <commit>"
+    validations:
+      required: true
+  - type: textarea
+    id: status
+    attributes:
+      label: "`bitwig-agent status` output"
+      description: Run `bitwig-agent status` (add `--detail=full` for private features) and paste the redacted output.
+      render: json
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The calls you made (CLI or MCP) and their parameters, on a disposable project if possible.
+    validations:
+      required: true
+  - type: textarea
+    id: expected-actual
+    attributes:
+      label: Expected and actual result
+      description: Include the full result, including `outcome`, `reason` and any error, redacted.
+    validations:
+      required: true
+  - type: checkboxes
+    id: redaction
+    attributes:
+      label: Redaction
+      options:
+        - label: I removed credentials, personal paths, project contents and machine or process details from this report.
+          required: true
