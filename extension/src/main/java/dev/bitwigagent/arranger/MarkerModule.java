@@ -11,10 +11,13 @@ import dev.bitwigagent.core.Outcome;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Refs;
 import dev.bitwigagent.core.Results;
+import dev.bitwigagent.core.RpcException;
+import dev.bitwigagent.core.SafetyObservation;
 import dev.bitwigagent.core.Scheduler;
 import dev.bitwigagent.core.Verification;
 import dev.bitwigagent.host.TransportSafety;
 import java.util.*;
+import java.util.function.BooleanSupplier;
 
 /**
  * Arranger cue markers through the public CueMarkerBank. Markers have no stable id: a marker ref is its rank in the
@@ -48,6 +51,7 @@ public final class MarkerModule implements HostModule {
         bank = host.createArranger().createCueMarkerBank(WINDOW);
         bank.itemCount().addValueObserver((IntegerValueChangedCallback) count -> observed = true);
         bank.scrollPosition().markInterested();
+        transport.playPosition().markInterested();
         for (int i = 0; i < WINDOW; i++) {
             CueMarker marker = items[i] = (CueMarker) bank.getItemAt(i);
             marker.exists().markInterested();
@@ -178,7 +182,7 @@ public final class MarkerModule implements HostModule {
         CueMarker marker = items[target.slot];
         if (method.equals("markers.set")) marker.name().set(newName);
         else marker.deleteObject();
-        awaitMulti(op, method, expected, target.beat, newName);
+        awaitMulti(op, method, expected, target.beat, newName, () -> true);
     }
 
     private Marker locate(Snapshot snap, JsonObject ref) {
@@ -193,32 +197,68 @@ public final class MarkerModule implements HostModule {
     }
 
     private void insert(HostOperation op, JsonObject p, Snapshot before) {
-        transportSafety.requireStopped();
+        SafetyObservation safety = transportSafety.stopped(op);
         double beat = p.get("beat").getAsDouble();
         for (Marker m : before.markers)
             if (Math.abs(m.beat - beat) <= BEAT_TOLERANCE)
                 throw Errors.notApplied(
                         Reason.TARGET_EXISTS, "A marker named " + m.name + " is already at beat " + m.beat + ".");
         if (before.total >= WINDOW) throw Errors.notApplied(Reason.UNSUPPORTED_SCOPE, "The marker window is full.");
+        double playhead = transport.playPosition().get();
         op.markDispatched();
         holds.place(UNRESOLVED, "A markers.* write was dispatched and its outcome was not observed.");
-        transport.addCueMarkerAtPlaybackPosition();
-        awaitInserted(op, p, before);
+        // The native add puts the marker at the playhead and adds nothing where one already sits, so it is made at
+        // the beat itself (free, checked above) and the playhead is put back afterwards.
+        transport.setPosition(beat);
+        scheduler.poll(
+                op,
+                scheduler.observeUntil(op),
+                () -> stillStopped(safety, playhead) && at(beat),
+                () -> {
+                    transport.addCueMarkerAtPlaybackPosition();
+                    awaitInserted(op, p, before, playhead);
+                },
+                () -> {
+                    transport.setPosition(playhead);
+                    unobserved(op, "The playhead was not observed at the marker beat; no marker was added.");
+                });
     }
 
-    /** The new marker is whatever single entry the multiset gained; it is then named and moved in one controller callback. */
-    private void awaitInserted(HostOperation op, JsonObject p, Snapshot before) {
+    /** Playback or recording starting mid-insert stops it before the add; the playhead is still put back. */
+    private boolean stillStopped(SafetyObservation safety, double playhead) {
+        try {
+            transportSafety.guardStopped(safety);
+            return true;
+        } catch (RpcException error) {
+            transport.setPosition(playhead);
+            throw error;
+        }
+    }
+
+    private boolean at(double beat) {
+        return Math.abs(transport.playPosition().get() - beat) <= BEAT_TOLERANCE;
+    }
+
+    private void unobserved(HostOperation op, String message) {
+        JsonObject result = describe(read());
+        Results.unknown(result);
+        result.addProperty("reason", Reason.NOT_OBSERVED.wire());
+        result.addProperty("message", message);
+        result.addProperty("next", INSPECT_THEN_ACK);
+        op.result.complete(result);
+    }
+
+    /**
+     * The new marker is whatever single entry the multiset gained; it is then named (and moved, should the host have
+     * placed it elsewhere) and the playhead put back in one controller callback.
+     */
+    private void awaitInserted(HostOperation op, JsonObject p, Snapshot before, double playhead) {
         Runnable finish = () -> {
+            transport.setPosition(playhead);
             Snapshot now = read();
             Marker created = gained(now, before);
             if (created == null) {
-                JsonObject result = describe(now);
-                Results.unknown(result);
-                result.addProperty("reason", Reason.NOT_OBSERVED.wire());
-                result.addProperty("message", "The inserted marker was not observed as a single new entry.");
-                result.addProperty("next", INSPECT_THEN_ACK);
-                holds.place(UNRESOLVED, "A markers.* write was dispatched and its outcome was not observed.");
-                op.result.complete(result);
+                unobserved(op, "The inserted marker was not observed as a single new entry.");
                 return;
             }
             double beat = p.get("beat").getAsDouble();
@@ -229,7 +269,7 @@ public final class MarkerModule implements HostModule {
             if (!sameBeat) marker.position().set(beat);
             Map<String, Integer> expected = before.multiset();
             expected.merge(new Marker(0, name, beat).key(), 1, Integer::sum);
-            awaitMulti(op, "markers.insert", expected, beat, name);
+            awaitMulti(op, "markers.insert", expected, beat, name, () -> at(playhead));
         };
         scheduler.poll(
                 op,
@@ -256,13 +296,20 @@ public final class MarkerModule implements HostModule {
         return null;
     }
 
-    private void awaitMulti(HostOperation op, String method, Map<String, Integer> expected, double beat, String name) {
+    /** Waits for the marker list to equal {@code expected} and for {@code also} (the restored playhead) to hold. */
+    private void awaitMulti(
+            HostOperation op,
+            String method,
+            Map<String, Integer> expected,
+            double beat,
+            String name,
+            BooleanSupplier also) {
         scheduler.poll(
                 op,
                 scheduler.observeUntil(op),
                 () -> {
                     Snapshot now = read();
-                    return now.complete && same(now.multiset(), expected);
+                    return now.complete && same(now.multiset(), expected) && also.getAsBoolean();
                 },
                 () -> finish(op, method, beat, name, Outcome.APPLIED, null),
                 () -> finish(op, method, beat, name, Outcome.UNKNOWN, Reason.NOT_OBSERVED));
@@ -284,7 +331,11 @@ public final class MarkerModule implements HostModule {
         }
         if (reason != null) {
             result.addProperty("reason", reason.wire());
-            result.addProperty("message", "The marker list did not reach the expected state.");
+            result.addProperty(
+                    "message",
+                    method.equals("markers.insert")
+                            ? "The marker list and the playhead put back were not observed as expected."
+                            : "The marker list did not reach the expected state.");
             result.addProperty("next", INSPECT_THEN_ACK);
         }
         op.result.complete(result);
