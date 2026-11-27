@@ -227,24 +227,24 @@ public final class NativeRenderAccess implements RenderModule.Access {
                 throw Errors.notApplied(Reason.INVALID_PARAMS, "Two sources resolve to the same native channel.");
             channels.add(channel);
         }
-        boolean wav = o.fileType.equals("wav");
+        List<String> types = o.fileTypes;
         Object flacDepth = flacDepths.getOrDefault(String.valueOf(o.bitDepth), flacDepths.get("24"));
-        Object wavDepth =
-                wavDepths.get(String.valueOf(o.bitDepth)); // flac: the intermediate WAV is rendered at the same depth
+        Object wavDepth = wavDepths.get(
+                String.valueOf(o.bitDepth)); // without wav: the intermediate WAV is rendered at this depth
         beforeDispatch.run();
         a.invoke(
                 exportCall,
                 project,
                 channels,
                 basePaths,
-                wav,
-                !wav,
+                types.contains("wav"),
+                types.contains("flac"),
                 flacDepth,
-                false,
+                types.contains("mp3"),
                 mp3,
-                false,
+                types.contains("ogg"),
                 vorbis,
-                false,
+                types.contains("opus"),
                 opus,
                 o.start,
                 o.end,

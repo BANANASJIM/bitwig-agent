@@ -21,6 +21,7 @@ from bitwig_agent.protocol.grid import DEVICE
 from bitwig_agent.protocol.grid import TARGET as GRID
 from bitwig_agent.protocol.launcher import CLIP_REF, SLOT_REF, TRACK_REF
 from bitwig_agent.protocol.refs import TrackRef
+from bitwig_agent.protocol.registry import changes_content
 
 TARGET_FLAG = "--target=" + json.dumps(TRACK_REF)
 
@@ -691,7 +692,7 @@ async def test_a_partial_list_warns_once_on_stderr_and_still_exits_zero(host, mo
     assert (out.code, out.stdout) == (0, '{"actionId":"a1"}\n')
     warning = json.loads(out.stderr)
     assert warning["warning"] == "partial"
-    assert "--limit" in warning["message"]
+    assert "page with limit" in warning["message"]
     assert out.stderr.count("\n") == 1
     windowed = {"tracks": [{"ref": TRACK_REF}], "window": {"complete": False}}
     out = await stdout_of(["tracks", "list", "--format=csv"], host, monkeypatch, result=windowed)
@@ -744,7 +745,9 @@ async def test_fields_in_json_keep_the_other_fields_of_the_result(host, monkeypa
 @pytest.mark.parametrize(
     ("argv", "fragment"),
     [
-        (["actions", "list", "--format=yaml"], "--format must be one of"),
+        (["actions", "list", "--format=yaml"], "format for actions.list must be one of json, jsonl, csv, tsv"),
+        (["actions", "list", "--format=grid"], "format for actions.list must be one of"),
+        (["notes", "get", "--format=grid", "--fields=beat"], "fields does not apply to format=grid"),
         (["actions", "list", "--fields=a,,b"], "comma-separated"),
     ],
 )
@@ -758,7 +761,7 @@ async def test_bad_row_options_are_usage_errors(host, monkeypatch, argv, fragmen
     ("argv", "fragment"),
     [
         (["status", "--format=csv"], "has no record list"),
-        (["notes", "get", "--format=csv"], "returns an outcome"),
+        (["markers", "insert", "--format=csv"], "returns an outcome"),
         (["transport", "set", "--playing=false", "--fields=outcome"], "returns an outcome"),
     ],
 )
@@ -801,7 +804,7 @@ def test_record_keys_are_declared_once_on_reads():
     assert views.records("tracks.list") == "tracks"
     assert views.records("grid.get") == "modules"
     assert views.records("status") is None
-    assert all(spec.read_only for name, spec in TOOLS.items() if spec.records)
+    assert not any(changes_content(name, spec) for name, spec in TOOLS.items() if spec.records or spec.views)
 
 
 async def test_row_options_on_a_write_are_refused_before_the_call(host, monkeypatch):
@@ -838,8 +841,8 @@ async def test_help_layers_are_plain_text_on_stdout_and_exit_zero(monkeypatch):
         assert "\x1b" not in out.stdout
     overview = (await cli.execute(["--help"])).stdout
     assert (
-        len(overview.encode()) < 7200
-    )  # 7014 B with the hidden methods this fixture exposes after chains.set/insert (was 6953, 2860): loop text plus a usage line per method
+        len(overview.encode()) < 7600
+    )  # grows with the method table (7235 B at #152): loop text plus a usage line per method
     assert all(f"  {name} " in overview for name in {n.split(".")[0] for n in TOOLS})
     for name in views.names():  # one generated line per exposed method, from the registry; batch reads JSON Lines
         assert f"\n    {cli.BATCH_USAGE if name == 'batch' else views.usage(name)}\n" in overview, name

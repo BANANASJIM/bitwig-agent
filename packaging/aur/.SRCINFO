@@ -7,6 +7,7 @@ pkgbase = bitwig-agent
 	license = MIT
 	license = Apache-2.0
 	checkdepends = python-pytest
+	checkdepends = python-hypothesis
 	checkdepends = python-numpy
 	checkdepends = python-scipy
 	checkdepends = python-soundfile
@@ -18,6 +19,8 @@ pkgbase = bitwig-agent
 	depends = python-mcp<3
 	depends = python-pydantic>=2.12
 	depends = python-pydantic<3
+	depends = python-wcwidth>=0.3
+	depends = python-wcwidth<1
 	optdepends = bitwig-studio: native host; private APIs require exact-JAR-gated 6.1.4 or 6.1.7, Linux evidence is bounded
 	optdepends = python-numpy: audio analyze
 	optdepends = python-scipy: audio analyze

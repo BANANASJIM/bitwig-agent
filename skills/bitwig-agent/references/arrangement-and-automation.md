@@ -19,7 +19,7 @@ In 6.0 the Detail Editor holds the note, audio and automation editors. Its Clip 
 
 ## Launcher and Arranger
 
-The Launcher is for trying combinations and the Arranger for fixed placement. Each track has one controlling sequencer at a time: launching or stopping a clip takes that track away from the Arranger, and stopping launcher clips does not give it back. Use Return playback to Arranger Timeline. If an Arranger edit is inaudible, check this first.
+The Launcher is for trying combinations and the Arranger for fixed placement. Each track has one controlling sequencer at a time: launching or stopping a clip takes that track away from the Arranger, and stopping launcher clips does not give it back. `launcher returnToArrangement` (one track ref, or `--target=all`) gives it back; `launcher stop --target=all` stops every track. If an Arranger edit is inaudible, check this first.
 
 - Before launching, check project and clip quantization, launch mode, release and Next Actions. A scene touches many tracks, and an empty slot can stop clips or record on armed tracks.
 - A launch or stop may queue to a quantization boundary, so `clips launch` and `scenes launch` return `sent`, which is not "playing". Observe the transition before dependent edits. A stopped playhead is not silence while tails ring.
@@ -61,7 +61,7 @@ With MCP it is the same method: one `batch` tool call whose `calls` holds those 
 - To fill a section with one clip, copy it once and lengthen that copy with `clips set` `length`, not N copies. `clips.set` needs the new arranger clip ref the copy returned, so send the lengths as a second batch: `{"method":"clips.set","params":{"target":<new arranger clip ref>,"length":64}}`.
 - The same material in several places is one `clips.copy` per place.
 - The batch continues past `sent` and stops at the first error or at the first outcome that is neither `applied`, `already_matched` nor `sent`. There is one result per call, in order (CLI: one line each; MCP: `entries`), and every call after the stop is `{"outcome":"not_applied","reason":"not_reached"}`. Follow the result's `next`: fix the stopping call (inspect it if `unknown`, never resend that one) and send only the calls not done.
-- Verify against the table by reading, not by writing again: one `arranger list` (no target) returns every track's clips sorted by `start`, with `length`, `bar` and the markers.
+- Verify against the table by reading, not by writing again: one `arranger list --format=timeline` (no target; MCP `format:"timeline"`) draws every track's clips as bars with a legend in beats, the markers, tempo and time signature, so you can compare it with the section table line by line. A clip that starts or ends inside a bar is listed under `off-grid`. The timeline is read-only and is never a write format: refs and exact positions come from the JSON rows (`arranger list` without `format`), writes go through `clips` and `markers` methods.
 
 ## Record and edit audio
 

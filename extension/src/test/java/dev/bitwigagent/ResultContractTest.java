@@ -58,7 +58,7 @@ final class ResultContractTest {
                             TestServices::mix,
                             ResultContractTest::sendable,
                             "{\"target\":" + Refs.send(HostFixture.track(HostFixture.A), 0, "Reverb")
-                                    + ",\"enabled\":false}"),
+                                    + ",\"enabled\":false,\"mode\":\"PRE\"}"),
             "tracks.insert",
                     new Example(
                             LIFECYCLE,
@@ -104,7 +104,6 @@ final class ResultContractTest {
             "grid.modules.set",
             "grid.parameters.set",
             "grid.voicing.set",
-            "launcher.stop",
             "markers.delete",
             "markers.insert",
             "markers.set",
@@ -149,8 +148,10 @@ final class ResultContractTest {
         f.tracks[0].child("sendBank").item(0).child("isEnabled").data = true;
     }
 
-    /** Clip content edits on the launcher fixture ("Riff" in scene 0), each an applied example with its params. */
+    /** Clip content edits and playback on the launcher fixture ("Riff" in scene 0), each an applied example. */
     private static final Map<String, Function<LauncherFake, String>> CLIP_EXAMPLES = Map.of(
+            "launcher.stop", f -> "{\"target\":" + f.track() + "}",
+            "launcher.returnToArrangement", f -> "{\"target\":\"all\"}",
             "clips.transpose", f -> "{\"target\":" + f.clip(0) + ",\"semitones\":2}",
             "clips.quantize", f -> "{\"target\":" + f.clip(0) + ",\"amount\":1}",
             "clips.transform", f -> "{\"targets\":[" + f.clip(0) + "],\"op\":\"doubleContent\"}");

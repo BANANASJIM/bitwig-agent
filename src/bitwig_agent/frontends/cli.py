@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import dataclasses
 import difflib
 import itertools
 import os
@@ -20,7 +21,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from bitwig_agent.core import batch as core_batch
-from bitwig_agent.core import rows, views
+from bitwig_agent.core import shaping, text_views, views
 from bitwig_agent.core.invoke import (
     Envelope,
     Error,
@@ -32,12 +33,12 @@ from bitwig_agent.core.invoke import (
     unknown_method,
 )
 from bitwig_agent.core.serialize import dumps
+from bitwig_agent.core.shaping import Shape
 
 SENTENCE_END = re.compile(r"(?<!e\.g)(?<!i\.e)\.\s")
 WORD = re.compile(r"[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)*")
 OWN_FLAGS = {"format": "string", "fields": "string"}
 START_FLAGS = ("-h", "--help", "--version")
-PAGING = re.compile(r"offset|limit|cursor", re.IGNORECASE)
 EXIT_INTERRUPTED = 130
 EXIT_PIPE_CLOSED = 141
 USAGE_CODES = frozenset({"invalid_params", "unknown_method"})
@@ -80,19 +81,9 @@ class Output:
 
 
 @dataclass
-class View:
-    format: str = "json"
-    fields: list[str] = field(default_factory=list)
-
-    @property
-    def plain(self) -> bool:
-        return self.format == "json" and not self.fields
-
-
-@dataclass
 class Parsed:
     arguments: dict[str, Any] = field(default_factory=dict)
-    view: View = field(default_factory=View)
+    view: Shape = field(default_factory=Shape)
     seen: set[str] = field(default_factory=set)
 
 
@@ -215,6 +206,8 @@ def overview() -> str:
             '  stderr is only an error: {"code","reason","message","next"?}. No colour, no progress.',
             "  Reads that return a record list: --format=jsonl|csv|tsv [--fields=a,b.c] prints only the records,",
             "  one per line (scope, total, window are not output; the default JSON keeps them).",
+            "  notes get --format=grid and arranger list --format=timeline print a read-only text view of the",
+            "  same result (never an input: write with the JSON records).",
             '  A partial list adds one {"warning"} line to stderr and still exits 0.',
             'Batch: runs JSON Lines of writes {"method":"a.b","params":{}} in order and stops at the first error',
             "  or outcome not in applied|already_matched|sent; each later line prints",
@@ -259,6 +252,8 @@ def method_help(name: str) -> str:
             "",
             f"Rows: --format=jsonl|csv|tsv [--fields=a,b.c] prints the {views.records(name)} records, one per line",
         ]
+    for view in views.text_views_of(name):
+        lines += [f"View: --format={view} prints {text_views.summary(name, view)}"]
     return "\n".join([*lines, "", f"Full JSON schema: bitwig-agent help {name} --schema"])
 
 
@@ -293,20 +288,14 @@ def bind(flag: Flag, tokens: list[str], inputs: Inputs) -> Any:
         return value
 
 
-def set_view(view: View, name: str, value: Any) -> None:
+def set_view(view: Shape, name: str, value: Any) -> Shape:
     if name == "format":
-        if value not in rows.FORMATS:
-            raise ValueError(f"--format must be one of {', '.join(rows.FORMATS)}, got {value!r}")
-        view.format = value
-    else:
-        names = [item.strip() for item in str(value).split(",")]
-        if not all(names):
-            raise ValueError("--fields takes comma-separated field names: --fields=trackId,name")
-        view.fields = names
+        return dataclasses.replace(view, format=str(value))
+    return dataclasses.replace(view, fields=shaping.comma_fields(str(value)))
 
 
 def unknown_flag(method: str, name: str) -> str:
-    extras = ["--timeoutMs", *(["--format", "--fields"] if views.records(method) else [])]
+    extras = ["--timeoutMs", *(["--format", "--fields"] if views.shapeable(method) else [])]
     close = difflib.get_close_matches(f"--{name}", extras, n=1, cutoff=0.6)
     hint = f" (did you mean {close[0]}?)" if close else ""
     return f"{views.unknown_field_message(method, name).rstrip('.')}. Also accepted: {', '.join(extras)}{hint}"
@@ -353,7 +342,7 @@ def store(parsed: Parsed, is_field: bool, name: str, bound: Any) -> None:
         if name in parsed.seen:
             raise ValueError(f"Duplicate argument: --{name}")
         parsed.seen.add(name)
-        set_view(parsed.view, name, bound)
+        parsed.view = set_view(parsed.view, name, bound)
     elif name in parsed.arguments:
         raise ValueError(f"Duplicate argument: --{name}")
     else:
@@ -374,49 +363,15 @@ def merge_operand(arguments: dict[str, Any], operands: list[str], inputs: Inputs
     arguments.update(values)
 
 
-def is_partial(result: dict[str, Any], returned: int) -> bool:
-    """A window decides alone: its complete flag, else offset + returned < total; top-level complete only without one."""
-    window = result.get("window")
-    if not isinstance(window, dict):
-        return result.get("complete") is False
-    if "complete" in window:
-        return window["complete"] is False
-    offset, total = window.get("offset", 0), window.get("total")
-    return isinstance(offset, int) and isinstance(total, int) and offset + returned < total
-
-
-def partial_notice(method: str, result: dict[str, Any], returned: int) -> str:
-    """One stderr line when a record list covers only part of what exists."""
-    if not is_partial(result, returned):
-        return ""
-    paging = [f"--{f['name']}" for f in views.fields(method) if PAGING.search(f["name"])]
-    how = f"page with {' / '.join(paging)}" if paging else "this method has no paging fields: narrow the request"
-    return text_line({"warning": "partial", "message": f"The list is incomplete; {how}"})
-
-
-def render_result(method: str, key: str | None, result: dict[str, Any], view: View, pretty: bool) -> Output:
-    if view.plain or key is None:
-        return Output(stdout=text_line(result, pretty))
-    records = rows.records_of(result, key)
-    warning = ""
-    if view.fields:
-        records, unknown = rows.project(records, view.fields)
-        if unknown:
-            warning = text_line({"warning": "unknown_field", "message": "No record has: " + "; ".join(unknown)})
-    if view.format == "json":
-        return Output(stdout=text_line({**result, key: records}, pretty), stderr=warning)
-    text = rows.lines(records) if view.format == "jsonl" else rows.table(view.format, records, view.fields)
-    return Output(stdout=text, stderr=warning + partial_notice(method, result, len(records)))
-
-
-def respond(method: str, envelope: Envelope, view: View, pretty: bool) -> Output:
+def respond(method: str, envelope: Envelope, view: Shape, pretty: bool) -> Output:
     if isinstance(envelope, Error):
         return failure(envelope)
     try:
-        out = render_result(method, views.records(method), envelope.result, view, pretty)
+        shaped = shaping.apply(method, envelope.result, view)
     except ValueError as exc:
         return failure(invalid_params("", exc))
-    return Output(stdout=out.stdout, stderr=out.stderr, code=exit_code(envelope))
+    stdout = shaped.text if shaped.text is not None else text_line(shaped.result, pretty)
+    return Output(stdout=stdout, stderr=shaping.warning_lines(shaped), code=exit_code(envelope))
 
 
 @dataclass
@@ -464,9 +419,7 @@ def interrupted(progress: Progress) -> Output:
 
 async def call(method: str, rest: list[str], inputs: Inputs, pretty: bool, progress: Progress) -> Output:
     parsed = parse_options(method, rest, inputs)
-    if not parsed.view.plain and views.records(method) is None:
-        why = "returns an outcome" if not views.read_only(method) else "has no record list"
-        raise ValueError(f"{method} {why} and always prints JSON; --format and --fields apply to record-list reads")
+    shaping.check(method, parsed.view)
     return respond(method, await run(method, parsed.arguments, progress), parsed.view, pretty)
 
 
