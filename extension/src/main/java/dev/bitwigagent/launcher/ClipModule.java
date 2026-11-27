@@ -1091,7 +1091,7 @@ public final class ClipModule implements HostModule {
             LauncherState.ready(target.slot);
             state.acquire(op);
             state.requireResolved(target.id(), target.scene());
-            commands.run(op, method, target, command, commands.restore(op), op.result::complete);
+            commands.run(op, method, target, command, commands.restore(), op.result::complete);
         });
     }
 
@@ -1099,7 +1099,7 @@ public final class ClipModule implements HostModule {
     private void transform(HostOperation op, JsonArray refs, ClipCommands.Command command) {
         JsonArray refused = new JsonArray();
         Reason[] first = new Reason[1];
-        ClipCommands.Restore restore = command == null ? null : commands.restore(op);
+        ClipCommands.Restore restore = command == null ? null : commands.restore();
         checkAll(op, refs, 0, refused, first, command, () -> {
             state.acquire(op);
             Batch batch = new Batch(refs.size());
@@ -1169,7 +1169,8 @@ public final class ClipModule implements HostModule {
             Batch batch,
             ClipCommands.Command command,
             ClipCommands.Restore restore) {
-        if (i == refs.size()) {
+        // Past the deadline the entries written so far are the answer; the rest are not_reached.
+        if (i == refs.size() || i > 0 && scheduler.now() >= scheduler.deadlineUntil(op)) {
             JsonObject out = Results.ofEntries(batch.entries());
             out.add("entries", batch.entries());
             op.result.complete(out);
@@ -1187,12 +1188,13 @@ public final class ClipModule implements HostModule {
                 op.result.complete(out);
             }
         });
+        // The entry's window move runs as the entry, so its failure is that entry's result, not the whole call's.
         scheduler.schedule(
-                op,
+                child,
                 () -> {
                     int offset = state.targets.offsetOf(ref);
                     state.targets.lease.move(
-                            op, offset, () -> transformEntry(op, child, ref, offset, command, restore));
+                            op, child, offset, () -> transformEntry(op, child, ref, offset, command, restore));
                 },
                 0);
     }

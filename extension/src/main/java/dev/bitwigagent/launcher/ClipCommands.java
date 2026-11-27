@@ -192,16 +192,12 @@ public final class ClipCommands {
      * selection. One per call; a batch's entries share it, so each entry puts back the user's own state.
      */
     static final class Restore {
-        /** The call's operation, which holds the scene window the cursor clip is reselected in. */
-        final HostOperation holder;
-
         final String track, name;
         final int scene;
         boolean focusRead;
         Object focus;
 
-        private Restore(HostOperation holder, String track, int scene, String name) {
-            this.holder = holder;
+        private Restore(String track, int scene, String name) {
             this.track = track;
             this.scene = scene;
             this.name = name;
@@ -209,10 +205,9 @@ public final class ClipCommands {
     }
 
     /** Records the launcher cursor clip now, before anything is selected or the scene window moves. */
-    Restore restore(HostOperation holder) {
+    Restore restore() {
         boolean any = state.clip.exists().get();
         return new Restore(
-                holder,
                 any ? state.clipTrack.channelId().get() : null,
                 state.cursorScene(),
                 any ? state.clip.clipLauncherSlot().name().get() : null);
@@ -269,6 +264,7 @@ public final class ClipCommands {
             Access access,
             NativeNotes.Access reader,
             Consumer<JsonObject> done) {
+        JsonObject ref = state.clipRef(target);
         HostOperation step = op.child();
         step.result.whenComplete((result, error) -> {
             JsonObject out = error == null ? result : Errors.entryResult(error);
@@ -280,7 +276,7 @@ public final class ClipCommands {
                 if (!out.has("focusSideEffect")) out.addProperty("focusSideEffect", "launcher");
                 if (!out.has("selectionSideEffect")) out.addProperty("selectionSideEffect", "replaced");
                 out.addProperty("op", command.name);
-                out.add("ref", state.clipRef(target));
+                out.add("ref", ref);
                 JsonArray actions = new JsonArray();
                 command.actions.forEach(actions::add);
                 out.add("actions", actions);
@@ -301,20 +297,13 @@ public final class ClipCommands {
         state.scheduler.afterNative(
                 back, access::execute, () -> refocus(access, restore, () -> state.scheduler.check(back)), refocused -> {
                     out.addProperty("focusSideEffect", refocused ? "restored" : "launcher");
-                    if (restore.track == null) reselected(back, out, false);
-                    else if (slotOf(restore.track, restore.scene) != null) reselect(back, restore, out);
-                    else
-                        // A batch's later entry moved the scene window away from the cursor clip.
-                        state.targets.lease.moveAfterWrite(
-                                restore.holder,
-                                state.window.sceneWindowFor(restore.scene),
-                                () -> reselect(back, restore, out),
-                                () -> reselected(back, out, false));
+                    reselect(back, restore, out);
                 });
     }
 
+    /** Selects the recorded cursor clip again when its slot is in the current windows; never scrolls. */
     private void reselect(HostOperation back, Restore restore, JsonObject out) {
-        LauncherState.Slot prior = slotOf(restore.track, restore.scene);
+        LauncherState.Slot prior = restore.track == null ? null : slotOf(restore.track, restore.scene);
         if (prior == null) {
             reselected(back, out, false);
             return;

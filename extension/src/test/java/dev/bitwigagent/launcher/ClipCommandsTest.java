@@ -364,14 +364,41 @@ final class ClipCommandsTest {
     }
 
     @Test
-    void aBatchAcrossWindowsPutsTheCursorClipBackInItsOwnWindow() {
+    void aCursorClipInAnotherSceneWindowIsReportedReplacedWithoutScrolling() {
         LauncherFake f = clips(ClipCommands.Kind.AUDIO, 1, 5, 30);
         f.scenes = 40;
         f.slots[5].name = "Other";
         f.selected = 5;
         JsonObject out = transform(f, "normalize", 1, 30);
         assertEquals("sent", out.get("outcome").getAsString());
-        assertEquals("restored", entry(out, 1).get("selectionSideEffect").getAsString());
-        assertEquals(5, f.selected);
+        assertEquals("restored", entry(out, 0).get("selectionSideEffect").getAsString());
+        assertEquals("replaced", entry(out, 1).get("selectionSideEffect").getAsString());
+        assertEquals(30, f.selected, "the cursor clip is not put back in another window");
+        assertEquals(16, f.bankOffset, "putting back never scrolls");
+    }
+
+    @Test
+    void theRefNamesTheTargetEvenWhenAnotherClipNowSitsThere() {
+        LauncherFake f = clips(ClipCommands.Kind.AUDIO, 1);
+        JsonObject expected = f.clip(1);
+        f.onAction = id -> f.slots[1].name = "Other";
+        JsonObject out = f.call("clips.gain", params("target", f.clip(1), "deltaDb", 1));
+        assertEquals(expected, out.get("ref"));
+    }
+
+    @Test
+    void aLateSuccessBeforeAnEntryInAnotherWindowKeepsTheEntries() {
+        LauncherFake f = clips(ClipCommands.Kind.AUDIO, 1, 30);
+        f.scenes = 40;
+        f.commands.kindMs = 620;
+        f.commands.refocusMs = 100;
+        HostOperation op = new HostOperation(f.tasks.after(2000));
+        JsonObject out = f.startAndDrain(op, "clips.transform", params("targets", targets(f, 1, 30), "op", "normalize"))
+                .result
+                .join();
+        assertTrue(out.has("entries"), out.toString());
+        assertEquals("sent", entry(out, 0).get("outcome").getAsString());
+        assertEquals("not_reached", entry(out, 1).get("reason").getAsString());
+        assertEquals(List.of("normalize"), f.actions);
     }
 }

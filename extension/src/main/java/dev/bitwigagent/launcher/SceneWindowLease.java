@@ -102,6 +102,12 @@ public final class SceneWindowLease {
         scroll(operation, position, ready);
     }
 
+    /** {@link #move} held by {@code holder} while {@code step}, one step of it, waits for the window to settle. */
+    void move(HostOperation holder, HostOperation step, int position, Runnable ready) {
+        acquire(holder, position, true);
+        scroll(step, position, ready);
+    }
+
     /** {@link #move} for an operation that already succeeded: {@code unsettled} runs if the window never settles. */
     void moveAfterWrite(HostOperation operation, int position, Runnable ready, Runnable unsettled) {
         acquire(operation, position, true);

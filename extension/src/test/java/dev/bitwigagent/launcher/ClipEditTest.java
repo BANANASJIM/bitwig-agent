@@ -876,7 +876,11 @@ public final class ClipEditTest {
         f.onSelect = () -> f.scrollStuck = true;
         HostOperation op =
                 f.startAndDrain("clips.transform", params("targets", clips(f, 3, 33), "op", "doubleContent"));
-        assertUnknown("not_ready", op);
+        JsonObject out = op.result.join();
+        JsonArray entries = out.getAsJsonArray("entries");
+        assertEquals("applied", entries.get(0).getAsJsonObject().get("outcome").getAsString());
+        assertEquals(
+                "not_ready", entries.get(1).getAsJsonObject().get("reason").getAsString(), "the move is the entry's");
         f.scrollStuck = false;
         f.onSelect = () -> {};
         HostOperation read = f.startAndDrain("notes.get", params("target", f.clip(3)));
