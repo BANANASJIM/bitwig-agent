@@ -36,6 +36,7 @@ class InstallerTests(unittest.TestCase):
             check=False,
             capture_output=True,
             text=True,
+            encoding="utf-8",
         )
 
     def install_local(self):

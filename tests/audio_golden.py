@@ -126,4 +126,4 @@ def run_all(folder):
 
 if __name__ == "__main__":
     with tempfile.TemporaryDirectory() as tmp:
-        Path(sys.argv[1]).write_text(json.dumps(run_all(tmp), indent=1, sort_keys=True) + "\n")
+        Path(sys.argv[1]).write_text(json.dumps(run_all(tmp), indent=1, sort_keys=True) + "\n", encoding="utf-8")
