@@ -3285,6 +3285,7 @@ public final class GridSnapshotReaderTest {
         final Node first = module(0, graph), second = module(1, graph);
         final Node input = port(INPUT, first, "in"), output = port(OUTPUT, first, "out");
         List<?> catalog = List.of();
+        Set<Class<?>> internal = Set.of();
         boolean parameters = true, display = true, document = true;
         int closed, catalogReads, graphReads, targetReads, uuidReads;
         Runnable afterModules = () -> {};
@@ -3392,6 +3393,7 @@ public final class GridSnapshotReaderTest {
 
         @Override
         public boolean is(GridSnapshotReader.Kind kind, Object value) {
+            if (kind == GridSnapshotReader.Kind.INTERNAL) return internal.contains(value.getClass());
             return value instanceof Node && ((Node) value).kinds.contains(kind);
         }
 

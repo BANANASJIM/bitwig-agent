@@ -39,9 +39,14 @@ public final class SharedDataTest {
 
     @Test
     void hostTarget() {
-        JsonObject host = SharedData.readArray("host").get(0).getAsJsonObject();
-        assertEquals(host.get("version").getAsString(), NativeHost.SUPPORTED);
-        assertEquals(host.get("apiVersion").getAsInt(), new BitwigAgentExtensionDefinition().getRequiredAPIVersion());
+        List<String> versions = new ArrayList<>();
+        for (JsonElement entry : SharedData.readArray("host")) {
+            JsonObject host = entry.getAsJsonObject();
+            versions.add(host.get("version").getAsString());
+            assertEquals(
+                    host.get("apiVersion").getAsInt(), new BitwigAgentExtensionDefinition().getRequiredAPIVersion());
+        }
+        assertEquals(String.join(", ", versions), NativeHost.SUPPORTED);
     }
 
     @Test

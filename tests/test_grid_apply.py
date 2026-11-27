@@ -753,10 +753,18 @@ def test_notes_and_pitch_mod_warning():
     assert len(result["notes"]) < 8
 
 
-def test_notes_file_is_value_free_and_covers_catalog_types():
-    notes = bundled.measured_notes()
-    assert notes["hostVersion"] == "6.1.4"
-    assert set(notes["modules"]) <= set(bundled.bundled_schema()["modules"])
+@pytest.mark.parametrize("version", [host["version"] for host in bundled.shared("host")])
+def test_notes_file_is_value_free_and_covers_catalog_types(version):
+    notes = bundled.measured_notes(version)
+    assert notes["hostVersion"] == version
+    assert set(notes["modules"]) <= set(bundled.bundled_schema(version)["modules"])
+
+
+def test_grid_data_follows_the_connected_host_and_offline_the_newest():
+    newest = bundled.shared("host")[-1]["version"]
+    assert bundled.bundled_schema()["hostVersion"] == newest
+    assert bundled.bundled_schema("0.0.0")["hostVersion"] == newest
+    assert bundled.measured_notes("6.1.4")["hostVersion"] == "6.1.4"
 
 
 # --- seconds display writes ----------------------------------------------------------------------------------

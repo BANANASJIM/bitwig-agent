@@ -31,8 +31,12 @@ import java.util.stream.Stream;
 public final class NativeGridAdapter implements GridAdapter, GridSnapshotReader.Access {
     // Process String marker survives extension classloader replacement; no native objects enter Properties.
     private static final GridTopologyQuarantine TOPOLOGY_QUARANTINE = new GridTopologyQuarantine();
+    /** grid.internalChild.0.. in the name table: module child models that carry no user data. */
+    private static final int INTERNAL_CHILDREN = 8;
+
     private final EnumMap<GridSnapshotReader.Field, Method> readers = new EnumMap<>(GridSnapshotReader.Field.class);
     private final EnumMap<GridSnapshotReader.Kind, Class<?>> kinds = new EnumMap<>(GridSnapshotReader.Kind.class);
+    private final Set<Class<?>> internalChildren = new HashSet<>();
     private final EnumMap<GridSnapshotReader.Metadata, String> metadataErrors =
             new EnumMap<>(GridSnapshotReader.Metadata.class);
     private final GridSnapshotReader snapshots = new GridSnapshotReader(this);
@@ -286,6 +290,7 @@ public final class NativeGridAdapter implements GridAdapter, GridSnapshotReader.
         kind(GridSnapshotReader.Kind.INTEGER, "parameter.integer");
         kind(GridSnapshotReader.Kind.ENUM, "parameter.enum");
         kind(GridSnapshotReader.Kind.OPTION, "parameter.option");
+        for (int i = 0; i < INTERNAL_CHILDREN; i++) internalChildren.add(bindings.type("grid.internalChild." + i));
         bind(FLOAT_VALUE, "parameter.float.value", double.class);
         bind(FLOAT_DEFINITION, "parameter.float.definition", bindings.type("parameter.floatDefinition"));
         bind(FLOAT_MIN, "parameter.floatDefinition.min", double.class);
@@ -813,6 +818,8 @@ public final class NativeGridAdapter implements GridAdapter, GridSnapshotReader.
         if (kind == GridSnapshotReader.Kind.STEP_ARRAY) return stepArrays != null && stepArrays.isModel(object);
         if (kind == GridSnapshotReader.Kind.BIPOLAR_FLOAT)
             return booleanPanels != null && booleanPanels.isBipolar(object);
+        // Matched by exact class: subclasses of these child models may carry user data.
+        if (kind == GridSnapshotReader.Kind.INTERNAL) return internalChildren.contains(object.getClass());
         Class<?> type = kinds.get(kind);
         return type != null && type.isInstance(object);
     }

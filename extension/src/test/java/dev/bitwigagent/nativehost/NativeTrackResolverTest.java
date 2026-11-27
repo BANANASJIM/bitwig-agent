@@ -5,6 +5,7 @@ import static dev.bitwigagent.nativehost.NativeTrackResolver.Kind.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
 import dev.bitwigagent.HostFixture;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.RpcException;
@@ -21,13 +22,13 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Binds the track resolver and every access class built on it against the classpath host jar. With the inspected
- * 6.1.4 jar each exact descriptor must resolve offline; with any other jar the bindings must fail closed with the
+ * jar of a host.json version each exact descriptor must resolve offline; with any other jar the bindings must fail closed with the
  * host_mismatch reason. No native host runs and no bound method is invoked. The kind and identity checks every
  * access class shares are exercised directly.
  */
 public final class NativeTrackResolverTest {
-    // Any host class works as the runtime's host object: only its loader and CodeSource are read.
-    private static final String HOST_ENUM = "i3D";
+    // A long-named class present in every inspected host jar, so the classpath jar can be found before its version.
+    private static final String HOST_CLASS = "com.bitwig.flt.control_surface.proxy.ProjectProxy";
 
     @FunctionalInterface
     private interface Binding {
@@ -36,21 +37,24 @@ public final class NativeTrackResolverTest {
 
     @Test
     void bindingsResolveOnTheInspectedJarAndFailClosedOnAnyOther() throws Exception {
-        Object host = isolatedHost();
-        String version = null;
-        if (host != null) {
-            String hash = NativeHost.hash(NativeHost.source(host.getClass()), () -> {});
-            for (JsonElement entry : SharedData.readArray("host"))
-                if (entry.getAsJsonObject().get("jarSha256").getAsString().equals(hash))
-                    version = entry.getAsJsonObject().get("version").getAsString();
+        Path jar;
+        try {
+            jar = NativeHost.source(Class.forName(HOST_CLASS));
+        } catch (ClassNotFoundException absent) {
+            jar = null;
         }
-        boolean inspected = version != null;
-        NativeHost runtime =
-                new NativeHost(inspected ? host : new Object(), inspected ? version : NativeHost.SUPPORTED, () -> {});
-        if (!inspected) {
-            deniedBindingsFailClosed(runtime);
+        String hash = jar == null ? null : NativeHost.hash(jar, () -> {});
+        JsonObject inspected = null;
+        for (JsonElement entry : SharedData.readArray("host"))
+            if (entry.getAsJsonObject().get("jarSha256").getAsString().equals(hash))
+                inspected = entry.getAsJsonObject();
+        if (inspected == null) {
+            deniedBindingsFailClosed(new NativeHost(new Object(), NativeHost.SUPPORTED, () -> {}));
             return;
         }
+        String version = inspected.get("version").getAsString();
+        String names = inspected.get("names").getAsString();
+        NativeHost runtime = new NativeHost(isolatedHost(jar, names), version, () -> {});
         assertTrue(runtime.access().gateError() == null, "inspected jar passes the exact version and SHA-256 gate");
         bind(runtime, NativeTrackResolver::new);
         bind(runtime, NativeDeviceTargetAccess::new);
@@ -115,19 +119,18 @@ public final class NativeTrackResolverTest {
     }
 
     /** A host object from its own loader over the host jar and its sibling jars, which descriptor linking needs. */
-    private static Object isolatedHost() throws Exception {
-        Path jar;
-        try {
-            jar = NativeHost.source(Class.forName(HOST_ENUM));
-        } catch (ClassNotFoundException absent) {
-            return null;
-        }
+    private static Object isolatedHost(Path jar, String names) throws Exception {
         List<URL> urls = new ArrayList<>();
         try (DirectoryStream<Path> jars = Files.newDirectoryStream(jar.getParent(), "*.jar")) {
             for (Path sibling : jars) urls.add(sibling.toUri().toURL());
         }
         ClassLoader loader = new URLClassLoader(urls.toArray(new URL[0]), ClassLoader.getPlatformClassLoader());
-        return Class.forName(HOST_ENUM, true, loader).getEnumConstants()[0];
+        // Any host class works as the runtime's host object: only its loader and CodeSource are read.
+        String type = SharedData.read(names)
+                .getAsJsonObject("classes")
+                .get("clip.copyMode")
+                .getAsString();
+        return Class.forName(type, true, loader).getEnumConstants()[0];
     }
 
     private static void bind(NativeHost runtime, Binding binding) throws ReflectiveOperationException {

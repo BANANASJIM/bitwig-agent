@@ -19,13 +19,6 @@ public final class GridSnapshotReader implements ParameterResolver.ModuleOwners 
     static final int STEP_FALLBACK = 64, STEP_FULL = 256;
 
     static final double STEP_MIN = -128.0, STEP_MAX = 128.0;
-    /**
-     * Child models of the 6.1.4 module classes that carry no user data (engine feeds, indicators, display state);
-     * classified internal, never counted as unsupported. By simple class name, valid under the 6.1.4 JAR gate only.
-     */
-    static final Set<String> INTERNAL_MODELS = Set.of("BgP", "HQh", "L1", "uUS", "fwH", "qzH", "Znu");
-    /** Kiy also names another class, so it is matched by its fully qualified name. */
-    static final String INTERNAL_KIY = "com.bitwig.flt.document.core.master.device.Kiy";
 
     public enum Kind {
         MODULE,
@@ -42,7 +35,9 @@ public final class GridSnapshotReader implements ParameterResolver.ModuleOwners 
         VOICING,
         BIPOLAR_FLOAT,
         ENTRY,
-        OPTION
+        OPTION,
+        /** A module child model that carries no user data (engine feed, indicator, display state): never unsupported. */
+        INTERNAL
     }
 
     private static final Kind[] PARAMETER_KINDS = {
@@ -974,11 +969,8 @@ public final class GridSnapshotReader implements ParameterResolver.ModuleOwners 
         return result;
     }
 
-    private static boolean isInternal(Object child) {
-        if (child == null) return false;
-        String name = child.getClass().getName();
-        return name.equals(INTERNAL_KIY)
-                || INTERNAL_MODELS.contains(name.substring(Math.max(name.lastIndexOf('.'), name.lastIndexOf('$')) + 1));
+    private boolean isInternal(Object child) {
+        return child != null && a.is(Kind.INTERNAL, child);
     }
 
     /** Entries exposed for a step array: the STEPS prefix by default, up to 256 with full. */

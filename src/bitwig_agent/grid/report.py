@@ -18,7 +18,7 @@ MATCHED_COUNTS = ("modules", "positions", "params", "connections")
 
 
 def notes_field(spec: Spec, extra: list[str] | None = None) -> dict[str, list[str]]:
-    data = measured_notes()
+    data = measured_notes(spec.host)
     notes = list(extra or [])
     if spec.names:
         used = dict.fromkeys(spec.resolved[n].type_name for n in spec.names)

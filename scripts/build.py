@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Build the extension using the installed Bitwig API and a verified Gson artifact."""
+"""Build the extension against the host jars host.json names (adapters per version) and a verified Gson artifact."""
 
+import argparse
 import hashlib
 import json
 import os
@@ -49,14 +50,37 @@ def verification_sources():
     return sorted(SOURCES.rglob("*.java"))
 
 
-def host_sources(jar):
-    """The sources compiled against this host jar, which must be one host.json names by SHA-256."""
-    digest = hashlib.sha256(jar.read_bytes()).hexdigest()
-    hosts = json.loads((SHARED / "host.json").read_text())
-    versions = [host["version"] for host in hosts if host["jarSha256"] == digest]
-    if not versions:
-        raise SystemExit(f"{jar} (SHA-256 {digest}) is not a supported host jar in host.json")
-    return sorted((HOST_SOURCES / versions[0]).glob("*.java"))
+def host_jars(release=False):
+    """The host jar of each host.json version to compile its adapter against, each verified by SHA-256.
+
+    BITWIG_HOST_JARS names a directory of `<version>.jar` files; otherwise the one BITWIG_API_JAR or installed host jar is
+    used for the version whose hash it has. A release build needs every version's jar.
+    """
+    hosts = {host["version"]: host["jarSha256"] for host in json.loads((SHARED / "host.json").read_text())}
+    directory = os.environ.get("BITWIG_HOST_JARS")
+    if directory:
+        jars = {version: Path(directory, f"{version}.jar") for version in hosts}
+        jars = {version: jar.resolve() for version, jar in jars.items() if jar.is_file()}
+    else:
+        default = LINUX_HOST_JAR if sys.platform.startswith("linux") else None
+        jar = Path(os.environ.get("BITWIG_API_JAR") or default or "")
+        if not jar.is_file():
+            raise SystemExit(
+                "Set BITWIG_API_JAR to the installed Bitwig API jar (bitwig.jar in the Bitwig Studio install), "
+                "or BITWIG_HOST_JARS to a directory of <version>.jar host jars"
+            )
+        digest = hashlib.sha256(jar.read_bytes()).hexdigest()
+        jars = {version: jar.resolve() for version, sha in hosts.items() if sha == digest}
+        if not jars:
+            raise SystemExit(f"{jar} (SHA-256 {digest}) is not a supported host jar in host.json")
+    for version, jar in jars.items():
+        digest = hashlib.sha256(jar.read_bytes()).hexdigest()
+        if digest != hosts[version]:
+            raise SystemExit(f"{jar} (SHA-256 {digest}) is not the Bitwig {version} jar host.json names")
+    missing = [version for version in hosts if version not in jars]
+    if not jars or (release and missing):
+        raise SystemExit(f"Missing host jars for Bitwig {', '.join(missing)} in BITWIG_HOST_JARS")
+    return jars
 
 
 def classes_digest(classes):
@@ -115,16 +139,15 @@ def write_resources(directory):
         shutil.copyfile(path, directory / "shared" / path.name)
 
 
-def build():
-    default = LINUX_HOST_JAR if sys.platform.startswith("linux") else None
-    api = Path(os.environ.get("BITWIG_API_JAR") or default or "")
-    if not api.is_file():
-        raise SystemExit("Set BITWIG_API_JAR to the installed Bitwig API jar (bitwig.jar in the Bitwig Studio install)")
+def build(release=False):
+    jars = host_jars(release)
     dependency = gson_jar()
     classes = BUILD / "classes"
     if classes.exists():
         shutil.rmtree(classes)
-    compile_java([*verification_sources(), *host_sources(api)], classes, [api, dependency])
+    compile_java(verification_sources(), classes, [next(iter(jars.values())), dependency])
+    for version, jar in jars.items():
+        compile_java(sorted((HOST_SOURCES / version).glob("*.java")), classes, [jar, dependency, classes])
     write_resources(classes)
     resources = ROOT / "extension/src/main/resources"
     service = resources / "META-INF/services/com.bitwig.extension.ExtensionDefinition"
@@ -155,4 +178,6 @@ def build():
 
 
 if __name__ == "__main__":
-    build()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--release", action="store_true", help="require every host.json version's jar")
+    build(parser.parse_args().release)
