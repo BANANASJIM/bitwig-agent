@@ -24,10 +24,18 @@ import java.util.Set;
  */
 public final class NoteModule implements HostModule {
     static final Set<String> METHODS = Set.of("notes.get", "notes.set");
-    /** A bound on one note's JSON, so the notes a response may list fit the message cap that requests share. */
+    /** A bound on a plain note's JSON, so the notes a response may list fit the message cap that requests share. */
     static final int NOTE_BYTES = 128;
     /** At most this many notes per response; a request of as many notes fits the same cap. */
     static final int NOTE_LIMIT = HostLimits.LIMITS.maxMessageBytes / NOTE_BYTES;
+    /**
+     * The JSON a response's notes may take: notes with operators and expressions are larger than {@link #NOTE_BYTES},
+     * so the list also stops here; the rest of the result fits in the remainder.
+     */
+    static final int NOTES_BYTES = HostLimits.LIMITS.maxMessageBytes - (1 << 16);
+    /** Why the public path does not read or write expressions. */
+    private static final String PUBLIC_UNREAD =
+            "the public API does not read them back (its getters do not return" + " what its setters take)";
     /** Expected or unexpected notes a readback mismatch lists. */
     private static final int MISMATCH_LIMIT = 16;
 
@@ -70,6 +78,7 @@ public final class NoteModule implements HostModule {
             if (write) state.requireResolved(target.id(), target.scene());
             LauncherState.requireContent(target.slot);
             NativeNotes.Access access = natives.access(op);
+            if (write) refuseUnread(listed, unread(access), access != null);
             if (access == null) state.acquire(op);
             if (write) {
                 NotePlan plan = new NotePlan(listed, range, access != null);
@@ -87,6 +96,27 @@ public final class NoteModule implements HostModule {
         });
     }
 
+    /** The record keys this path cannot read back: the expressions without the native binding. */
+    static List<String> unread(NativeNotes.Access access) {
+        return access != null ? access.unread() : NoteFeatures.EXPRESSION_KEYS;
+    }
+
+    /** A listed note that names a key this path cannot read back is refused before anything is selected or written. */
+    static void refuseUnread(List<NotePlan.Listed> listed, List<String> unread, boolean nativePath) {
+        List<String> named = new ArrayList<>();
+        for (NotePlan.Listed l : listed)
+            for (String key : l.features.names(unread)) if (!named.contains(key)) named.add(key);
+        if (named.isEmpty()) return;
+        String fields = String.join(", ", named);
+        throw Errors.notApplied(
+                Reason.NATIVE_UNAVAILABLE,
+                (nativePath
+                                ? "This Bitwig's native note binding cannot read or write these fields: " + fields
+                                : "Without the native note binding these fields are not written: " + fields + " ("
+                                        + PUBLIC_UNREAD + ")")
+                        + ". Nothing was written.");
+    }
+
     // ---- native ----
 
     private void readNative(HostOperation op, LauncherState.Target target, NoteRange range, NativeNotes.Access access) {
@@ -95,18 +125,20 @@ public final class NoteModule implements HostModule {
         access.execute(() -> {
             try {
                 NativeNotes.Observed clip = access.read(target.slot.api, id, expected, check);
-                scheduler.schedule(op, () -> op.result.complete(nativeRead(target, range, clip)), 0);
+                scheduler.schedule(op, () -> op.result.complete(nativeRead(target, range, clip, access.unread())), 0);
             } catch (RuntimeException | Error failure) {
                 op.fail(failure);
             }
         });
     }
 
-    private JsonObject nativeRead(LauncherState.Target target, NoteRange range, NativeNotes.Observed clip) {
+    private JsonObject nativeRead(
+            LauncherState.Target target, NoteRange range, NativeNotes.Observed clip, List<String> unread) {
         JsonObject out = new JsonObject();
         out.add("ref", state.clipRef(target));
         out.add("loop", loop(clip.loopStart, clip.loopLength));
         listing(out, range, clip.notes);
+        unreadFields(out, unread);
         out.addProperty("exact", true);
         return out;
     }
@@ -121,6 +153,7 @@ public final class NoteModule implements HostModule {
         String id = target.id(), expected = target.slot.api.name().get();
         Runnable check = state.nativeCheck(op, target);
         List<Note> before = new ArrayList<>();
+        Object[] hold = new Object[1];
         access.execute(() -> {
             try {
                 NativeNotes.Observed after = access.edit(
@@ -135,8 +168,10 @@ public final class NoteModule implements HostModule {
                         () -> {
                             check.run();
                             op.markDispatched();
+                            hold[0] = state.hold(target, "notes.set");
                         });
-                scheduler.schedule(op, () -> op.result.complete(nativeWritten(target, range, plan, before, after)), 0);
+                scheduler.schedule(
+                        op, () -> op.result.complete(nativeWritten(target, range, plan, before, after, hold[0])), 0);
             } catch (RuntimeException | Error failure) {
                 op.fail(failure);
             }
@@ -148,17 +183,20 @@ public final class NoteModule implements HostModule {
             NoteRange range,
             NotePlan plan,
             List<Note> before,
-            NativeNotes.Observed after) {
+            NativeNotes.Observed after,
+            Object hold) {
         RangeEdit.Change<Note> change = plan.change;
         JsonObject out;
         if (change.isEmpty()) out = Results.outcome(Outcome.ALREADY_MATCHED, Verification.NATIVE_READBACK);
         else {
             List<Note> expected = new ArrayList<>(RangeEdit.apply(before, change));
             JsonObject mismatch = mismatch(expected, after.notes);
-            if (mismatch == null) out = Results.outcome(Outcome.APPLIED, Verification.NATIVE_READBACK);
-            else {
-                out = Results.unknown();
-                out.addProperty("reason", Reason.READBACK_MISMATCH.wire());
+            if (mismatch == null) {
+                out = Results.outcome(Outcome.APPLIED, Verification.NATIVE_READBACK);
+                state.release(hold);
+            } else {
+                out = state.unresolved(
+                        new JsonObject(), Reason.READBACK_MISMATCH, "The notes did not read back as planned.");
                 out.add("mismatch", mismatch);
             }
         }
@@ -196,6 +234,7 @@ public final class NoteModule implements HostModule {
                 "loop",
                 loop(state.clip.getLoopStart().get(), state.clip.getLoopLength().get()));
         listing(out, range, read.notes);
+        unreadFields(out, NoteFeatures.EXPRESSION_KEYS);
         if (read.incomplete != null) {
             out.addProperty("complete", false);
             out.addProperty("incompleteReason", read.incomplete);
@@ -218,8 +257,17 @@ public final class NoteModule implements HostModule {
             out.addProperty("reason", Reason.READBACK_MISMATCH.wire());
             out.add("mismatch", mismatch);
         }
-        written(out, target, range, change, NativeNotes.undo(false, dispatched), false);
+        written(out, target, range, change, publicUndo(change, dispatched), false);
         return out;
+    }
+
+    /**
+     * The undo of a public write: every note is its own step, and a note whose operators are set has a step per
+     * setter, so the steps are not one per note.
+     */
+    private static String publicUndo(RangeEdit.Change<Note> change, int dispatched) {
+        for (Note n : change.written()) if (!n.features.equals(NoteFeatures.NONE)) return NativeNotes.PER_STEP;
+        return NativeNotes.undo(false, dispatched);
     }
 
     // ---- the note stage of clips.insert ----
@@ -228,9 +276,7 @@ public final class NoteModule implements HostModule {
     public static List<Note> insertNotes(JsonArray notes, java.math.BigDecimal length) {
         List<NotePlan.Listed> listed = NotePlan.listed(notes);
         NotePlan.rules(listed, null, length);
-        List<Note> out = new ArrayList<>(listed.size());
-        for (NotePlan.Listed l : listed) out.add(l.resolve(null));
-        return out;
+        return NotePlan.fresh(listed);
     }
 
     /** noteWrite of a native clips.insert: the created clip, read back natively, against the requested notes. */
@@ -283,18 +329,33 @@ public final class NoteModule implements HostModule {
         out.addProperty("exact", exact);
     }
 
-    /** count, complete and notes of the range (all notes without one), capped at {@link #NOTE_LIMIT}. */
+    /**
+     * count, complete and notes of the range (all notes without one), capped at {@link #NOTE_LIMIT} notes and
+     * {@link #NOTES_BYTES} of JSON.
+     */
     private static void listing(JsonObject out, NoteRange range, List<Note> notes) {
         JsonArray list = new JsonArray();
         int count = 0;
+        long bytes = 0;
         for (Note n : notes) {
             if (range != null && !range.test(n)) continue;
-            if (count++ < NOTE_LIMIT) list.add(n.json());
+            if (count++ >= NOTE_LIMIT || bytes > NOTES_BYTES) continue;
+            JsonObject json = n.json();
+            bytes += json.toString().length() + 1;
+            if (bytes <= NOTES_BYTES) list.add(json);
         }
         if (range != null) out.add("range", range.json());
         out.addProperty("count", count);
         out.addProperty("complete", count == list.size());
         out.add("notes", list);
+    }
+
+    /** Record keys this read could not see; absent when it saw every field. */
+    private static void unreadFields(JsonObject out, List<String> unread) {
+        if (unread.isEmpty()) return;
+        JsonArray keys = new JsonArray();
+        for (String key : unread) keys.add(key);
+        out.add("unreadFields", keys);
     }
 
     private static JsonObject loop(double start, double length) {

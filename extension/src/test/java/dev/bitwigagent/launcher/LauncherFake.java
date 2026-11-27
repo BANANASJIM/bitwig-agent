@@ -667,10 +667,17 @@ public final class LauncherFake {
         boolean drop, failAfterDispatch, occupied;
         /** The clip name the native model reports, when it differs from the slot's public name. */
         String rename;
+        /** Record keys whose bindings do not bind on this host. */
+        List<String> unread = List.of();
 
         @Override
         public void execute(Runnable work) {
             work.run();
+        }
+
+        @Override
+        public List<String> unread() {
+            return unread;
         }
 
         private int target(Object slot, String trackId, String expectedName, Runnable check) {
@@ -922,6 +929,7 @@ public final class LauncherFake {
 
     void put(int scene, Note n) {
         put(scene, n.channel, n.beatValue(), n.pitch, n.velocity, n.durationValue());
+        at(scene, n.channel, n.beatValue(), n.pitch).features = n.features;
     }
 
     private void remove(int scene, Note n) {
@@ -948,7 +956,8 @@ public final class LauncherFake {
                         Integer.parseInt(k[2]),
                         Note.beats(e.getKey()),
                         n.duration,
-                        n.exact != null ? n.exact : n.velocity / 127.0));
+                        n.exact != null ? n.exact : n.velocity / 127.0,
+                        n.features));
             }
         }
         out.sort(Note.ORDER);
@@ -1003,13 +1012,72 @@ public final class LauncherFake {
         return step(on != null ? "NoteOn" : "NoteSustain", on != null ? on.getValue() : earlier.getValue());
     }
 
+    private static final NoteFeatures.Repeat NEUTRAL_REPEAT = new NoteFeatures.Repeat(0, 0, 0, 0);
+
+    private static NoteFeatures.Repeat repeat(Stored found) {
+        return found.features.repeat == null ? NEUTRAL_REPEAT : found.features.repeat;
+    }
+
+    private static NoteFeatures.Recurrence recurrence(Stored found) {
+        return found.features.recurrence == null ? NoteFeatures.Recurrence.ALWAYS : found.features.recurrence;
+    }
+
     private static NoteStep step(String state, Stored found) {
         Object actual = stateConstant(state);
         FakeHost n = FakeHost.of(NoteStep.class, "n");
         n.on("state", a -> actual);
         n.on("velocity", a -> found == null ? 0.0 : found.exact != null ? found.exact : found.velocity / 127.0);
         n.on("duration", a -> found == null ? 0.0 : found.duration);
+        if (found != null) operators(n, found);
         return n.proxy(NoteStep.class);
+    }
+
+    /**
+     * The note step's operator getters and setters over the stored note, like Bitwig's new notes: every operator switch
+     * is on and an operator that is off shows its neutral value (chance 1, count 0, a one-pass cycle, always; native
+     * E2E on 6.1.7). Switching one off sets it back to neutral. {@code operatorWrites} counts the setters that changed
+     * a value.
+     */
+    private static void operators(FakeHost n, Stored found) {
+        for (String operator : List.of("Chance", "Repeat", "Recurrence", "Occurrence"))
+            n.on("is" + operator + "Enabled", a -> true);
+        n.on("chance", a -> found.features.chance == null ? 1.0 : (double) found.features.chance);
+        n.on("velocitySpread", a -> (double) found.features.velocitySpread);
+        n.on("releaseVelocity", a -> found.features.releaseVelocity / 127.0);
+        n.on("repeatCount", a -> repeat(found).count);
+        n.on("repeatCurve", a -> (double) repeat(found).curve);
+        n.on("repeatVelocityEnd", a -> (double) repeat(found).velocityEnd);
+        n.on("repeatVelocityCurve", a -> (double) repeat(found).velocityCurve);
+        n.on("recurrenceLength", a -> recurrence(found).length);
+        n.on("recurrenceMask", a -> recurrence(found).mask);
+        n.on("occurrence", a -> found.features.occurrence == null ? NoteOccurrence.ALWAYS : found.features.occurrence);
+        n.on("isMuted", a -> found.features.muted);
+        n.on("setIsChanceEnabled", a -> (Boolean) a[0] ? null : found.set(b -> b.chance = null));
+        n.on("setChance", a -> found.set(b -> b.chance = (Double) a[0]));
+        n.on("setVelocitySpread", a -> found.set(b -> b.velocitySpread = (Double) a[0]));
+        n.on("setReleaseVelocity", a -> found.set(b -> b.releaseVelocity = Note.releaseMidi((Double) a[0])));
+        n.on("setIsRepeatEnabled", a -> (Boolean) a[0] ? null : found.set(b -> b.repeat = null));
+        n.on(
+                "setRepeatCount",
+                a -> found.repeat(
+                        r -> new NoteFeatures.Repeat((Integer) a[0], r.curve, r.velocityEnd, r.velocityCurve)));
+        n.on(
+                "setRepeatCurve",
+                a -> found.repeat(
+                        r -> new NoteFeatures.Repeat(r.count, (Double) a[0], r.velocityEnd, r.velocityCurve)));
+        n.on(
+                "setRepeatVelocityEnd",
+                a -> found.repeat(r -> new NoteFeatures.Repeat(r.count, r.curve, (Double) a[0], r.velocityCurve)));
+        n.on(
+                "setRepeatVelocityCurve",
+                a -> found.repeat(r -> new NoteFeatures.Repeat(r.count, r.curve, r.velocityEnd, (Double) a[0])));
+        n.on("setIsRecurrenceEnabled", a -> (Boolean) a[0] ? null : found.set(b -> b.recurrence = null));
+        n.on(
+                "setRecurrence",
+                a -> found.set(b -> b.recurrence = new NoteFeatures.Recurrence((Integer) a[0], (Integer) a[1])));
+        n.on("setIsOccurrenceEnabled", a -> (Boolean) a[0] ? null : found.set(b -> b.occurrence = null));
+        n.on("setOccurrence", a -> found.set(b -> b.occurrence = (NoteOccurrence) a[0]));
+        n.on("setIsMuted", a -> found.set(b -> b.muted = (Boolean) a[0]));
     }
 
     /** What HostBridge does for a request: schema, the module's own rules, then a queued dispatch. */
@@ -1078,10 +1146,26 @@ public final class LauncherFake {
         final int velocity;
         final double duration;
         Double exact; // host velocity that is not a whole MIDI step, e.g. a GUI drag
+        NoteFeatures features = NoteFeatures.NONE;
+        /** Operator setter calls that changed the note (each its own Undo step in Bitwig). */
+        static int operatorWrites;
 
         Stored(int velocity, double duration) {
             this.velocity = velocity;
             this.duration = duration;
+        }
+
+        Object set(Consumer<NoteFeatures.Builder> change) {
+            NoteFeatures.Builder b = features.toBuilder();
+            change.accept(b);
+            NoteFeatures next = b.build();
+            if (!next.equals(features)) operatorWrites++;
+            features = next;
+            return null;
+        }
+
+        Object repeat(UnaryOperator<NoteFeatures.Repeat> change) {
+            return set(b -> b.repeat = change.apply(b.repeat == null ? NEUTRAL_REPEAT : b.repeat));
         }
     }
 

@@ -62,6 +62,12 @@ SKIPS: dict[tuple[str, str, str], str] = {
         for m in ("notes.get", "notes.set")
     },
     **{
+        (m, f"notes.0.recurrence.{f}", "accept"): "recurrence.mask has one entry per pass, so a bound on length or "
+        "mask is reachable only with a matching partner; rejects still run"
+        for m in ("clips.insert", "notes.set")
+        for f in ("length", "mask")
+    },
+    **{
         (
             m,
             f,

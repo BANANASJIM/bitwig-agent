@@ -20,6 +20,7 @@ import dev.bitwigagent.host.TrackWindow;
 import dev.bitwigagent.host.TransportSafety;
 import dev.bitwigagent.launcher.LauncherState;
 import dev.bitwigagent.launcher.Note;
+import dev.bitwigagent.launcher.NoteFeatures;
 import dev.bitwigagent.launcher.NoteModule;
 import dev.bitwigagent.nativehost.NativeArrangerAccess;
 import java.math.BigDecimal;
@@ -120,11 +121,22 @@ public final class ArrangerModule implements HostModule {
     @Override
     public void validate(String method, JsonObject p) {}
 
-    /** Notes are {beat, pitch, velocity, duration, channel}, canonical; beats are relative to the clip start. */
+    /**
+     * Notes are {beat, pitch, velocity, duration, channel}, canonical; beats are relative to the clip start. Operators
+     * and expressions are not written into arranger clips in this version.
+     */
     public static List<double[]> notes(JsonArray array, double length) {
         List<double[]> out = new ArrayList<>();
-        for (Note n : NoteModule.insertNotes(array, BigDecimal.valueOf(length)))
+        List<Note> notes = NoteModule.insertNotes(array, BigDecimal.valueOf(length));
+        for (JsonElement n : array)
+            if (NoteFeatures.named(n.getAsJsonObject()))
+                throw Errors.notApplied(
+                        Reason.UNSUPPORTED_SCOPE,
+                        "notes on an arranger clip take beat, pitch, velocity, duration and channel only: operators"
+                                + " and expressions are written into launcher clips in this version");
+        for (Note n : notes) {
             out.add(new double[] {n.beatValue(), n.pitch, n.velocity, n.durationValue(), n.channel});
+        }
         return out;
     }
 
