@@ -4,7 +4,7 @@ Keep changes focused on helping agents complete real Bitwig tasks. Domain operat
 
 ## Source setup
 
-End users should use the [released wheel and extension](README.md#quickstart) when its host boundary fits. Current source requires a checkout, [pixi](https://pixi.sh/latest/installation/), and your own licensed **Bitwig 6.1.4 / API 25** installation. Pixi supplies Python, JDK 25 and PMD from conda-forge; the extension's loader superclass uses class-file version 69, so JDK 25 is needed to compile/run Java checks, while generated extension classes still target Java 11. This is a clean private-binding cutover, not simultaneous 6.1.3/6.1.4 support; published `0.1.2` remains unchanged.
+End users should use the [released wheel and extension](README.md#quickstart) when its host boundary fits. Current source requires a checkout, [pixi](https://pixi.sh/latest/installation/), and your own licensed **Bitwig 6.1.4 or 6.1.7 / API 25** installation. Pixi supplies Python, JDK 25 and PMD from conda-forge; the extension's loader superclass uses class-file version 69, so JDK 25 is needed to compile/run Java checks, while generated extension classes still target Java 11.
 
 From the repository root:
 
@@ -74,6 +74,10 @@ Pull requests follow [the template](.github/pull_request_template.md): why, a be
 - Preserve third-party notices. Project contributions are distributed under the [MIT License](LICENSE); third-party material retains its own applicable license.
 
 For security-sensitive issues, use the private route in [SECURITY.md](SECURITY.md), not a public issue containing exploit details or private data.
+
+## Contributing a platform name table
+
+Private features are natively tested on Linux only. Bitwig obfuscates `bitwig.jar` separately per platform (for 6.1.7 the Linux, Windows and macOS jars differ, and so do their member names), so Windows or macOS support needs a name table generated from that platform's jar. The remapping tool currently lives outside this repository; an in-repo tool and runbook are planned. A contributor needs that platform's `bitwig.jar` for a supported version, the matching Linux name table in `src/bitwig_agent/shared/`, (`names_<version>.json`), and the ability to run the native smoke on that platform.
 
 ## Releases
 
