@@ -16,7 +16,7 @@ class TransportSetArgs(StatusArgs):
     playing: bool = omitted()
     # The installed Maschine JAM/MainKnobControl.js uses raw BPM 20..666; RangedValue leaves raw limits undefined.
     tempoBpm: Annotated[float, Field(ge=20, le=666)] = omitted()
-    positionBeats: Annotated[float, Field(ge=0)] = omitted()
+    position: Annotated[float, Field(ge=0)] = omitted()
     metronome: bool = omitted()
     loopEnabled: bool = omitted()
     loopStartBeats: Annotated[float, Field(ge=0)] = omitted()
@@ -62,7 +62,7 @@ class TransportSetArgs(StatusArgs):
         return self
 
 
-TRANSPORT_GET_DESCRIPTION = "Read observed projectName, playing, tempoBpm, positionBeats, metronome and loop settings. Recording/automation fields are arrangerRecordEnabled, arrangerAutomationWriteEnabled and clipLauncherAutomationWriteEnabled; require each explicitly false before stopped-fixture edits, not missing/null. One response covers project-label and playback-safety preflight; the name is not full-path identity or an atomic lock. metronomeVolume is {value 0..1, display}; preRoll, defaultLaunchQuantization and recordQuantizationGrid are {value, options} with the host's own option list (value null until observed). punchInEnabled and punchOutEnabled are booleans."
+TRANSPORT_GET_DESCRIPTION = "Read observed projectName, playing, tempoBpm, position, metronome and loop settings. Recording/automation fields are arrangerRecordEnabled, arrangerAutomationWriteEnabled and clipLauncherAutomationWriteEnabled; require each explicitly false before stopped-fixture edits, not missing/null. One response covers project-label and playback-safety preflight; the name is not full-path identity or an atomic lock. metronomeVolume is {value 0..1, display}; preRoll, defaultLaunchQuantization and recordQuantizationGrid are {value, options} with the host's own option list (value null until observed). punchInEnabled and punchOutEnabled are booleans."
 TRANSPORT_SET_DESCRIPTION = "Change only supplied transport fields; e.g. tempoBpm=120 playing=false. Supported tempo range 20..666 BPM is a toolkit bound. Beat positions are nonnegative; loop duration is positive and loop end finite. An explicit playing=false is observed before other supplied fields are dispatched; this is not an atomic transaction. Inspect the outcome and per-field outcome/reason; stop on unknown. Playback can produce audio. Recording or automation-write mode blocks changes except an explicit playing=false stop; modes are never silently disabled. timeSignature (e.g. '7/8', numerator 1..32, denominator 1/2/4/8/16/32) is read back like the other fields; time-signature change markers are not in the public API. metronomeVolume takes the value transport.get returned (0..1, not dB); {display} is refused as invalid_params/unsupported_unit until the host's metronome display is measured. punchInEnabled, punchOutEnabled, preRoll, defaultLaunchQuantization (project default clip launch quantization) and recordQuantizationGrid take the same per-field readback; the three enums take the bare option value from transport.get (the host's own list, refused as invalid_params/not_applied otherwise, before anything is written) and punch/pre-roll/quantization edits are blocked while recording or automation write is on, like the other settings."
 
 

@@ -195,7 +195,7 @@ public final class LauncherState implements RenderModule.LauncherContent {
                 throw holds.blocked(
                         LauncherStructureLock.MUTATION,
                         mutation.description() + " Writes on this slot are held; reads still work.",
-                        "Inspect launcher.list and notes.read");
+                        "Inspect launcher.list and notes.get");
     }
 
     private List<Mutation> mutations() {
@@ -360,7 +360,7 @@ public final class LauncherState implements RenderModule.LauncherContent {
         out.addProperty("message", message);
         out.addProperty(
                 "next",
-                holds.blocked(LauncherStructureLock.MUTATION, message, "Inspect launcher.list and notes.read").next);
+                holds.blocked(LauncherStructureLock.MUTATION, message, "Inspect launcher.list and notes.get").next);
         return out;
     }
 
@@ -369,16 +369,16 @@ public final class LauncherState implements RenderModule.LauncherContent {
                 code,
                 what
                         + " was dispatched but its outcome was not observed; writes on this slot are held until acked after inspection."
-                        + " Inspect with launcher.list / notes.read, never retry.");
+                        + " Inspect with launcher.list / notes.get, never retry.");
     }
 
     void addClipMetadata(JsonObject out) {
         JsonObject loop = new JsonObject();
-        loop.addProperty("lengthBeats", clip.getLoopLength().get());
-        loop.addProperty("startBeats", clip.getLoopStart().get());
+        loop.addProperty("length", clip.getLoopLength().get());
+        loop.addProperty("start", clip.getLoopStart().get());
         out.add("loop", loop);
-        out.addProperty("playStartBeats", clip.getPlayStart().get());
-        out.addProperty("playStopBeats", clip.getPlayStop().get());
+        out.addProperty("playStart", clip.getPlayStart().get());
+        out.addProperty("playStop", clip.getPlayStop().get());
         out.addProperty("loopEnabled", clip.isLoopEnabled().get());
     }
 

@@ -148,7 +148,7 @@ def problems(command: str) -> list[str]:
 
 
 def prose_method_problems(span: str) -> list[str]:
-    """A span written as space-form method (`clips copy`, `notes read`) must name an exposed method."""
+    """A span written as space-form method (`clips copy`, `notes get`) must name an exposed method."""
     words = span.split()
     if len(words) < 2 or words[0] not in RESOURCES:
         return []

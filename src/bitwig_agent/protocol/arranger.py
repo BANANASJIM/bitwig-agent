@@ -11,8 +11,8 @@ class ArrangerListArgs(StatusArgs):
 
 ARRANGER_LIST_DESCRIPTION = (
     "Read the arranger clips on one audio/instrument track's main clip lane, in the lane's event order (creation "
-    "order on 6.1.4, not start order): rows {ref, startBeats, lengthBeats, endBeats, name, kind (instrument|audio|"
-    "other), loopEnabled, loopStartBeats, loopLengthBeats, playStartBeats, playStopBeats}. Beats are quarter notes "
+    "order on 6.1.4, not start order): rows {ref, start, length, end, name, kind (instrument|audio|"
+    "other), loopEnabled, loop {start, length}, playStart, playStop}. Beats are quarter notes "
     "from the arrangement start. Automation clips and take/comp lanes are not listed. Native read (inspected "
     "Bitwig 6.1.4 JAR); no selection."
 )

@@ -29,7 +29,7 @@ public final class TransportModule implements HostModule {
     private static final String[] ORDER = {
         "tempoBpm",
         "timeSignature",
-        "positionBeats",
+        "position",
         "metronome",
         "metronomeVolume",
         "loopStartBeats",
@@ -48,7 +48,7 @@ public final class TransportModule implements HostModule {
     private static final Set<String> BASE = Set.of(
             "tempoBpm",
             "timeSignature",
-            "positionBeats",
+            "position",
             "metronome",
             "loopStartBeats",
             "loopDurationBeats",
@@ -82,7 +82,7 @@ public final class TransportModule implements HostModule {
         transport.timeSignature().markInterested();
         transport.timeSignature().addValueObserver((StringValueChangedCallback)
                 v -> signature.set(new JsonPrimitive((String) v)));
-        observe("positionBeats", transport.playPosition());
+        observe("position", transport.playPosition());
         observe("metronome", transport.isMetronomeEnabled());
         observe("loopEnabled", transport.isArrangerLoopEnabled());
         observe("loopStartBeats", transport.arrangerLoopStart());
@@ -242,7 +242,7 @@ public final class TransportModule implements HostModule {
             case "timeSignature":
                 transport.timeSignature().set(value.getAsString());
                 break;
-            case "positionBeats":
+            case "position":
                 transport.setPosition(value.getAsDouble());
                 break;
             case "metronome":
@@ -363,7 +363,7 @@ public final class TransportModule implements HostModule {
         units.addProperty(
                 "timeSignature",
                 "numerator/denominator as the host reports it; time-signature change markers are not in the public API");
-        units.addProperty("positionBeats", "quarter_note_beats_current_play_position");
+        units.addProperty("position", "quarter_note_beats_current_play_position");
         units.addProperty("metronomeVolume", "normalized_0_1_not_db");
         units.addProperty("loopStartBeats", "quarter_note_beats");
         units.addProperty("loopDurationBeats", "quarter_note_beats");

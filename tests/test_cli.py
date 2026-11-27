@@ -62,16 +62,16 @@ async def test_typed_arguments_forward_without_null_defaults(host, monkeypatch):
 async def test_nested_note_arguments_and_raw_json_are_equivalent(host, monkeypatch):
     monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
     edits = [
-        {"op": "set", "beat": 0, "pitch": 60, "velocity": 90, "durationBeats": 1},
+        {"op": "set", "beat": 0, "pitch": 60, "velocity": 90, "duration": 1},
         {"op": "clear", "beat": 1, "pitch": 64},
     ]
     args = {**NOTE_WINDOW, "edits": edits}
-    typed = flags("notes.edit", args)
-    for argv in [["notes.edit", *typed], ["notes.edit", json.dumps(args)]]:
+    typed = flags("notes.set", args)
+    for argv in [["notes.set", *typed], ["notes.set", json.dumps(args)]]:
         payload, code = await execute(argv)
         assert code == 0, payload
         assert host.requests[-1]["params"] == args
-    assert "durationBeats" not in host.requests[-1]["params"]["edits"][1]
+    assert "duration" not in host.requests[-1]["params"]["edits"][1]
 
 
 @pytest.mark.parametrize(
@@ -341,7 +341,7 @@ async def test_offline_entrypoint_and_client_do_not_import_mcp():
         "-m",
         "bitwig_agent.frontends.cli",
         "help",
-        "notes.edit",
+        "notes.set",
         "--schema",
         env={**os.environ, "BITWIG_AGENT_PORT": "bad"},
         stdout=asyncio.subprocess.PIPE,
@@ -349,7 +349,7 @@ async def test_offline_entrypoint_and_client_do_not_import_mcp():
     )
     stdout, stderr = await process.communicate()
     assert process.returncode == 0, stderr.decode()
-    assert json.loads(stdout)["method"] == "notes.edit"
+    assert json.loads(stdout)["method"] == "notes.set"
 
 
 DEVICE_REF = {"kind": "device", "track": {"kind": "track", "id": TRACK, "name": "Lead"}, "index": 0, "name": "Polymer"}
@@ -535,12 +535,12 @@ def test_unknown_argument_synonyms_hint_but_never_alias():
 def test_nested_unknown_argument_names_full_path_and_siblings():
 
     args = {
-        "to": {"track": TRACK_REF, "startBeats": 0},
+        "to": {"track": TRACK_REF, "start": 0},
         "name": "x",
-        "lengthBeats": 4,
+        "length": 4,
         "notes": [
-            {"beat": 0, "pitch": 60, "velocity": 0.8, "durationBeats": 1},
-            {"beat": 1, "pitch": 62, "velocity": 0.8, "durationBeats": 1, "channel": 2},
+            {"beat": 0, "pitch": 60, "velocity": 0.8, "duration": 1},
+            {"beat": 1, "pitch": 62, "velocity": 0.8, "duration": 1, "channel": 2},
         ],
     }
     with pytest.raises(ValidationError) as error:
@@ -548,7 +548,7 @@ def test_nested_unknown_argument_names_full_path_and_siblings():
     message = invalid_params_message("clips.insert", error.value)
     assert "notes[1].channel" in message
     assert "Accepted at notes[]: " in message
-    assert "durationBeats" in message
+    assert "duration" in message
     assert "velocity" in message
     assert "notes (did you mean notes?)" not in message
     assert "notes.1" not in message
@@ -758,7 +758,7 @@ async def test_bad_row_options_are_usage_errors(host, monkeypatch, argv, fragmen
     ("argv", "fragment"),
     [
         (["status", "--format=csv"], "has no record list"),
-        (["notes", "read", "--format=csv"], "returns an outcome"),
+        (["notes", "get", "--format=csv"], "returns an outcome"),
         (["transport", "set", "--playing=false", "--fields=outcome"], "returns an outcome"),
     ],
 )

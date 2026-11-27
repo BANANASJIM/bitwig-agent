@@ -487,7 +487,7 @@ async def _record(
             created.append((src, dst))
         if from_start:
             transport_started = writes.transport = True
-            for change in ({"playing": False}, {"positionBeats": 0}, {"playing": True}):
+            for change in ({"playing": False}, {"position": 0}, {"playing": True}):
                 require_success("transport.set", await bridge.call("transport.set", change, timeout_ms))
         started = time.monotonic()
         await sleep(seconds)

@@ -12,7 +12,7 @@ TRACK_REF = {"kind": "track", "id": "12345678-1234-1234-1234-123456789abc", "nam
 SCENE_REF = {"kind": "scene", "index": 33, "name": "Drop"}
 SLOT_REF = {"kind": "slot", "track": TRACK_REF, "scene": SCENE_REF}
 CLIP_REF = {"kind": "clip", "track": TRACK_REF, "slot": {"scene": SCENE_REF}, "name": "Hook"}
-ARRANGER_CLIP_REF = {"kind": "clip", "track": TRACK_REF, "lane": "main", "startBeats": 64, "name": "Hook"}
+ARRANGER_CLIP_REF = {"kind": "clip", "track": TRACK_REF, "lane": "main", "start": 64, "name": "Hook"}
 
 SceneOffset = Annotated[
     Index,

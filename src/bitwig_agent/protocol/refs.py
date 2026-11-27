@@ -41,7 +41,7 @@ ROLES: dict[str, Roles] = {
     "track": Roles(("id",), targetOnly=("name",)),
     "scene": Roles(("index",), ("name",)),
     "slot": Roles(("track", "scene")),
-    "clip": Roles(("track", "slot", "lane", "startBeats"), ("name",)),
+    "clip": Roles(("track", "slot", "lane", "start"), ("name",)),
     "device": Roles(("track", "chain", "index"), ("name",)),
     "chain": Roles(("device", "id"), targetOnly=("name",)),
     "parameter": Roles(("owner", "id"), targetOnly=("name",)),
@@ -98,7 +98,7 @@ class ArrangerClipRef(Ref):
     kind: Literal["clip"]
     track: TrackRef
     lane: Literal["main"]
-    startBeats: Beats
+    start: Beats
     name: Name
 
 

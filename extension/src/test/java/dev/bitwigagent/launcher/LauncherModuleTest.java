@@ -46,7 +46,7 @@ public final class LauncherModuleTest {
         JsonObject p = new JsonObject();
         p.add("to", f.slot(scene));
         JsonObject loop = new JsonObject();
-        loop.addProperty("lengthBeats", 4);
+        loop.addProperty("length", 4);
         p.add("loop", loop);
         p.addProperty("name", "Fixture");
         return p;

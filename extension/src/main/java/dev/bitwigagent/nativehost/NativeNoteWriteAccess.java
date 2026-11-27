@@ -128,7 +128,7 @@ public final class NativeNoteWriteAccess implements NativeNotes.Access {
             Object slot,
             String trackId,
             String name,
-            int lengthBeats,
+            int beats,
             List<NativeNotes.Cell> cells,
             Runnable check,
             Runnable beforeWrite) {
@@ -139,12 +139,12 @@ public final class NativeNoteWriteAccess implements NativeNotes.Access {
             Object clip = a.invoke(launcher.clip, slot);
             if (!noteClip.isInstance(clip) || a.invoke(launcher.slot, clip) != bound.slot)
                 throw Errors.unknown(Reason.READBACK_MISMATCH, "No native note clip appeared in the slot.");
-            a.invoke(setLength, a.invoke(clipLength, clip), (double) lengthBeats);
+            a.invoke(setLength, a.invoke(clipLength, clip), (double) beats);
             a.invoke(rename, clip, name);
             a.invoke(
                     setNumber,
                     a.invoke(timing.position, a.invoke(timing.playStop, a.invoke(timing.timing, clip))),
-                    (double) lengthBeats);
+                    (double) beats);
             for (NativeNotes.Cell cell : cells) add(clip, cell);
         });
     }
@@ -168,8 +168,7 @@ public final class NativeNoteWriteAccess implements NativeNotes.Access {
 
     private void add(Object clip, NativeNotes.Cell cell) {
         // The duration is stored to 2^-20 beat as well: unrounded, a note reads back exactly until Undo/Redo rounds it.
-        Object note =
-                a.invoke(newNote, null, time(cell), round(cell.durationBeats), (double) (cell.velocity * VELOCITY));
+        Object note = a.invoke(newNote, null, time(cell), round(cell.duration), (double) (cell.velocity * VELOCITY));
         a.invoke(addNote, clip, note, cell.channel, cell.pitch, null);
     }
 

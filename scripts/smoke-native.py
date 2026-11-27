@@ -7,7 +7,7 @@ JSON config (all paths absolute, artifact directory must not already exist):
    "display":":1", "window_id":"0x12345", "port":61172,
    "artifacts":"/path/to/new-run", "isolated_display_confirmed":true}
 No launch, installation, mutation, GUI input, screenshot, default display, or
-automatic retry is performed. notes.read is excluded because it selects a clip.
+automatic retry is performed. notes.get is excluded because it selects a clip.
 Requires Linux /proc, xprop and the existing Python development environment.
 A matching title/project name is NOT proof of the loaded full file path; exact
 file identity and actual reopen/music/UI behavior require independent evidence.
@@ -313,7 +313,7 @@ async def probe(target, report):  # noqa: PLR0915
             report["notExercised"].append("Per-track/launcher/device reads: fixture has no observed tracks")
         elif not device_count:
             report["notExercised"].append("devices.get/devices.remote.get/parameters.list: no observed devices")
-        report["notExercised"].append("notes.read: selects a GUI clip; excluded from no-selection preflight")
+        report["notExercised"].append("notes.get: selects a GUI clip; excluded from no-selection preflight")
         report["afterTransport"] = await call("transport.get")
         report["afterStatus"] = await call("status")
         if report["afterStatus"].get("projectName") != target.fixture.stem:

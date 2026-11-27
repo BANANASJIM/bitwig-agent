@@ -78,7 +78,7 @@ These commands work offline:
 bitwig-agent-install --version
 bitwig-agent --help
 bitwig-agent tracks set --help
-bitwig-agent help notes.edit
+bitwig-agent help notes.set
 ```
 
 `bitwig-agent <resource> <verb> --field=value` is the shell front end: JSON on stdout, errors on stderr, stable exit codes, so it composes with `jq`, `cut` and `wc -l`. See [USAGE](USAGE.md#the-command-line).

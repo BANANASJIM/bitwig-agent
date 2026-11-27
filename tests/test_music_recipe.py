@@ -211,13 +211,13 @@ async def test_recipe_does_not_report_authored_when_clip_readback_is_wrong(
                 }
             if method == "devices.insert":
                 inserted = True
-            elif method == "notes.read":
+            elif method == "notes.get":
                 return {
                     "status": "observed",
                     "ref": {**clip, "name": "other"} if problem == "wrong_target" else clip,
                     "window": {
                         "channel": 0,
-                        "stepSizeBeats": 0.25,
+                        "stepSize": 0.25,
                         "startStep": 0,
                         "steps": 32,
                         "pitchStart": 0,
@@ -231,18 +231,18 @@ async def test_recipe_does_not_report_authored_when_clip_readback_is_wrong(
                         {
                             "beat": item["beat"],
                             "pitch": item["pitch"],
-                            "durationBeats": item["durationBeats"],
+                            "duration": item["duration"],
                             "velocity": item["velocity"],
                         }
                         for item in recipe.pluck_phrase()
                     ],
                     "completeWindow": problem != "incomplete_window",
                     "continuingAtWindowStart": [],
-                    "loop": {"lengthBeats": 8, "startBeats": 0},
+                    "loop": {"length": 8, "start": 0},
                     "loopEnabled": None if problem == "loop_unobserved" else problem != "loop_disabled",
-                    "playStartBeats": 4 if problem == "play_start_shifted" else 0,
+                    "playStart": 4 if problem == "play_start_shifted" else 0,
                 }
-            elif method not in {"tracks.set", "notes.edit"}:
+            elif method not in {"tracks.set", "notes.set"}:
                 raise AssertionError(f"Unexpected operation after invalid clip: {method}")
             return {"status": "observed"}
 

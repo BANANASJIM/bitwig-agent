@@ -20,7 +20,7 @@ import java.util.Set;
  * grid.
  */
 public final class NoteModule implements HostModule {
-    static final Set<String> METHODS = Set.of("notes.read", "notes.edit");
+    static final Set<String> METHODS = Set.of("notes.get", "notes.set");
     private static final int NOTE_LIMIT = 2048;
 
     private final LauncherState state;
@@ -40,14 +40,14 @@ public final class NoteModule implements HostModule {
 
     @Override
     public void validate(String method, JsonObject p) {
-        if (method.equals("notes.edit")) NoteGrid.plan(p, p.getAsJsonArray("edits"), "edits", null);
+        if (method.equals("notes.set")) NoteGrid.plan(p, p.getAsJsonArray("edits"), "edits", null);
         else NoteGrid.readWindow(p);
     }
 
     @Override
     public void dispatch(HostOperation op, String method, JsonObject p) {
         scheduler.check(op);
-        boolean edit = method.equals("notes.edit");
+        boolean edit = method.equals("notes.set");
         List<NoteGrid.Part> parts = edit ? NoteGrid.plan(p, p.getAsJsonArray("edits"), "edits", null) : null;
         NoteGrid.Window explicit = edit ? null : NoteGrid.readWindow(p);
         int channel = p.has("channel") ? p.get("channel").getAsInt() : 0;
@@ -349,7 +349,7 @@ public final class NoteModule implements HostModule {
 
     /** Keys of a window's result the combined result already carries once. */
     private static final Set<String> WINDOW_DROPPED =
-            Set.of("ref", "window", "loop", "playStartBeats", "playStopBeats", "loopEnabled", "undo");
+            Set.of("ref", "window", "loop", "playStart", "playStop", "loopEnabled", "undo");
 
     private void editNotes(HostOperation op, LauncherState.Target target, NoteGrid.Part part, boolean full) {
         NoteGrid.Window w = part.window;
@@ -500,7 +500,7 @@ public final class NoteModule implements HostModule {
             if (!coversLoop)
                 continuation = (continuation == null ? "" : continuation + ". ")
                         + "The clip loop continues past this window and a coarser grid would drop below 1/16 note: read the rest with an explicit window, startStep="
-                        + (w.start + w.steps) + " stepSizeBeats="
+                        + (w.start + w.steps) + " stepSize="
                         + w.exact.stripTrailingZeros().toPlainString() + " steps=128 pitchStart=0 pitchCount=128";
         }
         if (continuation != null) out.addProperty("continuation", continuation);

@@ -214,7 +214,7 @@ def test_capture_from_start_orders_transport_and_reports_levels(tmp_path, monkey
         ("status", {}),
         ("context.get", {}),
         ("transport.set", {"playing": False}),
-        ("transport.set", {"positionBeats": 0}),
+        ("transport.set", {"position": 0}),
         ("transport.set", {"playing": True}),
         ("transport.set", {"playing": False}),
     ]
@@ -258,7 +258,7 @@ def test_capture_unlinks_its_own_links_when_it_fails(tmp_path, monkeypatch, pw):
     before = set(pw.links)
 
     async def broken(method, params, timeout_ms=5000, _call=bridge.call):
-        if method == "transport.set" and params.get("positionBeats") == 0:
+        if method == "transport.set" and params.get("position") == 0:
             return unknown_result("deadline", "x")
         return await _call(method, params, timeout_ms)
 
@@ -359,7 +359,7 @@ def test_capture_solo_restores_on_failure_and_reports_restore_errors(tmp_path, m
     inner = bridge.call
 
     async def broken(method, p, t=5000):
-        if method == "transport.set" and p.get("positionBeats") == 0:
+        if method == "transport.set" and p.get("position") == 0:
             raise bridge_error("host_refused", "x")
         return await inner(method, p, t)
 

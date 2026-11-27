@@ -32,7 +32,7 @@ public final class NativeLauncherSettingsAccess implements LauncherSettingsModul
                 boolean.class);
         bind("nextActionLoopCount", "clip.launch.nextActionLoopCount", "clip.launch.setNextActionLoopCount", int.class);
         bind(
-                "nextActionDelayBeats",
+                "nextActionDelay",
                 "clip.launch.nextActionDelayBeats",
                 "clip.launch.setNextActionDelayBeats",
                 double.class);
@@ -64,10 +64,10 @@ public final class NativeLauncherSettingsAccess implements LauncherSettingsModul
         Object value = bound.clip;
         Object timing = a.invoke(clipTiming.timing, value), loopRange = a.invoke(clipTiming.loop, timing);
         Map<String, Object> properties = new LinkedHashMap<>();
-        properties.put("playStartBeats", a.invoke(clipTiming.position, a.invoke(clipTiming.playStart, timing)));
-        properties.put("playStopBeats", a.invoke(clipTiming.position, a.invoke(clipTiming.playStop, timing)));
-        properties.put("loopStartBeats", a.invoke(clipTiming.position, loopRange));
-        properties.put("loopLengthBeats", a.invoke(clipTiming.duration, loopRange));
+        properties.put("playStart", a.invoke(clipTiming.position, a.invoke(clipTiming.playStart, timing)));
+        properties.put("playStop", a.invoke(clipTiming.position, a.invoke(clipTiming.playStop, timing)));
+        properties.put("loopStart", a.invoke(clipTiming.position, loopRange));
+        properties.put("loopLength", a.invoke(clipTiming.duration, loopRange));
         properties.put("loopEnabled", a.invoke(clipTiming.loopEnabled, timing));
         JsonObject before = read(value, properties);
         Runnable guard = bound::guard;
@@ -83,7 +83,7 @@ public final class NativeLauncherSettingsAccess implements LauncherSettingsModul
                     Object input;
                     if (key.equals("nextAction")) input = actions.get(requested.getAsString());
                     else if (key.equals("nextActionLoopCount")) input = Integer.valueOf(requested.getAsInt());
-                    else if (key.equals("nextActionDelayBeats")) input = Double.valueOf(requested.getAsDouble());
+                    else if (key.equals("nextActionDelay")) input = Double.valueOf(requested.getAsDouble());
                     else input = Boolean.valueOf(requested.getAsBoolean());
                     if (input == null) throw Errors.notApplied(Reason.INVALID_PARAMS, "Unsupported native nextAction");
                     a.invoke(setters.get(key), value, input);

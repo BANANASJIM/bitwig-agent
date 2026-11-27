@@ -28,7 +28,7 @@ DURATION_TOLERANCE_BEATS = 1e-6
 
 
 def note(beat: float, pitch: int, duration: float, velocity: int) -> dict:
-    return {"op": "set", "beat": beat, "pitch": pitch, "durationBeats": duration, "velocity": velocity}
+    return {"op": "set", "beat": beat, "pitch": pitch, "duration": duration, "velocity": velocity}
 
 
 def pluck_phrase() -> list[dict]:
@@ -97,15 +97,15 @@ def checked_notes(readback: dict, window: dict, edits: list[dict]) -> None:
         or len(observed) != len(readback["notes"])
         or observed.keys() != expected.keys()
         or readback.get("continuingAtWindowStart") != []
-        or readback.get("loop") != {"lengthBeats": LOOP_LENGTH_BEATS, "startBeats": 0}
+        or readback.get("loop") != {"length": LOOP_LENGTH_BEATS, "start": 0}
         or readback.get("loopEnabled") is not True
-        or readback.get("playStartBeats") != 0
+        or readback.get("playStart") != 0
     ):
         raise RuntimeError("Observed note onsets or clip bounds differ from the authored phrase")
     for key, wanted in expected.items():
         actual = observed[key]
         if (
-            abs(actual["durationBeats"] - wanted["durationBeats"]) > DURATION_TOLERANCE_BEATS
+            abs(actual["duration"] - wanted["duration"]) > DURATION_TOLERANCE_BEATS
             or actual["velocity"] != wanted["velocity"]
         ):
             raise RuntimeError(f"Observed duration/velocity differs at {key}")
@@ -365,8 +365,8 @@ async def create(args: argparse.Namespace) -> int:  # noqa: C901, PLR0912, PLR09
             "tracks.set",
             "devices.insert",
             "clips.insert",
-            "notes.edit",
-            "notes.read",
+            "notes.set",
+            "notes.get",
             "grid.modules.insert",
             "grid.modules.delete",
             "grid.parameters.set",
@@ -478,7 +478,7 @@ async def create(args: argparse.Namespace) -> int:  # noqa: C901, PLR0912, PLR09
                 "clips.insert",
                 {
                     "to": {"kind": "slot", "track": track_ref, "scene": scene},
-                    "loop": {"lengthBeats": LOOP_LENGTH_BEATS},
+                    "loop": {"length": LOOP_LENGTH_BEATS},
                     "name": f"{label} eight-beat sketch",
                 },
             )
@@ -486,14 +486,14 @@ async def create(args: argparse.Namespace) -> int:  # noqa: C901, PLR0912, PLR09
             window = {
                 "target": inserted["ref"],
                 "channel": 0,
-                "stepSizeBeats": 0.25,
+                "stepSize": 0.25,
                 "startStep": 0,
                 "steps": 32,
                 "pitchStart": 0,
                 "pitchCount": 128,
             }
-            await call("notes.edit", {**window, "edits": edits})
-            readback = await call("notes.read", window)
+            await call("notes.set", {**window, "edits": edits})
+            readback = await call("notes.get", window)
             report["createdTracks"][-1]["noteReadback"] = readback
             # Clip selection can auto-arm according to existing host preferences.
             # Restore safety explicitly without changing those user preferences.

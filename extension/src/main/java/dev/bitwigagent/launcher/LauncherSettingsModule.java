@@ -22,7 +22,7 @@ import java.util.function.Consumer;
 /** Source-bound launcher clip properties (timing and Next Action), independent of the note editor cursor. */
 public final class LauncherSettingsModule {
     public static final List<String> WRITE_ORDER = List.of(
-            "nextAction", "nextActionLinkToLoop", "nextActionLoopCount", "nextActionDelayBeats", "nextActionEnabled");
+            "nextAction", "nextActionLinkToLoop", "nextActionLoopCount", "nextActionDelay", "nextActionEnabled");
 
     public interface Access {
         void execute(Runnable work);

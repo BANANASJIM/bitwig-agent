@@ -75,7 +75,7 @@ public final class AutomationModule implements HostModule {
 
     public interface Access {
         void execute(Runnable work);
-        /** range is null for the whole lane, else {startBeat, endBeat} inclusive. */
+        /** range is null for the whole lane, else {start, end} inclusive. */
         JsonObject get(Object trackProxy, String trackId, Target target, double[] range, Runnable check);
 
         /** {@code expectedHash} is null when the request has no expect. */
@@ -147,8 +147,8 @@ public final class AutomationModule implements HostModule {
     static double[] range(JsonObject p) {
         if (!p.has("range")) return null;
         JsonObject r = p.getAsJsonObject("range");
-        double start = r.get("startBeat").getAsDouble(), end = r.get("endBeat").getAsDouble();
-        if (start > end) throw Errors.invalid("range.startBeat must not exceed range.endBeat");
+        double start = r.get("start").getAsDouble(), end = r.get("end").getAsDouble();
+        if (start > end) throw Errors.invalid("range.start must not exceed range.end");
         return new double[] {start, end};
     }
 
@@ -258,8 +258,8 @@ public final class AutomationModule implements HostModule {
         out.add("lane", lane);
         if (range != null) {
             JsonObject r = new JsonObject();
-            r.addProperty("startBeat", range[0]);
-            r.addProperty("endBeat", range[1]);
+            r.addProperty("start", range[0]);
+            r.addProperty("end", range[1]);
             out.add("range", r);
         }
         JsonArray rows = new JsonArray();

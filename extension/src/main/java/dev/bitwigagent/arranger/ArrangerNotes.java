@@ -14,7 +14,7 @@ public final class ArrangerNotes {
     private ArrangerNotes() {}
 
     public interface Host {
-        Object newNote(double beat, double durationBeats, double velocity01);
+        Object newNote(double beat, double duration, double velocity01);
         /** Native {@code AGr.MRY(note, channel, key, selection)}. */
         void addNote(Object clip, Object note, int channel, int key);
 
@@ -33,7 +33,7 @@ public final class ArrangerNotes {
         double velocity01(Object note);
     }
 
-    /** Notes are {beat, pitch, velocity, durationBeats}. */
+    /** Notes are {beat, pitch, velocity, duration}. */
     public static void write(Host host, Object clip, List<double[]> notes, int channel) {
         for (double[] n : notes) host.addNote(clip, host.newNote(n[0], n[3], n[2] / 127.0), channel, (int) n[1]);
     }

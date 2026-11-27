@@ -22,7 +22,7 @@ public final class TransportModuleTest {
         TransportModule module = f.services.transportModule();
         JsonObject read = f.call(module, "transport.get", new JsonObject());
         assertTrue(read.get("tempoBpm").getAsDouble() == 120, "tempo is raw BPM, not normalized");
-        assertTrue(read.get("positionBeats").getAsDouble() == 0, "current playback position read");
+        assertTrue(read.get("position").getAsDouble() == 0, "current playback position read");
         assertTrue(read.getAsJsonObject("units").get("tempoBpm").getAsString().equals("bpm_raw"), "BPM unit explicit");
         assertTrue(
                 read.has("arrangerRecordEnabled")
@@ -43,7 +43,7 @@ public final class TransportModuleTest {
                 "{\"tempoBpm\":666.01}",
                 "{\"tempoBpm\":\"120\"}",
                 "{\"playing\":1}",
-                "{\"positionBeats\":-1}",
+                "{\"position\":-1}",
                 "{\"loopDurationBeats\":0}",
                 "{\"loopEnabled\":null}",
                 "{\"recording\":true}",
@@ -99,7 +99,7 @@ public final class TransportModuleTest {
             HostOperation start = f.submit(module, "transport.set", HostFixture.json("{\"playing\":true}"));
             f.next();
             assertTrue(!assertRpcError("unsafe_state", start).unknown, "unsafe start not applied");
-            HostOperation seek = f.submit(module, "transport.set", HostFixture.json("{\"positionBeats\":8}"));
+            HostOperation seek = f.submit(module, "transport.set", HostFixture.json("{\"position\":8}"));
             f.next();
             assertRpcError("unsafe_state", seek);
             assertTrue(f.transport.actions == 0, "unsafe start/seek never dispatched");
@@ -175,8 +175,7 @@ public final class TransportModuleTest {
         HostFixture f = new HostFixture();
         TransportModule module = f.services.transportModule();
         deferStop(f);
-        HostOperation op =
-                f.submit(module, "transport.set", HostFixture.json("{\"playing\":false,\"positionBeats\":0}"));
+        HostOperation op = f.submit(module, "transport.set", HostFixture.json("{\"playing\":false,\"position\":0}"));
         f.next();
         assertTrue(
                 f.transport.child("playPosition").data.equals(12.0),
@@ -189,8 +188,7 @@ public final class TransportModuleTest {
                 result.get("outcome").getAsString().matches("applied|already_matched"),
                 "stop and subsequent seek both observed");
         assertTrue(
-                !result.get("playing").getAsBoolean()
-                        && result.get("positionBeats").getAsDouble() == 0,
+                !result.get("playing").getAsBoolean() && result.get("position").getAsDouble() == 0,
                 "combined request leaves the transport stopped at the requested position");
         assertTrue(f.transport.actions == 2, "one stop and one seek, without mutation retries");
     }
@@ -200,8 +198,7 @@ public final class TransportModuleTest {
         HostFixture f = new HostFixture();
         TransportModule module = f.services.transportModule();
         deferStop(f);
-        HostOperation op =
-                f.submit(module, "transport.set", HostFixture.json("{\"playing\":false,\"positionBeats\":0}"));
+        HostOperation op = f.submit(module, "transport.set", HostFixture.json("{\"playing\":false,\"position\":0}"));
         f.next();
         f.tasks.advance(Scheduler.OBSERVE_WINDOW_NANOS); // the fixture's hard deadline remains open
         f.next();
@@ -212,7 +209,7 @@ public final class TransportModuleTest {
                 "a late observed stop cannot turn the incomplete request into success");
         assertTrue(
                 result.getAsJsonObject("fields")
-                        .getAsJsonObject("positionBeats")
+                        .getAsJsonObject("position")
                         .get("reason")
                         .getAsString()
                         .equals("not_reached"),
@@ -247,8 +244,7 @@ public final class TransportModuleTest {
         HostFixture f = new HostFixture();
         TransportModule module = f.services.transportModule();
         deferStop(f);
-        HostOperation op =
-                f.submit(module, "transport.set", HostFixture.json("{\"playing\":false,\"positionBeats\":0}"));
+        HostOperation op = f.submit(module, "transport.set", HostFixture.json("{\"playing\":false,\"position\":0}"));
         f.next();
         op.result.cancel(false);
         f.next();
@@ -264,8 +260,7 @@ public final class TransportModuleTest {
         HostFixture f = new HostFixture();
         TransportModule module = f.services.transportModule();
         deferStop(f);
-        HostOperation op =
-                f.submit(module, "transport.set", HostFixture.json("{\"playing\":false,\"positionBeats\":0}"));
+        HostOperation op = f.submit(module, "transport.set", HostFixture.json("{\"playing\":false,\"position\":0}"));
         f.next();
         f.next();
         f.transport.child("isArrangerAutomationWriteEnabled").emit(true);
@@ -277,7 +272,7 @@ public final class TransportModuleTest {
                 "a changed safety condition preserves the partial outcome");
         assertTrue(
                 result.getAsJsonObject("fields")
-                        .getAsJsonObject("positionBeats")
+                        .getAsJsonObject("position")
                         .get("reason")
                         .getAsString()
                         .equals("not_reached"),

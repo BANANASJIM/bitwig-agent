@@ -30,8 +30,7 @@ public final class NoteGrid {
     static final double DURATION_RESOLUTION = HostLimits.LIMITS.durationResolution;
 
     private static final BigDecimal DURATION_STEP = BigDecimal.valueOf(DURATION_RESOLUTION);
-    private static final Set<String> GRID_FIELDS =
-            Set.of("stepSizeBeats", "startStep", "steps", "pitchStart", "pitchCount");
+    private static final Set<String> GRID_FIELDS = Set.of("stepSize", "startStep", "steps", "pitchStart", "pitchCount");
     private static final BigDecimal[] DERIVED_GRIDS = {
         new BigDecimal("4"),
         new BigDecimal("2"),
@@ -72,7 +71,7 @@ public final class NoteGrid {
         static Window of(JsonObject p, boolean derived) {
             return new Window(
                     p.has("channel") ? p.get("channel").getAsInt() : 0,
-                    p.get("stepSizeBeats").getAsBigDecimal(),
+                    p.get("stepSize").getAsBigDecimal(),
                     p.get("startStep").getAsInt(),
                     p.get("steps").getAsInt(),
                     p.get("pitchStart").getAsInt(),
@@ -83,14 +82,14 @@ public final class NoteGrid {
         JsonObject json() {
             JsonObject out = new JsonObject();
             out.addProperty("channel", channel);
-            out.addProperty("stepSizeBeats", size);
+            out.addProperty("stepSize", size);
             out.addProperty("startStep", start);
             out.addProperty("steps", steps);
             out.addProperty("pitchStart", pitch);
             out.addProperty("pitchCount", pitches);
             if (derived) out.addProperty("derived", true);
-            out.addProperty("startBeat", start * size);
-            out.addProperty("endBeatExclusive", (start + steps) * size);
+            out.addProperty("start", start * size);
+            out.addProperty("end", (start + steps) * size);
             return out;
         }
     }
@@ -145,7 +144,7 @@ public final class NoteGrid {
             this.pitch = e.get("pitch").getAsInt();
             this.set = e.get("op").getAsString().equals("set");
             this.beat = e.get("beat").getAsBigDecimal();
-            BigDecimal duration = set ? e.get("durationBeats").getAsBigDecimal() : BigDecimal.ZERO;
+            BigDecimal duration = set ? e.get("duration").getAsBigDecimal() : BigDecimal.ZERO;
             this.requestedEnd = beat.add(duration);
             this.end = beat.add(stored(duration));
         }
@@ -167,7 +166,7 @@ public final class NoteGrid {
         for (String key : GRID_FIELDS) if (p.has(key)) present++;
         if (present != 0 && present != GRID_FIELDS.size())
             throw Errors.invalid(
-                    "stepSizeBeats, startStep, steps, pitchStart and pitchCount must be supplied together or all omitted");
+                    "stepSize, startStep, steps, pitchStart and pitchCount must be supplied together or all omitted");
         return present != 0;
     }
 
@@ -198,7 +197,7 @@ public final class NoteGrid {
         return explicit != null ? List.of(new Part(explicit, all, array)) : derive(p, array, spans, field);
     }
 
-    /** The rules of clip notes {beat, pitch, velocity, durationBeats} within {@code length}, without a window. */
+    /** The rules of clip notes {beat, pitch, velocity, duration} within {@code length}, without a window. */
     public static void requireNoteRules(JsonArray notes, BigDecimal length) {
         JsonArray sets = setEdits(notes);
         List<Span> spans = new ArrayList<>(sets.size());
@@ -210,10 +209,9 @@ public final class NoteGrid {
     private static void checkShape(JsonArray array) {
         for (JsonElement value : array) {
             JsonObject e = value.getAsJsonObject();
-            boolean set = e.get("op").getAsString().equals("set"),
-                    carries = e.has("velocity") && e.has("durationBeats");
-            if (set ? !carries : e.has("velocity") || e.has("durationBeats"))
-                throw Errors.invalid("set requires velocity and durationBeats; clear forbids both");
+            boolean set = e.get("op").getAsString().equals("set"), carries = e.has("velocity") && e.has("duration");
+            if (set ? !carries : e.has("velocity") || e.has("duration"))
+                throw Errors.invalid("set requires velocity and duration; clear forbids both");
         }
     }
 
@@ -239,8 +237,8 @@ public final class NoteGrid {
                     add(
                             out,
                             s.index,
-                            at + " beat " + plain(s.beat) + " does not align with stepSizeBeats "
-                                    + plain(explicit.exact) + ": use a multiple of it");
+                            at + " beat " + plain(s.beat) + " does not align with stepSize " + plain(explicit.exact)
+                                    + ": use a multiple of it");
                 else if (step[0].compareTo(first) < 0
                         || step[0].compareTo(limit) >= 0
                         || s.pitch < explicit.pitch
@@ -257,7 +255,7 @@ public final class NoteGrid {
                             out,
                             s.index,
                             at + " ends at beat " + plain(s.requestedEnd) + ", past the window end " + plain(windowEnd)
-                                    + ": shorten it to durationBeats <= " + plain(windowEnd.subtract(s.beat)));
+                                    + ": shorten it to duration <= " + plain(windowEnd.subtract(s.beat)));
             } else if (s.beat.remainder(ONSET_GRID).signum() != 0) {
                 BigDecimal low =
                         s.beat.divide(ONSET_GRID, 0, RoundingMode.FLOOR).multiply(ONSET_GRID);
@@ -275,7 +273,7 @@ public final class NoteGrid {
                                 ? at + " starts at beat " + plain(s.beat) + ", at or past the clip length "
                                         + plain(length)
                                 : at + " ends at beat " + plain(s.requestedEnd) + ", past the clip length "
-                                        + plain(length) + ": shorten it to durationBeats <= "
+                                        + plain(length) + ": shorten it to duration <= "
                                         + plain(length.subtract(s.beat)));
         }
         Map<String, Span> cells = new HashMap<>();
@@ -301,7 +299,7 @@ public final class NoteGrid {
                         field + "[" + s.index + "] starts at beat " + plain(s.beat) + " before " + field
                                 + "[" + holder.index + "] on pitch " + s.pitch + " ends at beat "
                                 + plain(holder.requestedEnd)
-                                + ": shorten " + field + "[" + holder.index + "] to durationBeats <= "
+                                + ": shorten " + field + "[" + holder.index + "] to duration <= "
                                 + plain(s.beat.subtract(holder.beat)));
             if (holder == null || s.end.compareTo(holder.end) > 0) holders.put(s.pitch, s);
         }
@@ -347,9 +345,9 @@ public final class NoteGrid {
                 add(
                         tooLong,
                         s.index,
-                        field + "[" + s.index + "] durationBeats " + plain(s.requestedEnd.subtract(s.beat))
+                        field + "[" + s.index + "] duration " + plain(s.requestedEnd.subtract(s.beat))
                                 + " spans more than " + MAX_STEPS + " steps of the " + plain(grid)
-                                + "-beat grid the onsets need: shorten it to durationBeats <= "
+                                + "-beat grid the onsets need: shorten it to duration <= "
                                 + plain(grid.multiply(BigDecimal.valueOf(MAX_STEPS)))
                                 + (spans.size() > 1 ? " or write it in a call of its own" : ""));
         refuse(field, tooLong);
@@ -408,7 +406,7 @@ public final class NoteGrid {
                     x,
                     s.pitch,
                     s.set ? e.get("velocity").getAsInt() : 0,
-                    s.set ? e.get("durationBeats").getAsDouble() : 0,
+                    s.set ? e.get("duration").getAsDouble() : 0,
                     cells,
                     s.set));
         }
@@ -445,7 +443,7 @@ public final class NoteGrid {
         return note.state().name().equals(name);
     }
 
-    /** MIDI velocity 1..127, the unit notes.edit takes; the host reports 0..1. */
+    /** MIDI velocity 1..127, the unit notes.set takes; the host reports 0..1. */
     static int midiVelocity(double normalized) {
         return Math.max(1, Math.min(127, (int) Math.round(normalized * 127)));
     }
@@ -458,13 +456,13 @@ public final class NoteGrid {
                 && Math.abs(note.duration() - e.duration) <= DURATION_RESOLUTION / 2;
     }
 
-    /** One onset row in the units notes.edit accepts; channel is the window's, step is beat/stepSizeBeats. */
+    /** One onset row in the units notes.set accepts; channel is the window's, step is beat/stepSize. */
     static JsonObject noteJson(NoteStep note, Window w, int x, int pitch) {
         JsonObject out = new JsonObject();
         out.addProperty("beat", (w.start + x) * w.size);
         out.addProperty("pitch", pitch);
         out.addProperty("velocity", midiVelocity(note.velocity()));
-        out.addProperty("durationBeats", note.duration());
+        out.addProperty("duration", note.duration());
         return out;
     }
 
@@ -521,7 +519,7 @@ public final class NoteGrid {
             e.alreadyMatched = e.set
                     ? old.onsets == 1
                             && midiVelocity(old.velocity) == e.velocity
-                            && Math.abs(old.durationBeats - e.duration) <= DURATION_RESOLUTION / 2
+                            && Math.abs(old.duration - e.duration) <= DURATION_RESOLUTION / 2
                     : old.onsets == 0;
             write[i] = !e.alreadyMatched;
         }

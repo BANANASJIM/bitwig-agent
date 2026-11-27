@@ -33,7 +33,7 @@ EXAMPLES = [
     {"kind": "scene", "index": 0, "name": None},
     {"kind": "slot", "track": TRACK, "scene": SCENE},
     {"kind": "clip", "track": TRACK, "slot": {"scene": SCENE}, "name": "Hook"},
-    {"kind": "clip", "track": TRACK, "lane": "main", "startBeats": 64, "name": "Hook"},
+    {"kind": "clip", "track": TRACK, "lane": "main", "start": 64, "name": "Hook"},
     DEVICE,
     CHAIN,
     {"kind": "device", "chain": CHAIN, "index": 0, "name": "Polysynth"},

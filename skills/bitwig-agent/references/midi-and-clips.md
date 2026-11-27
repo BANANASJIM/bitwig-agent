@@ -14,16 +14,16 @@ Fields, limits and result shapes come from `<path> --help`; this page is the wor
 
 1. `bitwig-agent context get` once: it answers "what is open and selected" and does not move the selection. "The clip I just recorded" is its `cursorClip`.
 2. Check playback and the recording and automation-write flags before writing. Unknown is not false. Do not change tempo, start playback or switch safety modes just to write notes.
-3. `notes read` the clip, then `notes edit` only the cells that change. Read the result's `outcome`; it names the cells it could not verify, so read back only those.
+3. `notes get` the clip, then `notes set` only the cells that change. Read the result's `outcome`; it names the cells it could not verify, so read back only those.
 
-Note calls select the clip in the editor (that is what moves `cursorClip`), so do not run them alongside work that depends on the selection. A notes read is a bounded window, not a backup: keep the original clip and edit a copy when the change is creative, and never clear all notes to make room.
+Note calls select the clip in the editor (that is what moves `cursorClip`), so do not run them alongside work that depends on the selection. A `notes get` result is a bounded window, not a backup: keep the original clip and edit a copy when the change is creative, and never clear all notes to make room.
 
 ## Make a new part
 
 1. **Find a source that fits the job.** A playable synth is not automatically a distorted guitar. Prefer an exact installed preset (`presets search`, then `devices insert` with the hit's `insert` object unchanged); native types come from `devices catalog`, and a display name is not an id. If nothing fits the requested sound, deliver a labeled draft and name the gap instead of calling it done. Finish a small instrument-and-notes loop before researching a custom Grid graph.
 2. **Insert one device, then configure it.** Read the outcome and the new ref, then read Remote Controls or `parameters list` and change only the few values that differ, with the refs those reads returned.
 3. **Audition a short A/B before expanding.** Same notes, same passage, matched level: [controlled A/B](sound-design.md#controlled-ab). Parameter readback is not style, and a reviewer without audio cannot pass the sound.
-4. **Write the phrase once.** `launcher list` finds an empty slot; `clips insert` creates the named clip with its `notes` in one call, so compose the phrase off the host first. Then one `notes read` of the affected range.
+4. **Write the phrase once.** `launcher list` finds an empty slot; `clips insert` creates the named clip with its `notes` in one call, so compose the phrase off the host first. Then one `notes get` of the affected range.
 
 Research (finding presets, planning the melody) can run in parallel with preparing the track; only one writer owns the host. Missing presets do not authorize installing packages or changing global audio settings. A succeeded operation is not a musical success: a lead built from Polysynth, Distortion and Reverb passed every readback and was still rejected as "not black metal", because the source was never judged against the style.
 
@@ -32,7 +32,7 @@ Research (finding presets, planning the melody) can run in parallel with prepari
 ## Variants and edits
 
 - Copy, then transform, instead of resending notes: `clips copy`, then `clips transpose`, `clips quantize` or `clips transform`.
-- Quantize recorded takes before editing; `notes read` snaps onsets to cells.
+- Quantize recorded takes before editing; `notes get` snaps onsets to cells.
 - `clips set` changes one clip's name, color, loop and launch behavior, each field with its own outcome.
 - Scenes: `scenes list`, then `scenes set`, `scenes launch`, `scenes duplicate`, `scenes delete`. A scene launch is not a one-clip audition: it plays every track's slot in that row.
 

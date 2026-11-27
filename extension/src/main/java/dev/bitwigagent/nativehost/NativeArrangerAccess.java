@@ -168,9 +168,9 @@ public final class NativeArrangerAccess implements ArrangerModule.Access {
         JsonObject out = new JsonObject();
         double s = (Double) a.invoke(start, clip), l = (Double) a.invoke(length, clip);
         out.addProperty("clipIndex", index);
-        out.addProperty("startBeats", s);
-        out.addProperty("lengthBeats", l);
-        out.addProperty("endBeats", s + l);
+        out.addProperty("start", s);
+        out.addProperty("length", l);
+        out.addProperty("end", s + l);
         out.addProperty("name", (String) a.invoke(name, clip));
         out.addProperty(
                 "kind",
@@ -179,11 +179,12 @@ public final class NativeArrangerAccess implements ArrangerModule.Access {
             Object time = a.invoke(clipTiming.timing, clip), range = a.invoke(clipTiming.loop, time);
             out.addProperty(
                     "loopEnabled", (Boolean) a.invoke(clipTiming.boolGet, a.invoke(clipTiming.loopEnabled, time)));
-            out.addProperty("loopStartBeats", value(a.invoke(clipTiming.position, range)));
-            out.addProperty("loopLengthBeats", value(a.invoke(clipTiming.duration, range)));
-            out.addProperty(
-                    "playStartBeats", value(a.invoke(clipTiming.position, a.invoke(clipTiming.playStart, time))));
-            out.addProperty("playStopBeats", value(a.invoke(clipTiming.position, a.invoke(clipTiming.playStop, time))));
+            JsonObject loop = new JsonObject();
+            loop.addProperty("start", value(a.invoke(clipTiming.position, range)));
+            loop.addProperty("length", value(a.invoke(clipTiming.duration, range)));
+            out.add("loop", loop);
+            out.addProperty("playStart", value(a.invoke(clipTiming.position, a.invoke(clipTiming.playStart, time))));
+            out.addProperty("playStop", value(a.invoke(clipTiming.position, a.invoke(clipTiming.playStop, time))));
         }
         return out;
     }
@@ -279,8 +280,8 @@ public final class NativeArrangerAccess implements ArrangerModule.Access {
     public JsonObject create(
             Object trackProxy,
             String trackId,
-            double startBeats,
-            double lengthBeats,
+            double clipStart,
+            double clipLength,
             String clipName,
             List<double[]> notes,
             int channel,
@@ -288,12 +289,12 @@ public final class NativeArrangerAccess implements ArrangerModule.Access {
             Runnable beforeWrite) {
         Lane lane = new Lane(trackProxy, trackId, check);
         List<Object> before = lane.clips();
-        requireFree(lane, before, null, startBeats, startBeats + lengthBeats);
+        requireFree(lane, before, null, clipStart, clipStart + clipLength);
         lane.guard(check);
         beforeWrite.run();
         Object[] created = new Object[1];
         lane.transaction("Create Arranger Clip", () -> {
-            Object clip = a.invoke(newClip, null, startBeats, lengthBeats);
+            Object clip = a.invoke(newClip, null, clipStart, clipLength);
             created[0] = clip;
             a.invoke(insert, lane.timeline, clip, false, false, null);
             a.invoke(rename, clip, clipName);
@@ -302,8 +303,8 @@ public final class NativeArrangerAccess implements ArrangerModule.Access {
         lane.guard(check);
         Object clip = added(before, lane.clips());
         if (clip != created[0]) throw mismatch("the observed clip is not the created clip");
-        if (!near((Double) a.invoke(start, clip), startBeats)) throw mismatch("startBeats");
-        if (!near((Double) a.invoke(length, clip), lengthBeats)) throw mismatch("lengthBeats");
+        if (!near((Double) a.invoke(start, clip), clipStart)) throw mismatch("start");
+        if (!near((Double) a.invoke(length, clip), clipLength)) throw mismatch("length");
         if (!clipName.equals(a.invoke(name, clip))) throw mismatch("name");
         ArrangerNotes.Readback readback = notes.isEmpty() ? null : ArrangerNotes.verify(noteHost, clip, notes, channel);
         if (readback != null && readback.invalidRows > 0) {
@@ -338,8 +339,8 @@ public final class NativeArrangerAccess implements ArrangerModule.Access {
 
     private final ArrangerNotes.Host noteHost = new ArrangerNotes.Host() {
         @Override
-        public Object newNote(double beat, double durationBeats, double velocity01) {
-            return a.invoke(newNote, null, beat, durationBeats, velocity01);
+        public Object newNote(double beat, double duration, double velocity01) {
+            return a.invoke(newNote, null, beat, duration, velocity01);
         }
 
         @Override
@@ -389,7 +390,7 @@ public final class NativeArrangerAccess implements ArrangerModule.Access {
             Object slotProxy,
             String trackId,
             String expectedClipName,
-            double startBeats,
+            double clipStart,
             Runnable check,
             Runnable beforeWrite) {
         Lane lane = new Lane(trackProxy, trackId, check);
@@ -405,19 +406,19 @@ public final class NativeArrangerAccess implements ArrangerModule.Access {
             throw Errors.notApplied(Reason.TARGET_CHANGED, "Native clip name differs from expectedClipName.");
         double expectedLength = (Double) a.invoke(arrangeLength, source);
         List<Object> before = lane.clips();
-        requireFree(lane, before, null, startBeats, startBeats + expectedLength);
+        requireFree(lane, before, null, clipStart, clipStart + expectedLength);
         lane.guard(check);
         if (a.invoke(slotClip, slotProxy) != source)
             throw Errors.notApplied(Reason.TARGET_CHANGED, "Launcher clip changed before the copy.");
         beforeWrite.run();
-        a.invoke(copy, lane.lane, new ArrayList<>(List.of(slot)), slot, startBeats, copyMode, false, null, null);
+        a.invoke(copy, lane.lane, new ArrayList<>(List.of(slot)), slot, clipStart, copyMode, false, null, null);
         lane.guard(check);
         Object clip = added(before, lane.clips());
-        if (!near((Double) a.invoke(start, clip), startBeats)) throw mismatch("startBeats");
+        if (!near((Double) a.invoke(start, clip), clipStart)) throw mismatch("start");
         if (!near((Double) a.invoke(length, clip), expectedLength))
-            throw mismatch("lengthBeats differs from the clip's arrangement length");
+            throw mismatch("length differs from the clip's arrangement length");
         JsonObject out = written(lane, "copyFromLauncher", clip, null);
-        out.addProperty("expectedLengthBeats", expectedLength);
+        out.addProperty("expectedLength", expectedLength);
         out.addProperty("nativeOperation", "copy_launcher_clips_to_arranger");
         out.addProperty("copyMode", "copy_not_alias");
         return out;
@@ -428,7 +429,7 @@ public final class NativeArrangerAccess implements ArrangerModule.Access {
             Object trackProxy, JsonObject ref, String op, JsonObject args, Runnable check, Runnable beforeWrite) {
         String trackId = ref.getAsJsonObject("track").get("id").getAsString(),
                 expectedName = ref.get("name").getAsString();
-        double expectedStart = ref.get("startBeats").getAsDouble();
+        double expectedStart = ref.get("start").getAsDouble();
         Lane lane = new Lane(trackProxy, trackId, check);
         List<Object> before = lane.clips();
         int clipIndex = locate(before, ref, expectedStart, expectedName);
@@ -437,16 +438,16 @@ public final class NativeArrangerAccess implements ArrangerModule.Access {
         if (args.has("expect")) {
             JsonObject observed = new JsonObject();
             observed.addProperty("name", expectedName);
-            observed.addProperty("lengthBeats", l);
+            observed.addProperty("length", l);
             ValueMatch.requireExpected(
                     args.getAsJsonObject("expect"),
                     observed,
-                    Map.of("name", ValueMatch.EXACT, "lengthBeats", ValueMatch.raw(EPS)));
+                    Map.of("name", ValueMatch.EXACT, "length", ValueMatch.raw(EPS)));
         }
         JsonObject previous = describe(clip, clipIndex);
         switch (op) {
             case "move": {
-                double to = args.get("startBeats").getAsDouble();
+                double to = args.get("start").getAsDouble();
                 if (near(to, s)) return already(lane, op, clip, previous);
                 requireFree(lane, before, clip, to, to + l);
                 lane.guard(check);
@@ -459,7 +460,7 @@ public final class NativeArrangerAccess implements ArrangerModule.Access {
                 return written(lane, op, clip, previous);
             }
             case "resize": {
-                double to = args.get("lengthBeats").getAsDouble();
+                double to = args.get("length").getAsDouble();
                 if (near(to, l)) return already(lane, op, clip, previous);
                 requireFree(lane, before, clip, s, s + to);
                 lane.guard(check);

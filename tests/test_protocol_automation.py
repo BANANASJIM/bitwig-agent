@@ -28,7 +28,7 @@ def test_get_takes_a_track_or_grid_parameter_ref_and_a_range():
     for target in (VOLUME, PAN, GRID):
         args = {"target": target}
         assert validate_call("automation.points.get", args)[0] == args
-    ranged = {"target": PAN, "range": {"startBeat": 8, "endBeat": 8}}
+    ranged = {"target": PAN, "range": {"start": 8, "end": 8}}
     assert validate_call("automation.points.get", ranged)[0] == ranged
 
 
@@ -63,9 +63,9 @@ def test_a_device_owned_parameter_is_unsupported_scope():
 
 def test_set_whole_lane_range_and_clear():
     assert validate_call("automation.points.set", SET)[0] == SET
-    ranged = {**SET, "target": GRID, "range": {"startBeat": 0, "endBeat": 4.5}}
+    ranged = {**SET, "target": GRID, "range": {"start": 0, "end": 4.5}}
     assert validate_call("automation.points.set", ranged)[0] == ranged
-    clear = {**SET, "points": [], "range": {"startBeat": 2, "endBeat": 3}}
+    clear = {**SET, "points": [], "range": {"start": 2, "end": 3}}
     assert validate_call("automation.points.set", clear)[0]["points"] == []
     unguarded = {key: value for key, value in SET.items() if key != "expect"}
     assert validate_call("automation.points.set", unguarded)[0] == unguarded
@@ -79,8 +79,8 @@ def test_set_whole_lane_range_and_clear():
         {"points": [{**SET["points"][0], "value": 1.5}]},
         {"points": [{**SET["points"][0], "interpolation": "bezier"}]},
         {"points": [{**SET["points"][0], "curve": 0.5}]},
-        {"range": {"startBeat": 1, "endBeat": 2}},
-        {"range": {"startBeat": 5, "endBeat": 4}},
+        {"range": {"start": 1, "end": 2}},
+        {"range": {"start": 5, "end": 4}},
         {"expect": {"pointsHash": EMPTY_HASH.upper()}},
         {"expect": {"pointsHash": "abc"}},
         {"expect": {}},

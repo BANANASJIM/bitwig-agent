@@ -45,7 +45,7 @@ Offline interface discovery is also available without the extension:
 ```sh
 pixi run bitwig-agent --help
 pixi run bitwig-agent tracks set --help
-pixi run bitwig-agent help notes.edit
+pixi run bitwig-agent help notes.set
 ```
 
 These commands describe the implemented surface, not a successful native operation. `status` and other host-facing commands require the running extension.
@@ -103,7 +103,7 @@ pixi run python scripts/smoke-native.py \
   --allow-native --config /absolute/path/native-preflight.json
 ```
 
-This is a read-only MCP preflight, not music, GUI, write or persistence E2E. It performs no launch, installation, GUI input, screenshot or automatic retry. It excludes `notes.read` because that call selects a clip. It checks loopback socket ownership, including Linux IPv4-mapped TCP6 entries; a matching title or project name is **not** proof of the loaded full project path. Exact file identity and actual reopen behavior need independent evidence. The local endpoint is unauthenticated: keep it on trusted loopback and never forward it to a network.
+This is a read-only MCP preflight, not music, GUI, write or persistence E2E. It performs no launch, installation, GUI input, screenshot or automatic retry. It excludes `notes.get` because that call selects a clip. It checks loopback socket ownership, including Linux IPv4-mapped TCP6 entries; a matching title or project name is **not** proof of the loaded full project path. Exact file identity and actual reopen behavior need independent evidence. The local endpoint is unauthenticated: keep it on trusted loopback and never forward it to a network.
 
 Before any native operation, designate one exclusive writer and freshly identify the disposable project, process lifetime, actual window, endpoint and extension build. Preserve user projects; display isolation does not imply profile/audio isolation. Version `0.2.0` requires Bitwig **6.1.4** and loaded host JAR SHA-256 `77a50264156a9f79c925fa85e0456720ce157bfa10e2503d6049e2f733af4ba6` for private Grid/modulator access; the older `0.1.2` release retains its 6.1.3 gate. Inspect each independent read/write gate; do not bypass mismatches or substitute an unrelated installed JAR's hash.
 
@@ -119,7 +119,7 @@ An isolated Linux / Bitwig **6.1.4 / API 25** session exercised the public clip,
 
 The original combined stop/seek case **failed**: stop was observed, position remained nonzero, and the outcome was `unknown`. Its writer stopped and the failure was retained. The fix observes the asynchronous stop before dispatching remaining fields, under one bounded observation window and existing cancellation/safety guards. Regression tests fail against the earlier code and cover delayed stop, cancellation, a changed safety mode and an already-expired observation window.
 
-The transport candidate's independent native case observed quantized launch → playing, quantized clip stop → stopped while global transport kept running, then exactly one `transport.set` with `playing:false, positionBeats:0`. Both fields reported `observer_after_write`; independent reads remained stopped at zero, including one 2.57 seconds later. The actual GUI showed `1.1.1.00 / 0:00.000`; all three recording/automation flags remained false and the target mix was unchanged.
+The transport candidate's independent native case observed quantized launch → playing, quantized clip stop → stopped while global transport kept running, then exactly one `transport.set` with `playing:false, position:0`. Both fields reported `observer_after_write`; independent reads remained stopped at zero, including one 2.57 seconds later. The actual GUI showed `1.1.1.00 / 0:00.000`; all three recording/automation flags remained false and the target mix was unchanged.
 
 This was a muted, bounded production-path observation, **not audio audition, universal timing proof or private Grid acceptance**. That earlier candidate's private gate rejected 6.1.4; the subsequent private-binding cutover is recorded separately below. Raw fixture/project/screenshots remain private rather than being redistributed. The transport fix is included in `0.2.0`, not the older `0.1.2` release. These observations belong to the recorded pre-release candidate, not a new native run of the release artifact.
 

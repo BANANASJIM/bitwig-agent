@@ -47,14 +47,14 @@ public final class ClipModule implements HostModule {
             List.of("launchQuantization", "launchMode", "useLoopStartAsQuantizationReference");
     private static final Map<String, ValueMatch> EXPECT = Map.of(
             "name", ValueMatch.EXACT,
-            "lengthBeats", ValueMatch.EXACT,
+            "length", ValueMatch.EXACT,
             "loop", ValueMatch.EXACT,
             "nextAction", ValueMatch.EXACT,
             "nextActionEnabled", ValueMatch.EXACT,
             "nextActionLinkToLoop", ValueMatch.EXACT,
             "nextActionLoopCount", ValueMatch.EXACT,
-            "nextActionDelayBeats", ValueMatch.raw(1e-8));
-    private static final Set<String> LOOP_KEYS = Set.of("loopLengthBeats", "loopStartBeats", "fields");
+            "nextActionDelay", ValueMatch.raw(1e-8));
+    private static final Set<String> LOOP_KEYS = Set.of("loopLength", "loopStart", "fields");
 
     private final LauncherState state;
     private final Scheduler scheduler;
@@ -119,11 +119,11 @@ public final class ClipModule implements HostModule {
 
     private static void validateInsert(JsonObject p) {
         boolean slot = isSlot(p.getAsJsonObject("to"));
-        if (slot ? !p.has("loop") || p.has("lengthBeats") : !p.has("lengthBeats") || p.has("loop"))
+        if (slot ? !p.has("loop") || p.has("length") : !p.has("length") || p.has("loop"))
             throw Errors.invalid(
                     slot
-                            ? "a launcher slot takes loop:{lengthBeats}, not lengthBeats"
-                            : "an arranger position takes lengthBeats, not loop");
+                            ? "a launcher slot takes loop:{length}, not length"
+                            : "an arranger position takes length, not loop");
         if (!p.has("notes")) {
             if (p.has("channel") || p.has("detail"))
                 throw Errors.invalid("channel and detail are only valid together with notes");
@@ -131,7 +131,7 @@ public final class ClipModule implements HostModule {
         }
         if (!slot) {
             if (p.has("detail")) throw Errors.invalid("detail applies to launcher slots only");
-            ArrangerModule.notes(p.getAsJsonArray("notes"), p.get("lengthBeats").getAsDouble());
+            ArrangerModule.notes(p.getAsJsonArray("notes"), p.get("length").getAsDouble());
             return;
         }
         noteParts(p);
@@ -143,7 +143,7 @@ public final class ClipModule implements HostModule {
                 p,
                 NoteGrid.setEdits(p.getAsJsonArray("notes")),
                 "notes",
-                p.getAsJsonObject("loop").get("lengthBeats").getAsBigDecimal());
+                p.getAsJsonObject("loop").get("length").getAsBigDecimal());
     }
 
     private static void validateSet(JsonObject p) {
@@ -151,7 +151,7 @@ public final class ClipModule implements HostModule {
         List<String> launcherOnly = new ArrayList<>(List.of("color", "loop"));
         launcherOnly.addAll(NEXT_ACTION);
         launcherOnly.addAll(LAUNCH_FIELDS);
-        for (String key : arranger ? launcherOnly : List.of("lengthBeats")) {
+        for (String key : arranger ? launcherOnly : List.of("length")) {
             if (p.has(key))
                 throw Errors.notApplied(
                         Reason.UNSUPPORTED_SCOPE,
@@ -221,8 +221,8 @@ public final class ClipModule implements HostModule {
                 JsonObject out = new JsonObject();
                 out.add("ref", state.clipRef(target));
                 JsonObject loop = new JsonObject();
-                loop.add("lengthBeats", result.get("loopLengthBeats"));
-                loop.add("startBeats", result.get("loopStartBeats"));
+                loop.add("length", result.get("loopLength"));
+                loop.add("start", result.get("loopStart"));
                 out.add("loop", loop);
                 for (Map.Entry<String, JsonElement> e : result.entrySet())
                     if (!LOOP_KEYS.contains(e.getKey()) && !e.getKey().equals("name"))
@@ -239,8 +239,8 @@ public final class ClipModule implements HostModule {
         arranger.create(
                 op,
                 to.getAsJsonObject("track"),
-                to.get("startBeats").getAsDouble(),
-                p.get("lengthBeats").getAsDouble(),
+                to.get("start").getAsDouble(),
+                p.get("length").getAsDouble(),
                 p.get("name").getAsString(),
                 p.has("notes") ? p.getAsJsonArray("notes") : null,
                 p.has("channel") ? p.get("channel").getAsInt() : 0,
@@ -263,7 +263,7 @@ public final class ClipModule implements HostModule {
             }
             op.markDispatched();
             state.beginMutation(target, "clips.insert");
-            int length = p.getAsJsonObject("loop").get("lengthBeats").getAsInt();
+            int length = p.getAsJsonObject("loop").get("length").getAsInt();
             target.slot.api.createEmptyClip(length);
             long end = state.until(op);
             state.awaitGuarded(
@@ -289,7 +289,7 @@ public final class ClipModule implements HostModule {
      * step and without selecting anything; the clip is then bound and read back like a public insert.
      */
     private void insertNative(HostOperation op, LauncherState.Target target, JsonObject p, NativeNotes.Access access) {
-        int length = p.getAsJsonObject("loop").get("lengthBeats").getAsInt();
+        int length = p.getAsJsonObject("loop").get("length").getAsInt();
         String id = target.id(), name = p.get("name").getAsString();
         NoteModule.Planned planned = new NoteModule.Planned(p.has("notes") ? noteParts(p) : List.of());
         List<NativeNotes.Cell> cells = planned.cells();
@@ -400,7 +400,7 @@ public final class ClipModule implements HostModule {
             state.finishMutation();
         }
         if (matches && p.has("notes")) {
-            // Clip creation is complete and released. The note write is an ordinary notes.edit child sharing the
+            // Clip creation is complete and released. The note write is an ordinary notes.set child sharing the
             // deadline; its failure is reported inside noteWrite and never discards the observed create.
             HostOperation child = new HostOperation(op.deadline);
             state.selection.handOff(child);
@@ -553,7 +553,7 @@ public final class ClipModule implements HostModule {
                         Reason.UNSUPPORTED_SCOPE,
                         "The source and target slot must be within " + HostLimits.SCENES
                                 + " scenes of each other: copy via an empty slot within " + HostLimits.SCENES
-                                + " scenes, or notes.read + clips.insert {notes} for a MIDI clip.");
+                                + " scenes, or notes.get + clips.insert {notes} for a MIDI clip.");
             int offset = Math.min(Math.min(source, target), Math.max(0, window.sceneCount() - HostLimits.SCENES));
             state.targets.lease.enter(op, offset, false, false, () -> {
                 LauncherTargets.Loc from1 = state.targets.clip(from, offset), to1 = state.targets.slot(to, offset);
@@ -570,7 +570,7 @@ public final class ClipModule implements HostModule {
             LauncherState.ready(source.slot);
             LauncherState.requireContent(source.slot);
             state.requireResolved(source.id(), source.scene());
-            arranger.copyFromLauncher(op, source, to.get("startBeats").getAsDouble(), op.result::complete);
+            arranger.copyFromLauncher(op, source, to.get("start").getAsDouble(), op.result::complete);
         });
     }
 
@@ -627,7 +627,7 @@ public final class ClipModule implements HostModule {
 
     private void move(HostOperation op, JsonObject p) {
         JsonObject args = new JsonObject();
-        args.add("startBeats", p.getAsJsonObject("to").get("startBeats"));
+        args.add("start", p.getAsJsonObject("to").get("start"));
         arranger.edit(op, p.getAsJsonObject("target"), "move", args, op.result::complete);
     }
 
@@ -638,7 +638,7 @@ public final class ClipModule implements HostModule {
         JsonObject expect = p.has("expect") ? p.getAsJsonObject("expect") : null;
         JsonObject fields = new JsonObject();
         Deque<String> keys = new ArrayDeque<>();
-        for (String key : List.of("lengthBeats", "name")) if (p.has(key)) keys.add(key);
+        for (String key : List.of("length", "name")) if (p.has(key)) keys.add(key);
         List<String> order = new ArrayList<>(keys);
         JsonObject[] last = new JsonObject[1];
         Runnable[] next = new Runnable[1];
@@ -658,7 +658,7 @@ public final class ClipModule implements HostModule {
                         key,
                         Results.field(
                                 p.get(key),
-                                clip == null ? null : clip.get(key.equals("name") ? "name" : "lengthBeats"),
+                                clip == null ? null : clip.get(key.equals("name") ? "name" : "length"),
                                 Results.outcomeOf(result),
                                 null));
                 if (Results.outcomeOf(result).succeeded()) next[0].run();
@@ -748,7 +748,7 @@ public final class ClipModule implements HostModule {
         }
         settings.run(op, target, new JsonObject(), false, result -> {
             JsonObject loop = new JsonObject();
-            loop.add("lengthBeats", result.get("loopLengthBeats"));
+            loop.add("length", result.get("loopLength"));
             observed.add("loop", loop);
             for (String key : NEXT_ACTION) observed.add(key, result.get(key));
             ValueMatch.requireExpected(expect, observed, EXPECT);
@@ -850,8 +850,8 @@ public final class ClipModule implements HostModule {
                     done));
         }
         if (p.has("loop"))
-            queue.add(done -> resize(
-                    op, target, p.getAsJsonObject("loop").get("lengthBeats").getAsDouble(), done));
+            queue.add(done ->
+                    resize(op, target, p.getAsJsonObject("loop").get("length").getAsDouble(), done));
         drain(queue, fields, finish);
     }
 
@@ -964,10 +964,10 @@ public final class ClipModule implements HostModule {
     private void resize(HostOperation op, LauncherState.Target target, double length, Consumer<JsonObject> done) {
         state.cursorGuard(op, target);
         JsonObject requested = new JsonObject();
-        requested.addProperty("lengthBeats", length);
+        requested.addProperty("length", length);
         java.util.function.Supplier<JsonElement> observed = () -> {
             JsonObject loop = new JsonObject();
-            loop.addProperty("lengthBeats", state.clip.getLoopLength().get());
+            loop.addProperty("length", state.clip.getLoopLength().get());
             return loop;
         };
         double start = state.clip.getLoopStart().get();
@@ -1146,7 +1146,7 @@ public final class ClipModule implements HostModule {
         }
     }
 
-    /** Onset cells of the window as x*128+pitch -> {velocity, duration}; the same bounded read as notes.read. */
+    /** Onset cells of the window as x*128+pitch -> {velocity, duration}; the same bounded read as notes.get. */
     private Map<Integer, double[]> onsets(NoteGrid.Window w) {
         Map<Integer, double[]> cells = new TreeMap<>();
         for (int x = 0; x < w.steps; x++)

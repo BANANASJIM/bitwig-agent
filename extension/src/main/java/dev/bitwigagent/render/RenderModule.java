@@ -104,7 +104,7 @@ public final class RenderModule implements HostModule, JobsModule.Source {
 
     static final String SWITCH_FIX =
             "actions.invoke actionId=switch_playback_to_arranger_for_all_tracks (every track follows the arranger again)";
-    static final String COPY_FIX = "clips.copy its launcher clip onto the arranger (to {track, startBeats})";
+    static final String COPY_FIX = "clips.copy its launcher clip onto the arranger (to {track, start})";
 
     public interface Access {
         void execute(Runnable work);
@@ -338,10 +338,9 @@ public final class RenderModule implements HostModule, JobsModule.Source {
     }
 
     private static void range(JsonObject p) {
-        double start = p.get("startBeats").getAsDouble(),
-                end = p.get("endBeats").getAsDouble();
+        double start = p.get("start").getAsDouble(), end = p.get("end").getAsDouble();
         if (end <= start || end - start > MAX_LENGTH)
-            throw Errors.invalid("endBeats must be after startBeats, at most " + (int) MAX_LENGTH + " beats later.");
+            throw Errors.invalid("end must be after start, at most " + (int) MAX_LENGTH + " beats later.");
     }
 
     @Override
@@ -411,8 +410,7 @@ public final class RenderModule implements HostModule, JobsModule.Source {
             proxies.add(master ? null : window.bank().getItemAt(slots[i]));
             if (!master) seen[i] = epochs.get(slots[i]);
         }
-        double start = p.get("startBeats").getAsDouble(),
-                end = p.get("endBeats").getAsDouble();
+        double start = p.get("start").getAsDouble(), end = p.get("end").getAsDouble();
         String tap = p.has("tap") ? p.get("tap").getAsString() : "post_fader";
         Job next;
         if (export) {
@@ -532,8 +530,8 @@ public final class RenderModule implements HostModule, JobsModule.Source {
     static boolean overlaps(JsonArray rows, double start, double end) {
         for (JsonElement element : rows) {
             JsonObject row = element.getAsJsonObject();
-            double from = row.get("startBeats").getAsDouble();
-            if (from < end && from + row.get("lengthBeats").getAsDouble() > start) return true;
+            double from = row.get("start").getAsDouble();
+            if (from < end && from + row.get("length").getAsDouble() > start) return true;
         }
         return false;
     }
@@ -634,14 +632,14 @@ public final class RenderModule implements HostModule, JobsModule.Source {
                     JsonObject c = after.rows.get(k).getAsJsonObject();
                     int old = indexOf(before.natives, after.natives.get(k));
                     if (old < 0 || !sameSpan(before.rows.get(old).getAsJsonObject(), c)) trackChanged = true;
-                    boolean overlaps = c.get("startBeats").getAsDouble() < current.end - EPS
-                            && current.start < c.get("endBeats").getAsDouble() - EPS;
+                    boolean overlaps = c.get("start").getAsDouble() < current.end - EPS
+                            && current.start < c.get("end").getAsDouble() - EPS;
                     if (!overlaps) continue;
                     inRange++;
                     if (old < 0
                             && "audio".equals(str(c, "kind"))
-                            && near(c.get("startBeats").getAsDouble(), current.start)
-                            && near(c.get("endBeats").getAsDouble(), current.end)) added = c;
+                            && near(c.get("start").getAsDouble(), current.start)
+                            && near(c.get("end").getAsDouble(), current.end)) added = c;
                 }
                 changed |= trackChanged;
                 if (added == null) problem = trackChanged ? "no_new_audio_clip_at_requested_range" : "lane_unchanged";
@@ -652,7 +650,7 @@ public final class RenderModule implements HostModule, JobsModule.Source {
                             "clipRef",
                             Refs.arrangerClip(
                                     current.sources.get(i).getAsJsonObject(),
-                                    added.get("startBeats").getAsDouble(),
+                                    added.get("start").getAsDouble(),
                                     str(added, "name") == null ? "" : str(added, "name")));
                 }
                 if (problem != null) {
@@ -674,8 +672,8 @@ public final class RenderModule implements HostModule, JobsModule.Source {
     }
 
     private static boolean sameSpan(JsonObject a, JsonObject b) {
-        return near(a.get("startBeats").getAsDouble(), b.get("startBeats").getAsDouble())
-                && near(a.get("lengthBeats").getAsDouble(), b.get("lengthBeats").getAsDouble());
+        return near(a.get("start").getAsDouble(), b.get("start").getAsDouble())
+                && near(a.get("length").getAsDouble(), b.get("length").getAsDouble());
     }
 
     private static String str(JsonObject o, String key) {
@@ -781,8 +779,8 @@ public final class RenderModule implements HostModule, JobsModule.Source {
 
     private void common(JsonObject result, Job current, Access bridge) {
         result.addProperty("method", current.method);
-        result.addProperty("startBeats", current.start);
-        result.addProperty("endBeats", current.end);
+        result.addProperty("start", current.start);
+        result.addProperty("end", current.end);
         result.addProperty("tap", current.tap);
         if (current.export != null) {
             result.addProperty("fileType", current.export.fileType);

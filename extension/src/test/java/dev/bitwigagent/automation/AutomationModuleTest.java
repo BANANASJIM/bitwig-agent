@@ -298,8 +298,8 @@ public final class AutomationModuleTest {
 
     static JsonObject range(double start, double end) {
         JsonObject r = new JsonObject();
-        r.addProperty("startBeat", start);
-        r.addProperty("endBeat", end);
+        r.addProperty("start", start);
+        r.addProperty("end", end);
         return r;
     }
 
