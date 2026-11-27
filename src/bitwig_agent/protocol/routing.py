@@ -169,6 +169,15 @@ SPECS: dict[str, ToolSpec] = {
             },
             {
                 "target": EXAMPLE_TRACK,
+                "output": {"kind": "none"},
+                "input": {"kind": "none"},
+                "expect": {
+                    "output": {"kind": "track_audio_input", "track": EXAMPLE_OTHER},
+                    "input": {"kind": "post_fader", "track": EXAMPLE_OTHER},
+                },
+            },
+            {
+                "target": EXAMPLE_TRACK,
                 "input": {"kind": "all_ins"},
                 "expect": {
                     "input": {
@@ -208,7 +217,11 @@ SPECS: dict[str, ToolSpec] = {
         DEVICES_SIDECHAIN_SET_DESCRIPTION,
         False,
         examples=(
-            {"target": EXAMPLE_SIDECHAIN, "source": {"kind": "none"}},
+            {
+                "target": EXAMPLE_SIDECHAIN,
+                "source": {"kind": "none"},
+                "expect": {"source": {"kind": "pre_fader", "track": EXAMPLE_OTHER}},
+            },
             {
                 "target": EXAMPLE_SIDECHAIN,
                 "source": {"kind": "pre_fader", "track": EXAMPLE_OTHER},
