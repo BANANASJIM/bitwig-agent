@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import dev.bitwigagent.core.RangeEdit;
+import dev.bitwigagent.core.RpcException;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -21,6 +22,7 @@ import net.jqwik.api.Provide;
 import net.jqwik.api.constraints.DoubleRange;
 import net.jqwik.api.constraints.IntRange;
 import net.jqwik.api.constraints.Scale;
+import net.jqwik.api.statistics.Statistics;
 
 /**
  * The convergence properties of the range rule (high-frequency representation design §4.1): a read written back
@@ -169,12 +171,52 @@ final class RangeEditPropertyTest {
         JsonObject p = NoteModuleTest.target(f, 0);
         p.add("range", NoteModuleTest.range(2, 4));
         JsonArray listed = new JsonArray();
-        for (Note n : withoutOverlaps(inside(request, range))) listed.add(n.json());
+        for (Note n : withoutOverlaps(inside(request, range)))
+            listed.add(Note.ofTicks(n.channel, n.pitch, n.beat, Math.min(n.duration, range.end - n.beat), n.velocity)
+                    .json());
         p.add("notes", listed);
         dev.bitwigagent.core.HostOperation op = f.startAndDrain("notes.set", p);
-        if (op.result.isCompletedExceptionally()) return; // refused by a clip rule: nothing was written
+        boolean refused = op.result.isCompletedExceptionally(); // a clip rule refused it: nothing was written
+        Statistics.label("refused").collect(refused);
+        Statistics.label("refused").coverage(c -> c.check(false).percentage(share -> share >= 50));
+        if (refused) {
+            assertEquals(set(before), set(f.clipNotes(0)));
+            return;
+        }
         List<Note> outside = inside(before, n -> !range.test(n));
         assertEquals(set(outside), set(inside(f.clipNotes(0), n -> !range.test(n))));
+    }
+
+    /** Listed notes without velocity or duration update only the given field, remove nothing, and need a note. */
+    @Property
+    void partialNotesUpdateOnlyTheGivenFieldAndNeedAnExistingNote(
+            @ForAll("clip") List<Note> clip, @ForAll @IntRange(min = 1, max = 127) int velocity) {
+        List<Note> observed = withoutOverlaps(clip);
+        JsonArray patches = new JsonArray();
+        for (int i = 0; i < observed.size(); i += 2) {
+            Note n = observed.get(i);
+            JsonObject patch = new JsonObject();
+            patch.addProperty("beat", n.beatValue());
+            patch.addProperty("pitch", n.pitch);
+            patch.addProperty("channel", n.channel);
+            patch.addProperty("velocity", velocity);
+            patches.add(patch);
+        }
+        RangeEdit.Change<Note> change = new NotePlan(NotePlan.listed(patches), null).plan(observed, Long.MAX_VALUE);
+        assertTrue(change.remove.isEmpty() && change.insert.isEmpty());
+        assertEquals(patches.size(), change.update.size() + change.unchanged);
+        for (RangeEdit.Update<Note> u : change.update) {
+            assertEquals(u.before.duration, u.after.duration, "an omitted duration is kept");
+            assertEquals(velocity, u.after.velocity);
+        }
+        JsonObject fresh = new JsonObject();
+        fresh.addProperty("beat", 100);
+        fresh.addProperty("pitch", 60);
+        fresh.addProperty("velocity", velocity);
+        patches.add(fresh);
+        RpcException error = assertThrows(
+                RpcException.class, () -> new NotePlan(NotePlan.listed(patches), null).plan(observed, Long.MAX_VALUE));
+        assertTrue(error.getMessage().contains("is a new note"), error.getMessage());
     }
 
     private static List<Note> inside(List<Note> notes, java.util.function.Predicate<Note> keep) {

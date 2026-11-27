@@ -137,7 +137,11 @@ public final class NoteModuleTest {
         assertEquals(f.clip(0), read.getAsJsonObject("ref"));
         assertFalse(read.get("exact").getAsBoolean());
         assertEquals(.125, read.get("onsetResolution").getAsDouble(), "a 4-beat loop reads at 1/32 note");
-        assertTrue(read.get("complete").getAsBoolean());
+        assertFalse(read.get("complete").getAsBoolean(), "the public grid cannot see past the loop end");
+        assertTrue(read.get("incompleteReason").getAsString().contains("the loop only (up to beat 4)"));
+        JsonObject inLoop = target(f, 0);
+        inLoop.add("range", range(0, 4));
+        assertTrue(f.call("notes.get", inLoop).get("complete").getAsBoolean(), "a range inside the loop is complete");
         assertEquals(4, read.get("count").getAsInt());
         JsonArray notes = read.getAsJsonArray("notes");
         assertEquals(note(0, 60, 100, 1), notes.get(0));
@@ -164,7 +168,7 @@ public final class NoteModuleTest {
         JsonObject far = target(f, 0);
         far.add("range", range(0, 100000));
         JsonObject loop = f.call("notes.get", far);
-        assertTrue(loop.get("complete").getAsBoolean(), "a range past the loop end is read up to it");
+        assertFalse(loop.get("complete").getAsBoolean(), "a range past the loop end is read up to it, incomplete");
         assertEquals(5, loop.get("count").getAsInt());
     }
 
@@ -176,6 +180,7 @@ public final class NoteModuleTest {
         f.drain(op);
         JsonObject read = op.result.join();
         assertFalse(read.get("complete").getAsBoolean());
+        assertTrue(read.get("incompleteReason").getAsString().startsWith("Too little time"));
     }
 
     // ---- writes ----
@@ -217,11 +222,11 @@ public final class NoteModuleTest {
     }
 
     @Test
-    void aReadWrittenBackIsAlreadyMatchedAndAllWithNoNotesClears() {
+    void aReadWrittenBackIsAlreadyMatchedAndTheLoopWithNoNotesClears() {
         LauncherFake f = riff();
         JsonObject read = f.call("notes.get", target(f, 0));
         JsonObject p = target(f, 0);
-        p.addProperty("range", "all");
+        p.add("range", range(0, 4));
         p.add("notes", read.getAsJsonArray("notes"));
         JsonObject echo = f.call("notes.set", p);
         assertEquals("already_matched", echo.get("outcome").getAsString());
@@ -233,11 +238,69 @@ public final class NoteModuleTest {
     }
 
     @Test
+    void theWholeClipAndRangesPastTheLoopAreNotWrittenWithoutTheNativeBinding() {
+        LauncherFake f = riff();
+        JsonObject all = set(f, 0, "all");
+        HostOperation op = f.startAndDrain("notes.set", all);
+        assertTrue(assertRpcError("native_unavailable", op)
+                .getMessage()
+                .contains("give range {start: 0, end: <loop end>}"));
+        assertFalse(op.dispatched());
+        JsonObject past = f.call("notes.set", set(f, 0, range(0, 8), note(0, 60, 100, 1)));
+        assertEquals("unknown", past.get("outcome").getAsString(), "refused after selecting the clip");
+        assertTrue(past.get("message").getAsString().contains("lengthen the loop (clips.set)"), past.toString());
+        assertEquals(0, f.writes);
+    }
+
+    @Test
+    void aRangeEndInsideACoarseCellLeavesTheNoteJustPastIt() {
+        LauncherFake f = riff();
+        f.put(0, 0, 1.1, 72, 70, .25);
+        JsonObject out = f.call("notes.set", set(f, 0, range(1, 1.0078125), note(1, 64, 90, 1)));
+        assertEquals("already_matched", out.get("outcome").getAsString(), out.toString());
+        assertNotNull(f.at(0, 0, 1.1, 72), "beat 1.1 lies past range.end 1.0078125 and stays");
+        HostOperation offGrid = f.startAndDrain("notes.set", set(f, 0, range(1, 1.003), note(1, 64, 90, 1)));
+        assertTrue(assertRpcError("native_unavailable", offGrid).getMessage().contains("range.end 1.003"));
+        assertFalse(offGrid.dispatched());
+    }
+
+    @Test
+    void anExistingOffGridNoteIsNotTakenForAListedOne() {
+        LauncherFake f = new LauncherFake();
+        clipAt(f, 0);
+        f.put(0, 0, .3, 60, 90, .25);
+        JsonObject out = f.call("notes.set", set(f, 0, range(0, 1), note(.25, 60, 90, .25)));
+        assertEquals(obj("{\"inserted\":1,\"updated\":0,\"removed\":1,\"unchanged\":0}"), out.get("summary"));
+        assertNotNull(f.at(0, 0, .25, 60));
+        assertNull(f.at(0, 0, .3, 60), "the note at 0.3 sat in the range and was not listed");
+    }
+
+    @Test
+    void aNoteSustainingIntoTheRangeFromBeforeItBlocksAnOverlappingWrite() {
+        LauncherFake f = riff();
+        f.put(0, 0, 2, 50, 90, 1.5);
+        JsonObject out = f.call("notes.set", set(f, 0, range(3, 4), note(3, 50, 90, .5)));
+        assertEquals("unknown", out.get("outcome").getAsString());
+        assertTrue(
+                out.get("message").getAsString().contains("a note from before beat 3 on pitch 50 sustains to beat 3.5"),
+                out.toString());
+        assertEquals(0, f.writes);
+        assertEquals(
+                "applied",
+                f.call("notes.set", set(f, 0, range(3, 4), note(3.5, 50, 90, .5)))
+                        .get("outcome")
+                        .getAsString(),
+                "a note after the sustain ends is written");
+    }
+
+    @Test
     void theClipRulesAreJudgedAgainstTheNotesLeftInPlace() {
         LauncherFake f = riff();
         JsonObject overlap = f.call("notes.set", set(f, 0, null, note(.5, 60, 90, .25)));
         assertEquals("unknown", overlap.get("outcome").getAsString(), "a refusal after selecting is unknown");
-        assertTrue(overlap.get("message").getAsString().contains("sustains to beat 1"), overlap.toString());
+        assertTrue(
+                overlap.get("message").getAsString().contains("a note from before beat 0.5 on pitch 60 still sounds"),
+                overlap.toString());
         JsonObject partial = new JsonObject();
         partial.addProperty("beat", 3);
         partial.addProperty("pitch", 50);
@@ -254,7 +317,9 @@ public final class NoteModuleTest {
         LauncherFake f = riff();
         HostOperation op = f.startAndDrain("notes.set", set(f, 0, null, note(.3, 60, 90, .25)));
         RpcException error = assertRpcError("native_unavailable", op);
-        assertTrue(error.getMessage().contains("notes[0] beat 0.3 is not on the 1/128-beat grid"), error.getMessage());
+        assertTrue(
+                error.getMessage().contains("1/128-beat grid, and these are not on it: notes[0] beat 0.3."),
+                error.getMessage());
         assertFalse(op.dispatched());
     }
 

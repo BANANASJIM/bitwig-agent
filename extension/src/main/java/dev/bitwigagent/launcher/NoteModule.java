@@ -50,24 +50,12 @@ public final class NoteModule implements HostModule {
 
     @Override
     public void validate(String method, JsonObject p) {
-        requireRange(p);
+        NoteRange.require(p);
         if (!method.equals("notes.set")) return;
         if (!p.has("range") && p.getAsJsonArray("notes").size() == 0)
             throw Errors.invalid(
                     "notes is empty: give range (e.g. \"all\") to clear that range, or list notes to write");
         NotePlan.rules(NotePlan.listed(p.getAsJsonArray("notes")), NoteRange.of(p), null);
-    }
-
-    /** The cross-field rules of {@code range} the schema cannot say. */
-    private static void requireRange(JsonObject p) {
-        if (!p.has("range") || !p.get("range").isJsonObject()) return;
-        JsonObject r = p.getAsJsonObject("range");
-        if (r.get("end").getAsDouble() <= r.get("start").getAsDouble())
-            throw Errors.invalid("range.end must be greater than range.start");
-        if (r.has("pitches")
-                && r.getAsJsonArray("pitches").get(0).getAsInt()
-                        > r.getAsJsonArray("pitches").get(1).getAsInt())
-            throw Errors.invalid("range.pitches is [low, high] with low <= high");
     }
 
     @Override
@@ -208,7 +196,10 @@ public final class NoteModule implements HostModule {
                 "loop",
                 loop(state.clip.getLoopStart().get(), state.clip.getLoopLength().get()));
         listing(out, range, read.notes);
-        if (!read.complete) out.addProperty("complete", false);
+        if (read.incomplete != null) {
+            out.addProperty("complete", false);
+            out.addProperty("incompleteReason", read.incomplete);
+        }
         out.addProperty("exact", false);
         out.addProperty("onsetResolution", read.size);
         return out;

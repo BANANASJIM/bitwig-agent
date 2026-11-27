@@ -1,3 +1,5 @@
+import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -400,3 +402,22 @@ def test_a_range_reports_every_listed_note_outside_it():
     assert "notes[1] beat 5 is outside range [1, 4): move it inside, or raise range.end above 5" in text
     assert "notes[2] pitch 70 is outside range.pitches [60, 62]: move it inside, or widen range.pitches" in text
     assert "is empty" in message("notes.set", {"target": CLIP_REF, "notes": []})
+
+
+SHARED_VECTORS = json.loads((Path(__file__).parent / "fixtures/note_rules.json").read_text())
+
+
+@pytest.mark.parametrize("case", SHARED_VECTORS, ids=lambda case: case["name"])
+def test_shared_note_rule_vectors(case):
+    """The same file runs in the extension (NoteRulesVectorTest): same verdict, same text."""
+    params = case["params"]
+    if case["method"] == "notes.set":
+        args = {"target": CLIP_REF, **params}
+    else:
+        args = {"to": SLOT, "loop": {"length": params["length"]}, "name": "x", "notes": params["notes"]}
+    if case["error"] is None:
+        validate_call(case["method"], args)
+        return
+    with pytest.raises(ValidationError) as error:
+        validate_call(case["method"], args)
+    assert error.value.errors()[0]["msg"].removeprefix("Value error, ") == case["error"]

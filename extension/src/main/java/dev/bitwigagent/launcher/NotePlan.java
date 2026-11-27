@@ -34,8 +34,7 @@ public final class NotePlan {
             this.beat = Note.ticks(n.get("beat").getAsDouble());
             this.shown = n.get("beat").getAsBigDecimal();
             this.velocity = n.has("velocity") ? n.get("velocity").getAsInt() : null;
-            this.duration =
-                    n.has("duration") ? Math.max(1, Note.ticks(n.get("duration").getAsDouble())) : null;
+            this.duration = n.has("duration") ? Note.ticks(n.get("duration").getAsDouble()) : null;
             this.requestedEnd = n.has("duration")
                     ? n.get("beat").getAsBigDecimal().add(n.get("duration").getAsBigDecimal())
                     : null;
@@ -189,18 +188,19 @@ public final class NotePlan {
                         i,
                         n.beat >= loopEnd
                                 ? "notes[" + i + "] starts at beat " + plain(n.beat) + ", at or past the clip loop end "
-                                        + plain(loopEnd)
+                                        + plain(loopEnd) + ": lengthen the loop (clips.set) first"
                                 : "notes[" + i + "] ends at beat " + plain(n.end()) + ", past the clip loop end "
-                                        + plain(loopEnd) + ": shorten it to duration <= " + plain(loopEnd - n.beat));
+                                        + plain(loopEnd) + ": shorten it to duration <= " + plain(loopEnd - n.beat)
+                                        + ", or lengthen the loop (clips.set)");
         }
-        overlaps(RangeEdit.apply(observed, planned), index, out);
+        overlaps(RangeEdit.apply(observed, planned), index, range != null, out);
         refuse(out);
         change = planned;
         return planned;
     }
 
     /** Each written note against its neighbours on its channel and pitch: none may sustain into the next onset. */
-    private static void overlaps(List<Note> after, Map<Note, Integer> written, List<Object[]> out) {
+    private static void overlaps(List<Note> after, Map<Note, Integer> written, boolean ranged, List<Object[]> out) {
         Map<Integer, List<Note>> rows = new HashMap<>();
         for (Note n : after)
             rows.computeIfAbsent(n.channel * 128 + n.pitch, k -> new ArrayList<>())
@@ -220,15 +220,16 @@ public final class NotePlan {
                                     + ", past the onset of " + (ib != null ? "notes[" + ib + "]" : "the note")
                                     + " at beat " + plain(b.beat) + ": shorten notes[" + ia + "] to duration <= "
                                     + plain(b.beat - a.beat)
-                                    + (ib != null ? "" : ", or include beat " + plain(b.beat) + " in range"));
+                                    + (ib == null && ranged ? ", or include beat " + plain(b.beat) + " in range" : ""));
                 else
                     add(
                             out,
                             ib,
                             "notes[" + ib + "] starts at beat " + plain(b.beat) + " while the note at beat "
                                     + plain(a.beat) + " on pitch " + b.pitch + " sustains to beat " + plain(a.end())
-                                    + ": list that note with duration <= " + plain(b.beat - a.beat)
-                                    + ", or include beat " + plain(a.beat) + " in range");
+                                    + (ranged
+                                            ? ": include beat " + plain(a.beat) + " in range"
+                                            : ": list that note with duration <= " + plain(b.beat - a.beat)));
             }
         }
     }

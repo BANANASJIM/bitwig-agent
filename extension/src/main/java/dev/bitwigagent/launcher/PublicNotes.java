@@ -21,8 +21,8 @@ final class PublicNotes {
     static final int STEPS = 128;
     /** Cell sizes of a read: 1/32 note while the region is at most 16 beats long, else 1/16 note. */
     private static final double FINE = 0.125, COARSE = 0.25, FINE_SPAN = 16;
-    /** The finest grid a write uses: Bitwig's 1/128-beat onset grid. */
-    private static final long WRITE_GRID = Note.TICKS / 128;
+    /** The grid a write reads and writes on: Bitwig's 1/128-beat onset grid, the finest the public grid shows. */
+    private static final long WRITE_GRID = Note.ticks(NoteGrid.BEAT_GRID);
 
     private final LauncherState state;
     private final Scheduler scheduler;
@@ -32,16 +32,19 @@ final class PublicNotes {
         this.scheduler = state.scheduler;
     }
 
-    /** Notes seen in the cursor clip; {@code complete} is false when the deadline stopped the walk early. */
+    /**
+     * Notes seen in the cursor clip; {@code incomplete} says why the read may miss notes (the deadline stopped the
+     * walk, or the range reaches past the loop end, which the public grid does not show), null when it does not.
+     */
     static final class Read {
         final List<Note> notes;
         final double size;
-        final boolean complete;
+        final String incomplete;
 
-        Read(List<Note> notes, double size, boolean complete) {
+        Read(List<Note> notes, double size, String incomplete) {
             this.notes = notes;
             this.size = size;
-            this.complete = complete;
+            this.incomplete = incomplete;
         }
     }
 
@@ -57,9 +60,10 @@ final class PublicNotes {
     void read(HostOperation op, LauncherState.Target target, NoteRange range, Consumer<Read> done) {
         state.bind(op, target, true, null, state.until(op), (o, t, e, w) -> {
             state.cursorGuard(o, t);
-            long from = range == null || range.all() ? 0 : Math.max(0, range.start);
+            long from = range == null || range.all() ? 0 : range.start, loopEnd = loopEnd();
             // The public grid covers the loop from beat 0: a range past the loop end is read up to it.
-            long to = range == null || range.all() ? loopEnd() : Math.min(range.end, Math.max(from + 1, loopEnd()));
+            boolean pastLoop = range == null || range.all() || range.end > loopEnd;
+            long to = pastLoop ? Math.max(from + 1, loopEnd) : range.end;
             double size = Note.beats(to - from) <= FINE_SPAN ? FINE : COARSE;
             List<Note> notes = new ArrayList<>();
             walk(
@@ -72,7 +76,13 @@ final class PublicNotes {
                     },
                     complete -> {
                         notes.sort(Note.ORDER);
-                        done.accept(new Read(notes, size, complete));
+                        String incomplete = !complete
+                                ? "Too little time to read every window: read the rest by range."
+                                : pastLoop
+                                        ? "Without the native note binding the note grid shows the loop only (up to"
+                                                + " beat " + NotePlan.plain(loopEnd) + "); notes past it are not read."
+                                        : null;
+                        done.accept(new Read(notes, size, incomplete));
                     });
         });
     }
@@ -91,35 +101,55 @@ final class PublicNotes {
             Consumer<Boolean> done) {
         List<String> offGrid = new ArrayList<>();
         for (NotePlan.Listed l : listed)
-            if (l.beat % WRITE_GRID != 0)
-                offGrid.add("notes[" + l.index + "] beat " + NotePlan.plain(l.shown) + " is not on the "
-                        + NoteGrid.BEAT_GRID_LABEL + "-beat grid");
+            if (l.beat % WRITE_GRID != 0) offGrid.add("notes[" + l.index + "] beat " + NotePlan.plain(l.shown));
+        if (range != null && !range.all()) {
+            if (range.start % WRITE_GRID != 0) offGrid.add("range.start " + NotePlan.plain(range.shownStart));
+            if (range.end % WRITE_GRID != 0) offGrid.add("range.end " + NotePlan.plain(range.shownEnd));
+        }
         if (!offGrid.isEmpty())
             throw Errors.notApplied(
                     Reason.NATIVE_UNAVAILABLE,
                     "Without the native note binding notes are written on the public " + NoteGrid.BEAT_GRID_LABEL
-                            + "-beat grid: " + String.join("; ", offGrid) + ". Nothing was written.");
-        long grid = grid(listed, range);
+                            + "-beat grid, and these are not on it: " + String.join("; ", offGrid)
+                            + ". Nothing was written.");
+        if (range != null && range.all())
+            throw Errors.notApplied(
+                    Reason.NATIVE_UNAVAILABLE,
+                    "Without the native note binding the note grid shows the loop only, so range \"all\" cannot be"
+                            + " written: give range {start: 0, end: <loop end>} (clips.get reads the loop). Nothing was"
+                            + " written.");
         state.bind(op, target, true, null, state.until(op), (o, t, e, w) -> {
             state.cursorGuard(o, t);
             long loopEnd = loopEnd();
-            long[] region = region(listed, range, loopEnd, grid);
-            List<NoteGrid.Window> windows = windows(region[0], region[1], grid);
-            List<Note> observed = new ArrayList<>();
+            if (range != null && range.end > loopEnd)
+                throw Errors.notApplied(
+                        Reason.NATIVE_UNAVAILABLE,
+                        "range ends at beat " + NotePlan.plain(range.shownEnd) + ", past the loop end "
+                                + NotePlan.plain(loopEnd) + ", and without the native note binding the note grid"
+                                + " shows the loop only: end the range at or before beat " + NotePlan.plain(loopEnd)
+                                + ", or lengthen the loop (clips.set). Nothing was written.");
+            List<long[]> spans = spans(listed, range, loopEnd);
+            List<NoteGrid.Window> windows = new ArrayList<>();
+            Region seen = new Region();
+            for (long[] span : spans) {
+                windows.addAll(windows(span[0], span[1], WRITE_GRID));
+                seen.starts.add(span[0]);
+            }
             walk(
                     o,
                     t,
                     windows,
                     (op1, window, next) -> {
-                        observed.addAll(cells(window));
+                        seen.read(window);
                         next.run();
                     },
                     complete -> {
                         if (!complete)
                             throw Errors.unknown(
                                     Reason.DEADLINE, "Too little time to read the region before writing it.");
-                        RangeEdit.Change<Note> change = plan.plan(observed, loopEnd);
-                        Map<Integer, List<Cell>> byWindow = cells(change, windows, grid);
+                        RangeEdit.Change<Note> change = plan.plan(seen.notes, loopEnd);
+                        seen.requireNoSustainInto(change, listed);
+                        Map<Integer, List<Cell>> byWindow = cells(change, windows);
                         List<NoteGrid.Window> touched = new ArrayList<>();
                         for (int i = 0; i < windows.size(); i++)
                             if (byWindow.containsKey(i)) touched.add(windows.get(i));
@@ -145,6 +175,58 @@ final class PublicNotes {
         });
     }
 
+    /**
+     * The notes of the region a write reads, on the 1/128-beat grid, and the notes that sustain into it from an onset
+     * before it: the grid shows those only as sustained cells, so they are tracked by row until their first cell that
+     * is not sustained.
+     */
+    private final class Region {
+        /** Where each read span starts (ticks): a sustained cell there belongs to a note from before the span. */
+        final java.util.Set<Long> starts = new java.util.HashSet<>();
+
+        final List<Note> notes = new ArrayList<>();
+        /** By channel * 128 + pitch: {span start, beat the note from before it sustains to (-1 while open)}. */
+        final Map<Integer, long[]> sustained = new HashMap<>();
+
+        void read(NoteGrid.Window w) {
+            for (int c = 0; c < 16; c++)
+                for (int x = 0; x < w.steps; x++)
+                    for (int pitch = 0; pitch < 128; pitch++) {
+                        NoteStep step = readable(c, x, pitch);
+                        long beat = Note.ticks((w.start + x) * w.size);
+                        int row = c * 128 + pitch;
+                        boolean sustain = NoteGrid.hasState(step, "NoteSustain");
+                        long[] open = sustained.get(row);
+                        if (sustain && starts.contains(beat) && (open == null || open[1] != -1))
+                            sustained.put(row, new long[] {beat, -1});
+                        else if (!sustain && open != null && open[1] == -1) open[1] = beat;
+                        if (NoteGrid.hasState(step, "NoteOn"))
+                            notes.add(Note.read(c, pitch, Note.beats(beat), step.duration(), step.velocity()));
+                    }
+        }
+
+        /** Refuses a written note that starts while a note from before the region still sounds on its row. */
+        void requireNoSustainInto(RangeEdit.Change<Note> change, List<NotePlan.Listed> listed) {
+            List<String> found = new ArrayList<>();
+            for (Note n : change.written()) {
+                long[] held = sustained.get(n.channel * 128 + n.pitch);
+                if (held == null || n.beat < held[0] || held[1] != -1 && n.beat >= held[1]) continue;
+                int index = 0;
+                for (NotePlan.Listed l : listed) if (l.key().equals(n.key())) index = l.index;
+                found.add("notes[" + index + "] starts at beat " + NotePlan.plain(n.beat) + " while a note from before"
+                        + " beat " + NotePlan.plain(held[0]) + " on pitch " + n.pitch
+                        + (held[1] == -1
+                                ? " still sounds: start notes[" + index + "] after that note ends"
+                                : " sustains to beat " + NotePlan.plain(held[1]) + ": start notes[" + index
+                                        + "] at or after beat " + NotePlan.plain(held[1]))
+                        + ", or include that note's onset in range");
+            }
+            if (!found.isEmpty())
+                throw Errors.invalid("notes: " + found.size() + (found.size() == 1 ? " problem" : " problems")
+                        + ", nothing was written: " + String.join("; ", found));
+        }
+    }
+
     /** One cell a write sets or clears, at its window's step. */
     private static final class Cell {
         final int channel, x, pitch;
@@ -159,19 +241,20 @@ final class PublicNotes {
     }
 
     /** The change's cells by window index: removed notes cleared, written notes set (a replaced note's cell is set). */
-    private static Map<Integer, List<Cell>> cells(
-            RangeEdit.Change<Note> change, List<NoteGrid.Window> windows, long grid) {
+    private static Map<Integer, List<Cell>> cells(RangeEdit.Change<Note> change, List<NoteGrid.Window> windows) {
         Map<Integer, List<Cell>> out = new HashMap<>();
-        long first = windows.isEmpty() ? 0 : windows.get(0).start;
-        for (Note n : change.remove) place(out, first, grid, n, null);
-        for (Note n : change.written()) place(out, first, grid, n, n);
+        for (Note n : change.remove) place(out, windows, n, null);
+        for (Note n : change.written()) place(out, windows, n, n);
         return out;
     }
 
-    private static void place(Map<Integer, List<Cell>> out, long first, long grid, Note at, Note note) {
-        long step = Math.floorDiv(at.beat, grid) - first;
-        int window = (int) (step / STEPS), x = (int) (step % STEPS);
-        out.computeIfAbsent(window, k -> new ArrayList<>()).add(new Cell(at.channel, x, at.pitch, note));
+    /** A planned note at its cell of the read window that holds its onset (every changed note lies in one). */
+    private static void place(Map<Integer, List<Cell>> out, List<NoteGrid.Window> windows, Note at, Note note) {
+        long step = at.beat / WRITE_GRID;
+        int window = 0;
+        while (step >= windows.get(window).start + windows.get(window).steps) window++;
+        out.computeIfAbsent(window, k -> new ArrayList<>())
+                .add(new Cell(at.channel, (int) (step - windows.get(window).start), at.pitch, note));
     }
 
     private void writeWindow(
@@ -247,14 +330,18 @@ final class PublicNotes {
         List<Note> out = new ArrayList<>();
         for (int c = 0; c < 16; c++)
             for (int x = 0; x < w.steps; x++)
-                for (int pitch = w.pitch; pitch < w.pitch + w.pitches; pitch++) {
-                    NoteStep step = state.clip.getStep(c, x, pitch);
-                    if (step == null || step.state() == null)
-                        throw Errors.of(Reason.NOT_READY, "Note grid is not readable", true);
+                for (int pitch = 0; pitch < 128; pitch++) {
+                    NoteStep step = readable(c, x, pitch);
                     if (NoteGrid.hasState(step, "NoteOn"))
                         out.add(Note.read(c, pitch, (w.start + x) * w.size, step.duration(), step.velocity()));
                 }
         return out;
+    }
+
+    private NoteStep readable(int channel, int x, int pitch) {
+        NoteStep step = state.clip.getStep(channel, x, pitch);
+        if (step == null || step.state() == null) throw Errors.of(Reason.NOT_READY, "Note grid is not readable", true);
+        return step;
     }
 
     /** Windows of 128 cells of {@code grid} ticks covering [from, to). */
@@ -269,28 +356,25 @@ final class PublicNotes {
         return out;
     }
 
-    /** The coarsest grid from 1/4 down to 1/128 beat that holds every listed onset and the range start on a cell. */
-    static long grid(List<NotePlan.Listed> listed, NoteRange range) {
-        long grid = Note.TICKS / 4;
-        while (grid > WRITE_GRID && !aligned(grid, listed, range)) grid /= 2;
-        return grid;
-    }
-
-    private static boolean aligned(long grid, List<NotePlan.Listed> listed, NoteRange range) {
-        if (range != null && !range.all() && range.start % grid != 0) return false;
-        for (NotePlan.Listed l : listed) if (l.beat % grid != 0) return false;
-        return true;
-    }
-
     /**
-     * What a write reads first, in ticks: from beat 0, so notes sustaining into the written span are seen, to the end
-     * of the range (at most the loop end, which bounds every written note) or of the last listed note, whichever is
-     * later.
+     * The spans a write reads, in ticks, sorted and merged: the range (to the end of the last listed note, if later),
+     * or around each listed note from its onset to its end, so every note a written one could run into is seen.
+     * Notes sustaining into a span from before it show as sustained cells at its start.
      */
-    static long[] region(List<NotePlan.Listed> listed, NoteRange range, long loopEnd, long grid) {
-        long to = range == null ? 0 : range.all() ? loopEnd : Math.min(range.end, loopEnd);
-        for (NotePlan.Listed l : listed) to = Math.max(to, l.end() != null ? l.end() : l.beat + grid);
-        return new long[] {0, to};
+    static List<long[]> spans(List<NotePlan.Listed> listed, NoteRange range, long loopEnd) {
+        List<long[]> raw = new ArrayList<>();
+        if (range != null) raw.add(new long[] {range.start, range.end});
+        for (NotePlan.Listed l : listed) raw.add(new long[] {l.beat, l.end() != null ? l.end() : l.beat + WRITE_GRID});
+        raw.sort(java.util.Comparator.comparingLong(span -> span[0]));
+        List<long[]> out = new ArrayList<>();
+        for (long[] span : raw) {
+            long from = span[0] / WRITE_GRID * WRITE_GRID;
+            long to = Math.max(from + WRITE_GRID, Math.min(span[1], loopEnd));
+            long[] last = out.isEmpty() ? null : out.get(out.size() - 1);
+            if (last != null && from <= last[1]) last[1] = Math.max(last[1], to);
+            else out.add(new long[] {from, to});
+        }
+        return out;
     }
 
     private long loopEnd() {

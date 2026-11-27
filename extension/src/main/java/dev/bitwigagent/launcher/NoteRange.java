@@ -3,6 +3,7 @@ package dev.bitwigagent.launcher;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import dev.bitwigagent.core.Errors;
 import java.math.BigDecimal;
 import java.util.function.Predicate;
 
@@ -52,6 +53,14 @@ public final class NoteRange implements Predicate<Note> {
                 r.get("end").getAsBigDecimal());
     }
 
+    /** The cross-field rules of a request's {@code range} the schema cannot say, judged on its stored (tick) bounds. */
+    static void require(JsonObject p) {
+        NoteRange r = of(p);
+        if (r == null || r.all()) return;
+        if (r.end <= r.start) throw Errors.invalid("range.end must be at least 1/1048576 beat after range.start");
+        if (r.low > r.high) throw Errors.invalid("range.pitches is [low, high] with low <= high");
+    }
+
     @Override
     public boolean test(Note n) {
         return n.beat >= start && n.beat < end && n.pitch >= low && n.pitch <= high;
@@ -65,8 +74,8 @@ public final class NoteRange implements Predicate<Note> {
     JsonElement json() {
         if (all()) return new com.google.gson.JsonPrimitive("all");
         JsonObject out = new JsonObject();
-        out.addProperty("start", Note.beats(start));
-        out.addProperty("end", Note.beats(end));
+        out.addProperty("start", shownStart);
+        out.addProperty("end", shownEnd);
         if (low != 0 || high != 127) {
             JsonArray pitches = new JsonArray();
             pitches.add(low);

@@ -37,8 +37,11 @@ NOTE_RESOLUTION = Decimal(1) / DURATION_RESOLUTION_DIVISOR
 
 
 def canonical(value: float) -> Decimal:
-    """A beat or duration as Bitwig stores it: the nearest multiple of 1/1048576 beat."""
-    return (Decimal(str(value)) / NOTE_RESOLUTION).quantize(Decimal(1), rounding=ROUND_HALF_UP) * NOTE_RESOLUTION
+    """A beat or duration as Bitwig stores it: the nearest multiple of 1/1048576 beat, half a step rounding up.
+
+    The exact binary value is rounded, as the extension's Math.round(value * 2^20) does.
+    """
+    return (Decimal(value) / NOTE_RESOLUTION).quantize(Decimal(1), rounding=ROUND_HALF_UP) * NOTE_RESOLUTION
 
 
 def plain(value: Decimal) -> str:
@@ -103,15 +106,15 @@ def spans(notes: list[Any]) -> list[Span]:
 
 class NoteRange(StrictModel):
     start: NoteBeat
-    end: Annotated[float, Field(gt=0, le=MAX_BEAT)]
+    end: Annotated[float, Field(ge=DURATION_RESOLUTION, le=MAX_BEAT)]
     pitches: Annotated[list[Pitch], Field(min_length=2, max_length=2)] = omitted(
         description="[low, high], both included: only these pitches belong to the range."
     )
 
     @model_validator(mode="after")
     def validate_bounds(self) -> Self:
-        if self.end <= self.start:
-            raise ValueError("range.end must be greater than range.start")
+        if canonical(self.end) <= canonical(self.start):
+            raise ValueError("range.end must be at least 1/1048576 beat after range.start")
         if self.pitches is not None and self.pitches[0] > self.pitches[1]:
             raise ValueError("range.pitches is [low, high] with low <= high")
         return self
@@ -146,9 +149,10 @@ def range_problem(at: str, span: Span, range_: NoteRange) -> str | None:
 
 
 def length_problem(at: str, span: Span, length: Decimal) -> str | None:
-    if span.end is None or span.end <= length:
+    stored = canonical(float(length))
+    if span.end is None or span.end <= stored:
         return None
-    if span.beat >= length:
+    if span.beat >= stored:
         return f"{at} starts at beat {plain(span.shown)}, at or past the clip length {plain(length)}"
     return (
         f"{at} ends at beat {plain(span.requested_end)}, past the clip length {plain(length)}: shorten it to duration <= "
@@ -430,7 +434,8 @@ NOTE_RULES = (
 NOTE_PATHS = (
     "With the native note binding (Bitwig 6.1.4/6.1.7) the write is one Undo step (undo=one_step) and is read back "
     "natively without selecting anything (exact=true, verification=native_readback). Without it the public API "
-    "writes note by note: onsets on the 1/128-beat grid, one per cell, one Undo step each (undo=per_note), the clip "
+    'writes note by note: onsets and range bounds on the 1/128-beat grid, a range inside the loop (not "all"), '
+    "one onset per cell, one Undo step each (undo=per_note), the clip "
     "selected and read back through its note grid (exact=false, verification=api_readback). "
 )
 CLIPS_INSERT_DESCRIPTION = (
@@ -512,7 +517,8 @@ NOTES_GET_DESCRIPTION = (
     "Read the notes of one launcher clip: every note of every channel, in the record notes.set and clips.insert "
     "take, sorted by beat then pitch; channel is omitted when 0. range ({start, end, pitches?}) only limits the "
     "output. Result: ref, loop, count (notes in the range), complete (false when the response cap cut the list: "
-    "read the rest by range), exact and notes. exact=true: read natively (Bitwig 6.1.4/6.1.7), no selection, onsets "
+    "read the rest by range; on the public path also for ranges past the loop end, with incompleteReason), exact "
+    "and notes. exact=true: read natively (Bitwig 6.1.4/6.1.7), no selection, onsets "
     "exact. exact=false: the public API's note grid, onsets snapped to onsetResolution, one onset per cell, the clip "
     "selected (a failure after that is unknown)."
 )

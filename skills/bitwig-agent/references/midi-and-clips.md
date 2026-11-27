@@ -19,7 +19,7 @@ Fields, limits and result shapes come from `<path> --help`; this page is the wor
    - Rewrite a passage, delete or move notes: `notes get` the range, edit the list, `notes set` the same `range` (`{start, end, pitches?}`; `pitches:[42,42]` is one drum row). The range becomes exactly your list.
 4. Read the result: `summary {inserted, updated, removed, unchanged}` says what changed, so you need not read the clip again to confirm the rest is intact. `already_matched` means it was already so. After `unknown`, `notes get` before anything else; never resend blindly.
 
-A `range` write deletes what you leave out of it, so give the smallest range that holds the change, and on a clip the user recorded keep the original and edit a copy when the change is creative. If `exact` is false the host has no native note binding: onsets snap to `onsetResolution`, only one onset per cell is visible, and these calls select the clip (moving `cursorClip`), so do not run them alongside work that depends on the selection.
+A `range` write deletes what you leave out of it, so give the smallest range that holds the change, and on a clip the user recorded keep the original and edit a copy when the change is creative. If `exact` is false the host has no native note binding: onsets snap to `onsetResolution`, only one onset per cell is visible, notes past the loop end are not seen (the read says it is incomplete), a write takes a range inside the loop instead of `"all"`, and these calls select the clip (moving `cursorClip`), so do not run them alongside work that depends on the selection.
 
 ## Make a new part
 
