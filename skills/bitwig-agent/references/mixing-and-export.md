@@ -8,6 +8,7 @@ Trace the real path: notes, instrument, device chain, track output or group, mas
 
 - Start conservative, especially with layered oscillators, chords and long releases. Balance parts in context before compression or limiting, and leave headroom. Turning the master down does not fix upstream clipping or feedback.
 - Before blaming the composition check mute, solo, disabled devices, output destinations, crossfader assignment and monitoring.
+- Read the mix in one call: `tracks list --format=tsv --fields=name,type,volume.display,pan.display,mute,solo` (rows also carry `arm` and `sends`).
 - Levels: `tracks set` and `tracks sends set` take the value a read returned or a `{display}` (`bitwig-agent help values`; pan 0.5 is centre). Gain-match an A/B by measured loudness, not by fader positions.
 - Bus processing: `tracks group` groups adjacent tracks of one parent, then put shared processing on the group track. Audio clips on a group lane override the group's summed output while they play, and group meta-clips act on their children, so treat group selection as a wider target.
 - Resample, bus and sidechain routes: read before writing. Only some stock devices have an audio sidechain input (Compressor+, Dynamics, Gate, Transient Control; the plain Compressor has none): insert one of those first. `tracks routing get --includeChoices` and `devices sidechain get` list the valid choices (and, for sidechain choosers, whether each is `writable`); then pass an entry from that read (`{kind, track: <track ref>}`) unchanged to `tracks routing set` or `devices sidechain set`. A routing write needs a stopped transport; a sidechain write only needs recording and automation write off. Afterwards confirm with `meters get` or a capture that signal actually arrives.
@@ -23,7 +24,7 @@ Meters and peak readings are observations, not loudness, tonal balance or hearin
 4. `bitwig-agent audio analyze` the file; `audio analyze --help` lists the modes (silence and clipping, onsets, pitch, loudness, spectrum, a scope for logic or CV signals). Pick the mode that answers your question.
 5. `bitwig-agent audio route --mode=restore` when finished, or Bitwig stays muted for the user.
 
-Skip warm-up with `skipSeconds`. Pitch analysis is for monophonic, fundamental-dominant material only; an empty `silent` result usually means the route or signal path, not the analysis. Analysis is measurement: it cannot say a sound is good, so report "No audio audition performed" unless someone listened.
+To check an effect over time (does the sidechain duck on every beat?), capture the same span with and without it and compare: `audio analyze --mode=level --bpm=128 --windowBeats=1 --reference=/tmp/dry.wav` gives each beat's `deltaDb` and a `summary`. Skip warm-up with `skipSeconds`. Pitch analysis is for monophonic, fundamental-dominant material only; an empty `silent` result usually means the route or signal path, not the analysis. Analysis is measurement: it cannot say a sound is good, so report "No audio audition performed" unless someone listened.
 
 ## Bounce and export
 

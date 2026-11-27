@@ -102,7 +102,17 @@ public final class TestServices {
     }
 
     public ArrangerModule arranger(ArrangerModule.Access access) {
-        return new ArrangerModule(scheduler, window, trackRefs, projectState, transportSafety, natives, holds, access);
+        return new ArrangerModule(
+                scheduler,
+                window,
+                trackRefs,
+                projectState,
+                transportSafety,
+                natives,
+                holds,
+                marker(),
+                transport,
+                access);
     }
 
     public AutomationModule automation(AutomationModule.Access access) {

@@ -12,15 +12,17 @@ import dev.bitwigagent.host.TrackRefs;
 import dev.bitwigagent.host.TrackWindow;
 import java.util.*;
 
-/** tracks.list: the tracks of the window in project order, with their group tree. */
+/** tracks.list: the tracks of the window in project order, with their group tree and mix columns. */
 public final class TrackListModule implements HostModule {
     static final Set<String> METHODS = Set.of("tracks.list");
     private final TrackWindow window;
     private final TrackRefs trackRefs;
+    private final MixModule mix;
 
-    public TrackListModule(TrackWindow window, TrackRefs trackRefs) {
+    public TrackListModule(TrackWindow window, TrackRefs trackRefs, MixModule mix) {
         this.window = window;
         this.trackRefs = trackRefs;
+        this.mix = mix;
     }
 
     @Override
@@ -46,6 +48,7 @@ public final class TrackListModule implements HostModule {
             item.add("ref", trackRefs.ref(node.slot));
             item.addProperty("index", node.position);
             tree.describe(item, node, trackRefs::ref);
+            mix.columns(node.slot, item);
             items.add(item);
         }
         result.add("tracks", items);
