@@ -19,7 +19,8 @@ async def _transport_blocks(channel: Channel, structural: bool) -> list[Refusal]
     busy = blocking(state, structural)
     if not busy:
         return []
-    # transport.set can stop playback; the recording and automation-write flags are read-only there.
+    # Only playback is named as a transport.set fix: the blocking flags include the launcher automation write switch,
+    # which transport.set does not take.
     fixes = ["stop playback (transport.set playing=false)"] if "playing" in busy else []
     if any(flag in busy for flag in RECORDING_FLAGS):
         fixes.append("turn recording and automation write off in Bitwig")

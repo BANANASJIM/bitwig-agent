@@ -19,7 +19,6 @@ import dev.bitwigagent.host.SelectionLease;
 import dev.bitwigagent.host.TrackRefs;
 import dev.bitwigagent.host.TrackWindow;
 import dev.bitwigagent.host.TransportSafety;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
@@ -177,8 +176,7 @@ public final class TrackLifecycleModule implements HostModule {
      * top-level main track there, or after the last one. With no main track there is nothing to drop it next to.
      */
     private InsertionPoint between(int position, TrackTree tree, String file) {
-        if (!Files.isRegularFile(Path.of(file)) || !Files.isReadable(Path.of(file)))
-            throw Errors.notApplied(Reason.INVALID_FILE, "tracks.insert file requires a readable regular local file.");
+        Params.readableFile(Path.of(file), "tracks.insert file");
         List<TrackTree.Node> main = tree.topLevel(false);
         if (main.isEmpty())
             throw Errors.notApplied(

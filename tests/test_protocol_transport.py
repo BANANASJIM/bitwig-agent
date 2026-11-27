@@ -64,7 +64,7 @@ def test_no_example_starts_recording():
         assert example.get("arrangerRecordEnabled") is not True, example
 
 
-def test_the_launcher_automation_write_switch_is_refused_as_unsupported():
+def test_the_launcher_automation_write_switch_is_an_unknown_field():
     with pytest.raises(ValidationError) as refused:
         validate_call("transport.set", {"clipLauncherAutomationWriteEnabled": False})
-    assert "arrangerAutomationWriteEnabled" in str(refused.value)
+    assert [error["type"] for error in refused.value.errors()] == ["extra_forbidden"]

@@ -2,8 +2,7 @@ package dev.bitwigagent.core;
 
 /** Immutable controller observations; document callbacks never call Controller API safety getters. */
 public final class SafetyObservation {
-    private static final String OFF =
-            "arrangerRecordEnabled=false arrangerAutomationWriteEnabled=false clipLauncherAutomationWriteEnabled=false";
+    private static final String OFF = "arrangerRecordEnabled=false arrangerAutomationWriteEnabled=false";
     public final long epoch;
     public final Boolean playing, recording, arrangerAutomation, launcherAutomation;
 

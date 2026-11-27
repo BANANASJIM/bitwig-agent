@@ -93,14 +93,14 @@ public final class NativePortsTest {
                         .getMessage());
         LazyBinding<Object> broken = new LazyBinding<>("Exact thing unavailable: ");
         int[] calls = {0};
-        LazyBinding.Bind<Object> npe = () -> {
+        LazyBinding.Bind<Object> bug = () -> {
             calls[0]++;
             throw new IllegalStateException("q3");
         };
-        RpcException unchecked = assertRpcError(Reason.NATIVE_UNAVAILABLE.wire(), () -> broken.get(npe));
-        assertEquals("Exact thing unavailable: IllegalStateException: q3", unchecked.getMessage());
-        assertSame(unchecked, assertThrows(RpcException.class, () -> broken.get(npe)));
-        assertEquals(1, calls[0], "an unchecked error from binding code is kept like a reflective one");
+        assertThrows(
+                IllegalStateException.class, () -> broken.get(bug), "a bug in binding code is not native_unavailable");
+        assertThrows(IllegalStateException.class, () -> broken.get(bug));
+        assertEquals(2, calls[0], "a bug in binding code is not kept: the next call binds again");
         LazyBinding<Object> missing = new LazyBinding<>("");
         LazyBinding.Bind<Object> noKey = () -> {
             throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Bitwig 9.9 has no native binding for note.chance.");
