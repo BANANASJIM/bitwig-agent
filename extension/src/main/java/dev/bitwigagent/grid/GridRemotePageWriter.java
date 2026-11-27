@@ -9,6 +9,7 @@ import dev.bitwigagent.core.Refs;
 import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.RpcException;
 import dev.bitwigagent.core.Verification;
+import dev.bitwigagent.device.DirectParameters;
 import dev.bitwigagent.host.DeviceSources;
 import java.util.*;
 
@@ -51,8 +52,8 @@ public final class GridRemotePageWriter {
         boolean mappable(Object parameter, Object device);
         /** The page's own eligibility predicate for this parameter. */
         boolean eligible(Object page, Object parameter);
-        /** The device's direct parameter with this parameters.list id, or null when it has none. */
-        Object directParameter(Object device, String id);
+        /** The device's direct parameters, for slots on the device's own parameters. */
+        DirectParameters.Lookup direct();
 
         Object slot(Object page, int index);
 
@@ -401,7 +402,9 @@ public final class GridRemotePageWriter {
             if (!Refs.matches(spec.device, source.ref(), false))
                 throw Errors.notApplied(
                         Reason.UNSUPPORTED_SCOPE, "slot " + index + " names a parameter of another device.");
-            Slot slot = spec.moduleId == null ? direct(index, spec, device) : module(index, spec, source, check);
+            Slot slot = spec.moduleId == null
+                    ? direct(index, spec, device, source.ref())
+                    : module(index, spec, source, check);
             if (!nativeAccess.mappable(slot.parameter, device))
                 throw Errors.notApplied(
                         Reason.UNSUPPORTED_SCOPE,
@@ -428,12 +431,11 @@ public final class GridRemotePageWriter {
         return slot;
     }
 
-    /** One of the device's own parameters, by its parameters.list id. */
-    private Slot direct(int index, SlotSpec spec, Object device) {
-        Object parameter = nativeAccess.directParameter(device, spec.parameterId);
-        if (parameter == null) throw Errors.targetNotFound(spec.ref, "The device has no such parameter now.");
+    /** One of the device's own parameters, by its parameters.list ref (id, and name when the ref carries one). */
+    private Slot direct(int index, SlotSpec spec, Object device, JsonObject deviceRef) {
+        Object parameter = DirectParameters.resolve(nativeAccess.direct(), device, deviceRef, spec.ref);
         return new Slot(index, spec, parameter, () -> {
-            if (nativeAccess.directParameter(device, spec.parameterId) != parameter)
+            if (DirectParameters.resolve(nativeAccess.direct(), device, deviceRef, spec.ref) != parameter)
                 throw Errors.notApplied(Reason.TARGET_CHANGED, "The device parameter changed during the operation.");
         });
     }

@@ -380,19 +380,24 @@ public final class ModulatorEditorTest {
         }
 
         @Override
-        public Object directParameter(Object device, String id) {
-            assertSame(this.device, device);
-            return id.equals(cutoff.id) ? cutoff : id.equals("CONTENTS/TEXT") ? text : null;
-        }
+        public DirectParameters.Lookup direct() {
+            return new DirectParameters.Lookup() {
+                @Override
+                public String[] parameterIds(Object device) {
+                    assertSame(Fake.this.device, device);
+                    return new String[] {cutoff.id, "CONTENTS/TEXT"};
+                }
 
-        @Override
-        public String directId(Object device, Object parameter) {
-            return parameter == cutoff ? cutoff.id : null;
-        }
+                @Override
+                public Object parameter(Object device, String id) {
+                    return id.equals(cutoff.id) ? cutoff : text;
+                }
 
-        @Override
-        public String directName(Object parameter) {
-            return ((Param) parameter).name;
+                @Override
+                public String parameterName(Object parameter) {
+                    return parameter == cutoff ? cutoff.name : "Text";
+                }
+            };
         }
 
         @Override
@@ -911,6 +916,20 @@ public final class ModulatorEditorTest {
                         .get("outcome")
                         .getAsString());
         assertEquals(1, d[0], "an unchanged mapping is not dispatched");
+    }
+
+    @Test
+    void aMappingToADeviceParameterIsUnmappedByItsRef() {
+        Env e = new Env();
+        int[] d = {0};
+        e.f.source(1).mappings.add(new Mapping(e.f.cutoff, 0.3, "linear", true));
+        Outcome o = e.unmap(e.lfo, e.cutoff, "\"expect\":{\"amount\":0.3}", d);
+        assertNull(o.error);
+        assertEquals(1, d[0]);
+        assertTrue(e.f.source(1).mappings.isEmpty());
+        assertEquals(e.cutoff, o.value.get("ref"));
+        assertEquals(e.cutoff, o.value.getAsJsonObject("previousMapping").get("target"));
+        assertTrue(o.value.get("mapping").isJsonNull());
     }
 
     @Test

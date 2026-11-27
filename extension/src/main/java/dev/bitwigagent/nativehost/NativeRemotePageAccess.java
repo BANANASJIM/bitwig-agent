@@ -2,6 +2,7 @@ package dev.bitwigagent.nativehost;
 
 import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.Reason;
+import dev.bitwigagent.device.DirectParameters;
 import dev.bitwigagent.grid.GridRemotePageWriter;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
@@ -187,8 +188,8 @@ public final class NativeRemotePageAccess implements GridRemotePageWriter.Access
     }
 
     @Override
-    public Object directParameter(Object device, String id) {
-        return direct.find(device, id);
+    public DirectParameters.Lookup direct() {
+        return direct;
     }
 
     @Override

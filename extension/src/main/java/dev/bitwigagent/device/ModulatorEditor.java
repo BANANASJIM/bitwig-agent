@@ -93,13 +93,8 @@ public final class ModulatorEditor implements ParameterResolver.ModuleOwners {
         double range(Object target);
 
         boolean canModulate(Object source, Object target);
-        /** The device's direct parameter with this parameters.list id, or null when it has none. */
-        Object directParameter(Object device, String id);
-
-        /** The parameters.list id of one of the device's direct parameters, or null when it is not one. */
-        String directId(Object device, Object parameter);
-
-        String directName(Object parameter);
+        /** The device's direct parameters, for mappings to the device's own parameters. */
+        DirectParameters.Lookup direct();
         /** {graph, module, parameter} for a Grid module control on this device, or null when it has none now. */
         Object[] gridParameter(DeviceSources.Source source, UUID moduleId, String parameterId, Runnable check);
 
@@ -445,8 +440,7 @@ public final class ModulatorEditor implements ParameterResolver.ModuleOwners {
                 throw Errors.notApplied(Reason.UNSUPPORTED_SCOPE, "This Grid control is not a modulation target.");
             found = new Resolved(bound[2], bound[0], bound[1]);
         } else if (ref.direct) {
-            Object parameter = a.directParameter(s.device, ref.parameterId);
-            if (parameter == null) throw Errors.targetNotFound(ref.ref, "The device has no such parameter now.");
+            Object parameter = DirectParameters.resolve(a.direct(), s.device, s.deviceRef, ref.ref);
             if (!a.isTarget(parameter))
                 throw Errors.notApplied(Reason.UNSUPPORTED_SCOPE, "This device parameter is not a modulation target.");
             found = new Resolved(parameter, s.device, s.device);
@@ -458,8 +452,7 @@ public final class ModulatorEditor implements ParameterResolver.ModuleOwners {
                         Reason.UNSUPPORTED_SCOPE, "This modulator control is not a supported modulation target.");
             found = new Resolved(parameter, s.collection, modulator);
         }
-        if (ref.name != null
-                && !ref.name.equals(ref.direct ? a.directName(found.parameter) : parameterName(found.parameter)))
+        if (!ref.direct && ref.name != null && !ref.name.equals(parameterName(found.parameter)))
             throw Errors.targetChanged("The control was renamed since it was read.", describe(s, found.parameter));
         return found;
     }
@@ -587,11 +580,11 @@ public final class ModulatorEditor implements ParameterResolver.ModuleOwners {
         Object modulator = target == null ? null : a.owner(target, Owner.MODULATOR);
         if (modulator != null && s.contains(modulator))
             return Refs.parameter(modulatorRef(s, modulator), id, readableName(target));
-        String direct = target == null ? null : a.directId(s.device, target);
-        if (direct != null) return Refs.parameter(s.deviceRef, direct, nonEmpty(a.directName(target)));
+        boolean here = target != null && a.owner(target, Owner.DEVICE) == s.device;
+        JsonObject direct = here ? DirectParameters.find(a.direct(), s.device, s.deviceRef, target) : null;
+        if (direct != null) return direct;
         JsonObject result = new JsonObject();
-        result.addProperty(
-                "location", target != null && a.owner(target, Owner.DEVICE) == s.device ? "device" : "external");
+        result.addProperty("location", here ? "device" : "external");
         result.addProperty("path", target == null ? null : a.path(target));
         result.addProperty("parameterId", id);
         return result;
@@ -600,14 +593,11 @@ public final class ModulatorEditor implements ParameterResolver.ModuleOwners {
     /** The control's name when the host shows one, else null: a ref then carries none and compares none. */
     private String readableName(Object parameter) {
         try {
-            return nonEmpty(parameterName(parameter));
+            String name = parameterName(parameter);
+            return name == null || name.isEmpty() ? null : name;
         } catch (RpcException error) {
             return null;
         }
-    }
-
-    private static String nonEmpty(String name) {
-        return name == null || name.isEmpty() ? null : name;
     }
 
     private JsonObject modulatorRef(Scope s, Object modulator) {

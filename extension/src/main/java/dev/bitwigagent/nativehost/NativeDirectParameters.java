@@ -1,14 +1,14 @@
 package dev.bitwigagent.nativehost;
 
+import dev.bitwigagent.device.DirectParameters;
 import java.lang.reflect.Method;
-import java.util.Arrays;
 
 /**
- * A device's direct parameters as the public {@code DeviceProxy} addresses them: {@code device.base.parameterIds()}
- * lists the parameters.list ids and {@code device.base.parameter(id)} is the native parameter behind one, the same
- * object automation lanes, modulation mappings and Remote Controls slots take.
+ * The one binding of a device's direct parameters, as the public {@code DeviceProxy} addresses them:
+ * {@code device.base.parameterIds()} lists the parameters.list ids and {@code device.base.parameter(id)} is the native
+ * parameter behind one, the object automation lanes, modulation mappings and Remote Controls slots take.
  */
-final class NativeDirectParameters {
+final class NativeDirectParameters implements DirectParameters.Lookup {
     private final NativeHost.Access a;
     private final Method ids, parameter, name;
 
@@ -19,23 +19,19 @@ final class NativeDirectParameters {
         name = a.exactMethod("parameter.target.name", String.class, false);
     }
 
-    /** The device's direct parameter with this id, or null when it has none. */
-    Object find(Object device, String id) {
-        return Arrays.asList(ids(device)).contains(id) ? a.invoke(parameter, device, id) : null;
-    }
-
-    /** The id the device lists this parameter under, or null when it is not one of its direct parameters. */
-    String id(Object device, Object target) {
-        for (String id : ids(device)) if (a.invoke(parameter, device, id) == target) return id;
-        return null;
-    }
-
-    String name(Object target) {
-        return (String) a.invoke(name, target);
-    }
-
-    private String[] ids(Object device) {
+    @Override
+    public String[] parameterIds(Object device) {
         String[] found = (String[]) a.invoke(ids, device);
         return found == null ? new String[0] : found;
+    }
+
+    @Override
+    public Object parameter(Object device, String id) {
+        return a.invoke(parameter, device, id);
+    }
+
+    @Override
+    public String parameterName(Object target) {
+        return (String) a.invoke(name, target);
     }
 }

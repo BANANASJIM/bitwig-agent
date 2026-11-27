@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal, Self
+from typing import Annotated, Literal, Self
 
 from pydantic import Field, model_validator
 
@@ -19,7 +19,7 @@ ENABLED = "Omitted keeps an existing mapping's state; a new mapping is enabled."
 TARGET = "A parameter ref on the same device: one of the device itself (parameters.list), of a Grid module (grid.export) or of a modulator (modulators.list)."
 
 
-def mapped_device(target: Any) -> Any:
+def mapped_device(target: MappingParameterRef) -> DeviceRef:
     """The device a mapping target is on: a device parameter's own device, else its module's or modulator's."""
     return target.owner if isinstance(target, DeviceParameterRef) else target.owner.device
 

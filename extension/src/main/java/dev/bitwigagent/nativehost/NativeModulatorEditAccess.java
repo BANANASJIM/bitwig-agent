@@ -3,6 +3,7 @@ package dev.bitwigagent.nativehost;
 import com.google.gson.JsonObject;
 import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.Reason;
+import dev.bitwigagent.device.DirectParameters;
 import dev.bitwigagent.device.ModulatorEditor;
 import dev.bitwigagent.device.ModulatorSnapshotReader;
 import dev.bitwigagent.grid.GridNames;
@@ -380,18 +381,8 @@ public final class NativeModulatorEditAccess implements ModulatorEditor.Access {
     }
 
     @Override
-    public Object directParameter(Object device, String id) {
-        return direct.find(device, id);
-    }
-
-    @Override
-    public String directId(Object device, Object parameter) {
-        return direct.id(device, parameter);
-    }
-
-    @Override
-    public String directName(Object parameter) {
-        return direct.name(parameter);
+    public DirectParameters.Lookup direct() {
+        return direct;
     }
 
     @Override
