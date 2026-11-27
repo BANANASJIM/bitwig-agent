@@ -5,7 +5,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from bitwig_agent.protocol import TOOLS, invalid_params_reason, validate_call
+from bitwig_agent.protocol import TOOLS, invalid_params_message, invalid_params_reason, validate_call
 from bitwig_agent.protocol.clips import MAX_TRANSFORM_TARGETS
 from bitwig_agent.protocol.launcher import ARRANGER_CLIP_REF, CLIP_REF, SCENE_REF, SLOT_REF, TRACK_REF
 
@@ -314,6 +314,29 @@ def test_notes_take_a_launcher_clip_ref_an_optional_range_and_records():
                 validate_call(method, {"target": CLIP_REF, **gone, **extra})
         with pytest.raises(ValidationError):
             validate_call(method, {"target": ARRANGER_CLIP_REF, **extra})
+
+
+def test_the_note_methods_wait_longer_by_default_for_the_public_grid():
+    assert validate_call("notes.get", {"target": CLIP_REF})[1] == 30000
+    assert validate_call("notes.set", {"target": CLIP_REF, "notes": [note()]})[1] == 30000
+    insert = {"to": SLOT, "loop": {"length": 4}, "name": "Sketch"}
+    assert validate_call("clips.insert", insert)[1] == 5000, "a clip without notes keeps the short default"
+    assert validate_call("clips.insert", {**insert, "notes": [note()]})[1] == 30000
+    assert validate_call("clips.insert", {**insert, "notes": [note()], "timeoutMs": 7000})[1] == 7000
+
+
+@pytest.mark.parametrize(
+    ("range_", "message"),
+    [
+        ({"start": 1, "end": 1.0000001}, "range.end must be at least 1/1048576 beat after range.start"),
+        ({"start": 0, "end": 4, "pitches": [50, 40]}, "range.pitches is [low, high] with low <= high"),
+        ("some", "range.all: Input should be 'all'"),
+    ],
+)
+def test_a_bad_range_is_named_without_the_union_internals(range_, message):
+    with pytest.raises(ValidationError) as error:
+        validate_call("notes.get", {"target": CLIP_REF, "range": range_})
+    assert invalid_params_message("notes.get", error.value) == message
 
 
 def test_an_omitted_velocity_or_duration_is_an_update_of_an_existing_note():

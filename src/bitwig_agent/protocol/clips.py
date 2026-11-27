@@ -15,6 +15,7 @@ from bitwig_agent.protocol.base import (
     StatusArgs,
     StrictModel,
     ToolSpec,
+    long_timeout,
     omitted,
     validate_local_path,
 )
@@ -23,6 +24,7 @@ from bitwig_agent.protocol.limits import (
     BEAT_GRID,
     DURATION_RESOLUTION,
     DURATION_RESOLUTION_DIVISOR,
+    LONG_DEFAULT_TIMEOUT_MS,
     MAX_CLIP_BEATS,
 )
 from bitwig_agent.protocol.refs import ArrangerClipRef, Beats, ClipRef, LauncherClipRef, SlotRef, TrackRef
@@ -124,7 +126,11 @@ RANGE_DESCRIPTION = (
     '"all" (the whole clip, outside the loop too) or {start, end, pitches?}: notes whose onset lies in '
     "[start, end) and whose pitch lies in pitches [low, high] (default all)."
 )
-Range = Annotated[NoteRange | Literal["all"], Field(description=RANGE_DESCRIPTION)]
+Range = Annotated[
+    Annotated[NoteRange, Tag("bounds")] | Annotated[Literal["all"], Tag("all")],
+    Discriminator(lambda value: "all" if isinstance(value, str) else "bounds"),
+    Field(description=RANGE_DESCRIPTION),
+]
 
 
 def range_problem(at: str, span: Span, range_: NoteRange) -> str | None:
@@ -251,6 +257,8 @@ class ClipTargetArgs(StatusArgs):
 
 
 class ClipInsertArgs(StatusArgs):
+    # Without the native binding the notes are written window by window: with notes the call waits longer.
+    timeoutMs: int = long_timeout()
     to: Destination
     name: str = Field(min_length=1, max_length=128)
     loop: InsertLoop = omitted(description="Launcher slot only: the loop length.")
@@ -260,6 +268,13 @@ class ClipInsertArgs(StatusArgs):
     notes: Annotated[list[ClipNote], Field(min_length=1)] = omitted(
         description="The new clip's notes, in the record notes.get reads; they must fit the length."
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def notes_wait_longer(cls, data: Any) -> Any:
+        if isinstance(data, dict) and data.get("notes") and "timeoutMs" not in data:
+            return {**data, "timeoutMs": LONG_DEFAULT_TIMEOUT_MS}
+        return data
 
     @model_validator(mode="after")
     def validate_shape(self) -> Self:
@@ -400,10 +415,13 @@ class ClipTransformArgs(StatusArgs):
 
 
 class NotesGetArgs(ClipTargetArgs):
+    # Without the native binding a read binds one window per beat (about 0.2 s each).
+    timeoutMs: int = long_timeout(LONG_DEFAULT_TIMEOUT_MS)
     range: Range = omitted(description="Limits the notes returned; default the whole clip. " + RANGE_DESCRIPTION)
 
 
 class NotesSetArgs(ClipTargetArgs):
+    timeoutMs: int = long_timeout(LONG_DEFAULT_TIMEOUT_MS)
     notes: list[NotePatch] = Field(
         description="Without range: written in place (inserted or updated), nothing removed. With range: the notes "
         "of the range become exactly these."
@@ -517,10 +535,10 @@ NOTES_GET_DESCRIPTION = (
     "Read the notes of one launcher clip: every note of every channel, in the record notes.set and clips.insert "
     "take, sorted by beat then pitch; channel is omitted when 0. range ({start, end, pitches?}) only limits the "
     "output. Result: ref, loop, count (notes in the range), complete (false when the response cap cut the list: "
-    "read the rest by range; on the public path also for ranges past the loop end, with incompleteReason), exact "
+    "read the rest by range; on the public path also past the loop end or out of time, with incompleteReason), exact "
     "and notes. exact=true: read natively (Bitwig 6.1.4/6.1.7), no selection, onsets "
-    "exact. exact=false: the public API's note grid, onsets snapped to onsetResolution, one onset per cell, the clip "
-    "selected (a failure after that is unknown)."
+    "exact. exact=false: the public note grid, read on the 1/128-beat write grid (onsetResolution 0.0078125), one "
+    "onset per cell, the clip selected (a failure after that is unknown)."
 )
 NOTES_SET_DESCRIPTION = (
     "Write the notes of one launcher clip. Without range: each listed note is written in place (identity: channel, "

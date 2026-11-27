@@ -72,6 +72,14 @@ def index(prefix: str = "") -> dict[str, dict[str, Any]]:
     }
 
 
+def effect(name: str) -> str:
+    """How a call changes the project, as help labels it: read-only, writes, or state that leaves content alone."""
+    hints = resolve(name, TOOLS[name].annotations)
+    if hints.read_only:
+        return "read-only"
+    return "writes" if hints.destructive or not hints.idempotent else "changes state, not content"
+
+
 def method(name: str) -> dict[str, Any]:
     if not exists(name):
         raise ValueError(unknown_method_message(name))

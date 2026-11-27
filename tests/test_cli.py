@@ -848,6 +848,7 @@ async def test_help_layers_are_plain_text_on_stdout_and_exit_zero(monkeypatch):
     assert "\n  sends set " in resource
     method = (await cli.execute(["tracks", "set", "--help"])).stdout
     assert "(writes)" in method
+    assert "(changes state, not content)" in (await cli.execute(["notes", "get", "--help"])).stdout
     assert "(required)" in method
     assert "Example:\n  bitwig-agent tracks set --target=" in method
     assert (await cli.execute(["help", "tracks"])).stdout == resource

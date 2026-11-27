@@ -71,6 +71,12 @@ public final class LauncherFake {
     boolean emitNotes = true, launchPlaying, stopped = true;
     boolean emitPlaybackState = true, queueStop, stopQueued;
     boolean deferGridChanges, dropPublicWrites;
+    /**
+     * A public write also leaves an unlisted onset in the next cell, as Bitwig left 52@2.25 when a write cut a note
+     * the public read had missed (X2a native E2E, D1/D2).
+     */
+    boolean strayOnWrite;
+
     boolean applyStop = true;
     boolean deferCreate, failCreate, failImport, emitCreateContent = true, applyName = true;
     Double pendingSize;
@@ -372,6 +378,7 @@ public final class LauncherFake {
             if (!dropPublicWrites) {
                 clearCell(c, x, y);
                 put(selected, c, (start + x) * size, y, (Integer) a[3], duration);
+                if (strayOnWrite) put(selected, c, (start + x + 1) * size, y, 50, size);
             }
             if (emitNotes) observer.noteStepChanged(note(c, x, y));
             return null;
@@ -930,14 +937,20 @@ public final class LauncherFake {
 
     private NoteStep empty;
 
-    /** The cell as the public grid shows it: the first onset inside it, else a sustain from an earlier onset. */
+    /**
+     * The cell as the public grid shows it: the first onset inside it, else a sustain from an earlier onset inside the
+     * window. A note whose onset lies before the window shows nothing (X2a native E2E, D1: a note from beat 1.5 was
+     * not seen in the window from beat 2).
+     */
     NoteStep note(int channel, int x, int pitch) {
         TreeMap<Long, Stored> row = rows.get(selected + ":" + channel + ":" + pitch);
         long from = Note.ticks((start + x) * size), to = from + Note.ticks(size);
         Map.Entry<Long, Stored> on = row == null ? null : row.ceilingEntry(from);
         if (on != null && on.getKey() >= to) on = null;
         Map.Entry<Long, Stored> earlier = row == null || on != null ? null : row.lowerEntry(from);
-        if (earlier != null && earlier.getKey() + Note.ticks(earlier.getValue().duration) <= from) earlier = null;
+        if (earlier != null
+                && (earlier.getKey() < Note.ticks(start * size)
+                        || earlier.getKey() + Note.ticks(earlier.getValue().duration) <= from)) earlier = null;
         if (on == null && earlier == null) {
             if (empty == null) empty = step("Empty", null);
             return empty;

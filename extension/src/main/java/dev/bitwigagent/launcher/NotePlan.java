@@ -77,8 +77,14 @@ public final class NotePlan {
         return value.stripTrailingZeros().toPlainString();
     }
 
+    /**
+     * A stored time as messages show it: rounded to 7 decimals, which still names the same tick (a tick is about
+     * 9.5e-7 beat), so a value copied from a message is stored as the time it names.
+     */
     static String plain(long ticks) {
-        return plain(BigDecimal.valueOf(ticks).divide(BigDecimal.valueOf(Note.TICKS)));
+        return plain(BigDecimal.valueOf(ticks)
+                .divide(BigDecimal.valueOf(Note.TICKS))
+                .setScale(7, java.math.RoundingMode.HALF_UP));
     }
 
     /**

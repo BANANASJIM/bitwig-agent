@@ -81,7 +81,7 @@ public final class NoteModule implements HostModule {
                             listed,
                             range,
                             plan,
-                            ok -> op.result.complete(publicWritten(target, range, plan, ok)));
+                            mismatch -> op.result.complete(publicWritten(target, range, plan, mismatch)));
             } else if (access != null) readNative(op, target, range, access);
             else publicNotes.read(op, target, range, read -> op.result.complete(publicRead(target, range, read)));
         });
@@ -201,20 +201,22 @@ public final class NoteModule implements HostModule {
             out.addProperty("incompleteReason", read.incomplete);
         }
         out.addProperty("exact", false);
-        out.addProperty("onsetResolution", read.size);
+        out.addProperty("onsetResolution", NoteGrid.BEAT_GRID);
         return out;
     }
 
-    private JsonObject publicWritten(LauncherState.Target target, NoteRange range, NotePlan plan, boolean verified) {
+    /** {@code mismatch}: null when every touched window read back as planned, else the window that did not. */
+    private JsonObject publicWritten(LauncherState.Target target, NoteRange range, NotePlan plan, JsonObject mismatch) {
         RangeEdit.Change<Note> change = plan.change;
         int dispatched = change.insert.size() + change.update.size() + change.remove.size();
         JsonObject out;
-        if (verified)
+        if (mismatch == null)
             out = Results.outcome(
                     change.isEmpty() ? Outcome.ALREADY_MATCHED : Outcome.APPLIED, Verification.API_READBACK);
         else {
             out = Results.unknown();
-            out.addProperty("reason", Reason.NOT_OBSERVED.wire());
+            out.addProperty("reason", Reason.READBACK_MISMATCH.wire());
+            out.add("mismatch", mismatch);
         }
         written(out, target, range, change, NativeNotes.undo(false, dispatched), false);
         return out;
@@ -252,7 +254,12 @@ public final class NoteModule implements HostModule {
         List<NotePlan.Listed> listed = NotePlan.listed(notes);
         NotePlan plan = new NotePlan(listed, null);
         publicNotes.write(
-                op, target, listed, null, plan, ok -> op.result.complete(publicWritten(target, null, plan, ok)));
+                op,
+                target,
+                listed,
+                null,
+                plan,
+                mismatch -> op.result.complete(publicWritten(target, null, plan, mismatch)));
     }
 
     // ---- results ----
