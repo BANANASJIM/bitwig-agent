@@ -113,7 +113,10 @@ public final class NativeHostTest {
             NativeHost other = new NativeHost(host.getConstructor().newInstance(), "0.0.1", () -> {}, hosts, name -> {
                 throw new AssertionError("a hash mismatch must close the gate before any binding");
             });
-            assertTrue(other.access().gateError() != null);
+            String gate = other.access().gateError();
+            assertTrue(
+                    gate != null && gate.startsWith("Loaded host JAR SHA-256"),
+                    "a gate refusal carries its own message, not the exception class: " + gate);
         } finally {
             Files.delete(jar);
         }

@@ -372,6 +372,31 @@ public final class MarkerModuleTest {
     }
 
     @Test
+    void playbackStartingMidInsertStopsBeforeTheAdd() {
+        HostFixture f = new HostFixture();
+        Bank bank = new Bank(f);
+        f.transport.child("playPosition").data = 2.0;
+        List<Object> seeks = new ArrayList<>();
+        // Playback starts right after the seek, before the moved playhead is reported.
+        f.transport.on("setPosition", args -> {
+            seeks.add(args[0]);
+            if (seeks.size() == 1) f.transport.child("isPlaying").emit(true);
+            return null;
+        });
+        MarkerModule m = module(f);
+        JsonObject r = call(f, m, "markers.insert", "{\"beat\":8}");
+        assertTrue(
+                r.get("outcome").getAsString().equals("unknown")
+                        && r.get("reason").getAsString().equals("unsafe_state"),
+                "playback mid-insert is reported, not ignored: " + r);
+        assertTrue(
+                f.transport.calls("addCueMarkerAtPlaybackPosition") == 0
+                        && bank.view().isEmpty()
+                        && seeks.equals(List.of(8.0, 2.0)),
+                "no add; the playhead is sent back: " + seeks);
+    }
+
+    @Test
     void unobservedDeleteIsUnknownAndHolds() {
         HostFixture f = new HostFixture();
         Bank bank = new Bank(f);

@@ -11,6 +11,8 @@ import dev.bitwigagent.core.Outcome;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Refs;
 import dev.bitwigagent.core.Results;
+import dev.bitwigagent.core.RpcException;
+import dev.bitwigagent.core.SafetyObservation;
 import dev.bitwigagent.core.Scheduler;
 import dev.bitwigagent.core.Verification;
 import dev.bitwigagent.host.TransportSafety;
@@ -195,7 +197,7 @@ public final class MarkerModule implements HostModule {
     }
 
     private void insert(HostOperation op, JsonObject p, Snapshot before) {
-        transportSafety.requireStopped();
+        SafetyObservation safety = transportSafety.stopped(op);
         double beat = p.get("beat").getAsDouble();
         for (Marker m : before.markers)
             if (Math.abs(m.beat - beat) <= BEAT_TOLERANCE)
@@ -211,7 +213,7 @@ public final class MarkerModule implements HostModule {
         scheduler.poll(
                 op,
                 scheduler.observeUntil(op),
-                () -> at(beat),
+                () -> stillStopped(safety, playhead) && at(beat),
                 () -> {
                     transport.addCueMarkerAtPlaybackPosition();
                     awaitInserted(op, p, before, playhead);
@@ -220,6 +222,17 @@ public final class MarkerModule implements HostModule {
                     transport.setPosition(playhead);
                     unobserved(op, "The playhead was not observed at the marker beat; no marker was added.");
                 });
+    }
+
+    /** Playback or recording starting mid-insert stops it before the add; the playhead is still put back. */
+    private boolean stillStopped(SafetyObservation safety, double playhead) {
+        try {
+            transportSafety.guardStopped(safety);
+            return true;
+        } catch (RpcException error) {
+            transport.setPosition(playhead);
+            throw error;
+        }
     }
 
     private boolean at(double beat) {
@@ -320,7 +333,9 @@ public final class MarkerModule implements HostModule {
             result.addProperty("reason", reason.wire());
             result.addProperty(
                     "message",
-                    "The marker list (after an insert, also the playhead put back) was not observed as expected.");
+                    method.equals("markers.insert")
+                            ? "The marker list and the playhead put back were not observed as expected."
+                            : "The marker list did not reach the expected state.");
             result.addProperty("next", INSPECT_THEN_ACK);
         }
         op.result.complete(result);

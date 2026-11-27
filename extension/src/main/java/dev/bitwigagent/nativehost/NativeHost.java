@@ -68,7 +68,8 @@ public final class NativeHost {
         } catch (RuntimeException | ReflectiveOperationException | java.io.IOException error) {
             if (error instanceof RpcException && !((RpcException) error).is(Reason.NATIVE_UNAVAILABLE))
                 throw (RpcException) error;
-            gateError = diagnostic(error);
+            // A gate refusal already explains itself; other failures need their type to mean anything.
+            gateError = error instanceof RpcException ? error.getMessage() : diagnostic(error);
         } catch (LinkageError error) {
             gateError = diagnostic(error);
         }
@@ -128,7 +129,6 @@ public final class NativeHost {
         }
 
         private Class<?> owner(String key) throws ClassNotFoundException {
-            requireAvailable();
             return type(entry(members, key).getAsJsonObject().get("owner").getAsString());
         }
 
