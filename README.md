@@ -113,6 +113,7 @@ Features built on Bitwig's public Controller API are supported on Linux, Windows
 
 | Need | Guide |
 |---|---|
+| What Bitwig Agent can do | [Capability map](https://github.com/BANANASJIM/bitwig-agent/blob/main/docs/capabilities.md) |
 | Installation, upgrades or connection help | [Installation](https://github.com/BANANASJIM/bitwig-agent/blob/main/INSTALL.md) |
 | Operations, targeting and Grid recipes | [Usage](https://github.com/BANANASJIM/bitwig-agent/blob/main/USAGE.md) · [Protocol](https://github.com/BANANASJIM/bitwig-agent/blob/main/PROTOCOL.md) |
 | How the Python and Java bridge works | [Architecture](https://github.com/BANANASJIM/bitwig-agent/blob/main/docs/architecture.md) |
