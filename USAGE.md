@@ -89,7 +89,7 @@ For New Project, a launcher-clip Bounce, export formats or options beyond `expor
 
 | Input | Meaning |
 |---|---|
-| `--name=text` | A string field is literal; any other field is strict JSON (`--deviceIndex=0`, `--notes='[...]'`). `--name text` also works unless the value starts with `-`. |
+| `--name=text` | A string field is literal; any other field is strict JSON (`--volume=0.5`, `--notes='[...]'`). `--name text` also works unless the value starts with `-`. |
 | `--dryRun` | A bare boolean flag is true; write `--mute=false` for false. |
 | `--spec=@file`, `--spec=-` | A non-string value may come from a file or stdin (one `-` per command). |
 | `ARGS` | One JSON object, inline, `@file` or `-`; it merges with the flags and a repeated field is an error. |

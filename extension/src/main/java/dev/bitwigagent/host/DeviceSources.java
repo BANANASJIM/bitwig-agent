@@ -371,14 +371,6 @@ public final class DeviceSources {
                 throw Errors.notApplied(
                         Reason.TARGET_CHANGED, "Observed root device changed while its read was queued or running.");
         }
-
-        JsonObject parent() {
-            JsonObject result = new JsonObject();
-            result.addProperty("trackId", trackId);
-            result.addProperty("deviceIndex", index);
-            result.addProperty("expectedDeviceName", name);
-            return result;
-        }
     }
 
     /** The index a position names in a track's root chain; an anchor must be a root device of that track. */

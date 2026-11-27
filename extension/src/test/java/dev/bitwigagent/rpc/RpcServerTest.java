@@ -27,6 +27,9 @@ public final class RpcServerTest {
 
     private static final String PROTOCOL = "\"protocol\":\"" + SPECS.vocabulary().protocol + "\",";
 
+    private static final String TARGET = "\"target\":{\"kind\":\"device\",\"track\":{\"kind\":\"track\","
+            + "\"id\":\"00000000-0000-0000-0000-000000000001\",\"name\":\"Track\"},\"index\":0,\"name\":\"Poly Grid\"}";
+
     private static JsonObject ok() {
         JsonObject result = new JsonObject();
         result.addProperty("outcome", "applied");
@@ -96,8 +99,8 @@ public final class RpcServerTest {
                     "\"expectedKind\":\"integer\",\"expectedValue\":0,\"value\":1e0",
                     "\"expectedKind\":\"enum\",\"expectedValue\":1e0,\"value\":0")) {
                 String request = "{\"id\":\"raw-token\",\"method\":\"grid.parameters.set\",\"params\":{"
-                        + "\"trackId\":\"00000000-0000-0000-0000-000000000001\",\"deviceIndex\":0,"
-                        + "\"expectedDeviceName\":\"Poly Grid\",\"moduleId\":\"00000000-0000-0000-0000-000000000002\","
+                        + TARGET + ","
+                        + "\"moduleId\":\"00000000-0000-0000-0000-000000000002\","
                         + "\"parameterId\":\"MODE\"," + values + "}}\n";
                 error(call(server, request), "invalid_params");
             }
@@ -106,15 +109,15 @@ public final class RpcServerTest {
                 coordinates = coordinates.replace(
                         "\"" + key + "\":" + (key.startsWith("expected") ? "0" : "1"), "\"" + key + "\":1e0");
                 String request = "{\"id\":\"move-token\",\"method\":\"grid.modules.move\",\"params\":{"
-                        + "\"trackId\":\"00000000-0000-0000-0000-000000000001\",\"deviceIndex\":0,"
-                        + "\"expectedDeviceName\":\"Poly Grid\",\"moduleId\":\"00000000-0000-0000-0000-000000000002\","
+                        + TARGET + ","
+                        + "\"moduleId\":\"00000000-0000-0000-0000-000000000002\","
                         + coordinates + "}}\n";
                 error(call(server, request), "invalid_params");
             }
             for (String token : List.of("1e0", "1.0", "\"1\"", "true", "2147483648")) {
                 String request = "{\"id\":\"insert-token\",\"method\":\"grid.modules.insert\",\"params\":{"
-                        + "\"trackId\":\"00000000-0000-0000-0000-000000000001\",\"deviceIndex\":0,"
-                        + "\"expectedDeviceName\":\"Poly Grid\",\"typeId\":\"00000000-0000-0000-0000-000000000002\","
+                        + TARGET + ","
+                        + "\"typeId\":\"00000000-0000-0000-0000-000000000002\","
                         + "\"x\":" + token + ",\"y\":0}}\n";
                 error(call(server, request), "invalid_params");
             }
