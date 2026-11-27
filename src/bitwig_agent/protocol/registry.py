@@ -155,13 +155,17 @@ CLIENT_SIDE = frozenset(name for name, spec in TOOLS.items() if not spec.host)
 
 
 MAX_SUGGESTIONS = 3
+READ_VERBS = frozenset({"read", "fetch", "show"})
 
 
 def suggest_methods(method: str) -> list[str]:
-    """The close spelling of method, unless it has another verb: then the same verb under other resources."""
+    """The close spelling of method (a read verb as get), unless it has another verb: then the same verb under other
+    resources."""
+    resource, _, verb = method.rpartition(".")
+    if verb in READ_VERBS:
+        method, verb = f"{resource}.get", "get"
     exposed = [name for name, spec in TOOLS.items() if spec.expose]
     close = difflib.get_close_matches(method, exposed, n=1, cutoff=0.6)
-    verb = method.rpartition(".")[2]
     if close and close[0].rpartition(".")[2] == verb:
         return close
     same_verb = [name for name in exposed if name.rpartition(".")[2] == verb and name != method]
