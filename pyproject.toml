@@ -51,7 +51,7 @@ bitwig-agent-install = "bitwig_agent.install:main"
 testpaths = ["tests"]
 
 [tool.coverage.run]
-source = ["src/bitwig_agent", "scripts/remap"]
+source = ["src/bitwig_agent", "scripts/remap", "scripts/native"]
 data_file = "build/coverage/.coverage"
 
 
@@ -150,3 +150,13 @@ validate-skills = "agentskills validate skills/bitwig-agent"
 check = "python scripts/check.py"
 build = { depends-on = ["dist", "extension"] }
 install = { cmd = "bitwig-agent-install --extension build/BitwigAgent.bwextension", depends-on = ["extension"] }
+# Native test harness (scripts/native, configured by native-hosts.local.toml); extra arguments follow the task.
+native-doctor = { cmd = "python -m native doctor", env = { PYTHONPATH = "scripts" } }
+native-init = { cmd = "python -m native init {{ host }}", args = ["host"], env = { PYTHONPATH = "scripts" } }
+native-up = { cmd = "python -m native up {{ host }} '{{ ext }}'", args = ["host", { arg = "ext", default = "" }], env = { PYTHONPATH = "scripts" } }
+native-down = { cmd = "python -m native down", env = { PYTHONPATH = "scripts" } }
+native-reset = { cmd = "python -m native reset {{ host }} '{{ ext }}'", args = ["host", { arg = "ext", default = "" }], env = { PYTHONPATH = "scripts" } }
+native-status = { cmd = "python -m native status", env = { PYTHONPATH = "scripts" } }
+native-proof = { cmd = "python -m native proof '{{ run }}'", args = [{ arg = "run", default = "" }], env = { PYTHONPATH = "scripts" } }
+native-cli = { cmd = "python -m native cli", env = { PYTHONPATH = "scripts" } }
+native-shot = { cmd = "python -m native shot", env = { PYTHONPATH = "scripts" } }

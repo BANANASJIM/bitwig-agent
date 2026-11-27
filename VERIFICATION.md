@@ -124,6 +124,23 @@ GUI receipts, independent renders, isolated Undo/Redo and save/reopen comparison
 
 Launcher regressions in `ClipModuleTest` and `LauncherModuleTest` cover queued and immediately observed launch/stop, plus missing observations without re-dispatch. For a native queued case, inspect the slot separately from transport: a saved Launcher clip can remain engaged while transport is stopped. Declare any preparatory stop before writing and separately observe disengagement. Then verify queued launch and actual playing, stop the Launcher while transport still runs, and finally stop transport, retaining full receipts. Static GUI frames alone do not establish queue timing.
 
+### Native test harness
+
+Native E2E runs on an isolated test instance through `scripts/native` (Linux only; it needs `bwrap`, `xdotool`, `pw-link`, `pw-dump`, `pactl` and `magick` from the system). Copy `native-hosts.example.toml` to `native-hosts.local.toml` (git-ignored) and point it at your own install roots, a dedicated test display, a disposable project and a state directory outside any repository. `pixi run native-init <host>` builds that host's isolated home there by copying the activation and EULA files, the first-run markers (`has-*`; without them Bitwig shows its first-run welcome and never starts the audio engine) and JACK prefs from your own installation; licence copies, fixtures and evidence never enter a repository.
+
+```sh
+pixi run native-doctor               # tools, pixi, host jar sha256 against shared/host.json, initialised homes
+pixi run native-up 6.1.7 build/BitwigAgent.bwextension
+export BWA_NATIVE_RUN=<run id>       # printed by native-up; down, reset, cli and shot refuse without it
+pixi run native-cli -- status        # every CLI call of a run goes to its cli.log
+pixi run native-shot
+pixi run native-down                 # save, Quit (TERM fallback), close the evidence, print the proof
+```
+
+Rules the harness enforces: one run at a time (a lock the launched Bitwig holds until it exits; `native-status` shows the owner) and only its owner may change it; only one Bitwig on the machine during a run; the test display is never `:0` or the caller's own display; the host jar must match `host.json`; the test instance listens on the configured port (not the default 61172), so a client that was not told the port cannot reach it. Bitwig runs in `bwrap` with a desktop-session environment built from an allowlist (nothing of the pixi activation) and its config, user library, Java prefs and temp directories bound to the isolated home, so the real ones stay untouched. Audio fails closed: only JACK is left, Bitwig's own connect requests are dropped, the harness links its outputs to the `bwtest` null sink, and any failure after launch (a Bitwig link anywhere else included) screenshots Bitwig's window, cuts the stray links and kills the whole sandbox; `audio route --mode=silent` follows as a second guard. CLI calls keep their client-side route state in the run directory, and `native-cli` refuses route restores and audible captures. `native-down` stops without closing the evidence while the sandbox is still running.
+
+Each run writes `<state_root>/runs/<time>-<host>/`: `run.json` (host, jar and extension sha256, commit, port, pid, quit kind), `bwrap-argv.txt`, `/proc/<pid>/mountinfo` (structural isolation proof), real-directory snapshots before and after with their diff, the PipeWire link monitor log (any Bitwig link outside `bwtest`, and whether `pw-dump` ran throughout), `pw-link.txt`, `silent-route.json`, `cli.log`, Bitwig's output and log, and screenshots. `pixi run native-proof [RUN]` summarises them as PASS/FAIL lines. A passing proof establishes isolation and silence for that run only; it is not evidence of the behaviour under test.
+
 ### Native 6.1.4 production check — pre-release candidates
 
 An isolated Linux / Bitwig **6.1.4 / API 25** session exercised the public clip, note and transport path. Creation and exact eight-note window readback were observed; the saved eight-beat phrase was then reopened and independently verified with the final transport candidate. The temporary installed Python consumer came from commit `8d5137a`; the private candidate extension SHA-256 was `5488139de5fcef455a6f1057ab109d6afc327e881bc8ff6d8e8ca29c7d16f95f`.
