@@ -16,8 +16,8 @@
 #              scratch audio track created and deleted here (scratchDeleted says whether the delete worked).
 #   t5 strong  the agent's master file measures AND an export of the Bass track alone (export.audio, sources = the
 #              Bass track, start 0, length of the agent's file at the project tempo) to RAW_DIR/bass-only measures
-#              above -40 LUFS. That proves the arranger has bass in the range the master render covers (a bass left
-#              in launcher clips renders silent). Both dialects export a single track, so there is no band fallback;
+#              above -40 LUFS. That proves the Bass track contributes sound to a render in the project's playback state (a track
+#              that renders silent, e.g. launcher clips without playback switched to the arranger, fails). Both dialects export a single track, so there is no band fallback;
 #              a failed export fails the check (bassRender says which).
 set -euo pipefail
 # shellcheck source=lib.sh
@@ -146,7 +146,7 @@ scratch_params() {  # DEVICE_NAME -> sets $fresh to the param values of a fresh 
   fi
   [[ -n "$scratch_key" ]] || { fresh=null; return; }
   if [[ "$dialect" == new ]]; then
-    inserted="$(rd new devices.insert "$(jq -nc --arg f "$F_INSERT_TO" --argjson t "$scratch_key" --arg p "$path" '{($f): $t, kind: "file", path: $p}')" 2>/dev/null </dev/null)" || { fresh=null; return; }
+    inserted="$(rd new devices.insert "$(jq -nc --arg f "$F_INSERT_TO" --argjson t "$scratch_key" --arg p "$path" '{($f): {parent: $t}, kind: "file", path: $p}')" 2>/dev/null </dev/null)" || { fresh=null; return; }
     row="$(jq -c --arg n "$name" '{ref: .ref, name: $n}' <<<"$inserted")"
   else
     rd old devices.insert "$(jq -nc --arg t "$scratch_key" --arg p "$path" '{trackId: $t, expectedDeviceCount: 0, kind: "file", path: $p}')" >/dev/null 2>&1 </dev/null || { fresh=null; return; }

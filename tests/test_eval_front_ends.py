@@ -330,7 +330,8 @@ def test_verify_reads_state_through_the_condition_client(tmp_path: Path) -> None
     assert '"endBeats":32' in export_line
     assert '"sources":[{"kind":"track"' in export_line
     assert "bass-only" in export_line
-    assert '{"parent":' in log.split("devices.insert ")[1].splitlines()[0]
+    assert '{"to":{"parent":{"kind":"track"' in log.split("devices.insert ")[1].splitlines()[0]
+    assert '{"target":' in log.split("devices.list ")[1].splitlines()[0]
     assert "tracks.delete" in log
     assert (tmp_path / "raw" / "tracks.json").is_file()
 
@@ -379,13 +380,6 @@ def test_verify_t4_compares_with_a_fresh_insert_and_field_names_flip(tmp_path: P
     failed = json.loads(verify_again(tmp_path, state, env, "raw8").stdout)["t5"]
     assert (failed["strong"], failed["bassRender"]) == ("fail", "export_failed")
     (state / "export.audio").write_text(json.dumps(answers["export.audio"]))
-    # the FE6-b rename lives in two variables
-    (state / "log").unlink()
-    flipped = env | {"BWA_F_INSERT_TO": "to", "BWA_F_LIST_PARENT": "target"}
-    assert verify_again(tmp_path, state, flipped, "raw6").returncode == 0
-    log = (state / "log").read_text()
-    assert '{"to":' in log.split("devices.insert ")[1].splitlines()[0]
-    assert '{"target":' in log.split("devices.list ")[1].splitlines()[0]
 
 
 def test_chained_help_and_call_resolve_to_the_call() -> None:

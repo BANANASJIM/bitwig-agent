@@ -30,9 +30,9 @@ Overrides, all optional files in `<run>`: `labels.json` (failure cause), `segmen
 not-lost|lost). `verify.sh` writes per task `status` (the original check), `goals` and, for T1, T4 and T5,
 `strong`; for T4 it inserts the same device on a scratch audio track and deletes it afterwards.
 
-The B/C dialect argument names that the FE6-b renames change live in `lib.sh` only: `F_LIST_PARENT` (`.list`
-owner argument, `parent` now) and `F_INSERT_TO` (`devices.insert` destination, `parent` now). Flip those two
-values, or export `BWA_F_LIST_PARENT` / `BWA_F_INSERT_TO`; no other line depends on them.
+The B/C dialect argument names changed by FE6-b live in `lib.sh` only: `F_LIST_PARENT` (`.list` owner argument,
+`target`) and `F_INSERT_TO` (`devices.insert` destination, `to`, passed as `{parent: ref}`); override with
+`BWA_F_LIST_PARENT` / `BWA_F_INSERT_TO` if they change again.
 
 ## Pre-registered criterion (rerun)
 
