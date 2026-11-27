@@ -87,28 +87,25 @@ public final class AutomationModule implements HostModule {
         }
     }
 
-    /**
-     * Points are identified by beat. A listed point keeps what it omits from the point it updates (interpolation,
-     * curve); a new point defaults to linear with curve 0.
-     */
-    public static final RangeEdit.Kind<Point, Request> KIND = new RangeEdit.Kind<>() {
-        public Object identity(Point observed) {
-            return observed.beat;
+    /** Points are identified by beat and compared canonically. */
+    public static final RangeEdit.Kind<Point> KIND = new RangeEdit.Kind<>() {
+        public Object key(Point point) {
+            return point.beat;
         }
 
-        public Object listedIdentity(Request listed) {
-            return listed.beat;
-        }
-
-        public Point written(Point observed, Request listed) {
-            boolean linear = listed.linear != null ? listed.linear : observed == null || observed.linear;
-            return new Point(listed.beat, listed.value, linear, observed == null ? 0 : observed.curve);
-        }
-
-        public Comparator<Point> order() {
-            return Comparator.comparingDouble(point -> point.beat);
+        public boolean same(Point a, Point b) {
+            return a.equals(b);
         }
     };
+
+    /**
+     * The point a request writes: it keeps what it omits (interpolation, curve) from the point at its beat; a new point
+     * is linear with curve 0.
+     */
+    static Point written(Point observed, Request listed) {
+        boolean linear = listed.linear != null ? listed.linear : observed == null || observed.linear;
+        return new Point(listed.beat, listed.value, linear, observed == null ? 0 : observed.curve);
+    }
 
     /** Which parameter's lane: a track's volume or pan, or a Grid module parameter of one of its devices. */
     public static final class Target {
@@ -267,12 +264,17 @@ public final class AutomationModule implements HostModule {
         public final List<N> delete = new ArrayList<>(), kept = new ArrayList<>();
 
         public Edit(List<N> natives, List<Point> current, List<Request> requested, double[] range) {
-            change = RangeEdit.plan(current, requested, range == null ? null : p -> inRange(p.beat, range), KIND);
-            desired = RangeEdit.apply(current, change, KIND);
+            Map<Double, Point> byBeat = new HashMap<>();
+            for (Point point : current) byBeat.putIfAbsent(point.beat, point);
+            List<Point> listed = new ArrayList<>();
+            for (Request request : requested) listed.add(written(byBeat.get(request.beat), request));
+            change = RangeEdit.plan(current, listed, range == null ? null : p -> inRange(p.beat, range), KIND);
+            desired = RangeEdit.apply(current, change);
+            desired.sort(Comparator.comparingDouble(point -> point.beat));
             Map<Point, N> nativeOf = new IdentityHashMap<>();
             for (int i = 0; i < current.size(); i++) nativeOf.put(current.get(i), natives.get(i));
             for (Point point : change.remove) delete.add(nativeOf.get(point));
-            for (RangeEdit.Update<Point> update : change.update) delete.add(nativeOf.get(update.from));
+            for (RangeEdit.Update<Point> update : change.update) delete.add(nativeOf.get(update.before));
             for (int i = 0; i < desired.size(); i++) {
                 N kept = nativeOf.get(desired.get(i));
                 if (kept != null) this.kept.add(kept);
@@ -285,7 +287,7 @@ public final class AutomationModule implements HostModule {
 
         /** Nothing to write; a lane holding only Bitwig's base point counts as cleared. */
         public boolean matched(List<Point> current) {
-            return change.empty() || withoutBasePoint(current, desired).equals(desired);
+            return change.isEmpty() || withoutBasePoint(current, desired).equals(desired);
         }
 
         public JsonObject summary(boolean applied) {
@@ -293,7 +295,7 @@ public final class AutomationModule implements HostModule {
             out.addProperty("inserted", applied ? change.insert.size() : 0);
             out.addProperty("updated", applied ? change.update.size() : 0);
             out.addProperty("removed", applied ? change.remove.size() : 0);
-            out.addProperty("unchanged", change.unchanged.size());
+            out.addProperty("unchanged", change.unchanged);
             return out;
         }
     }

@@ -111,15 +111,15 @@ final class AutomationRangePropertyTest {
     void readingBackAndWritingTheWholeLaneIsAlreadyMatched(@ForAll("cases") Case c) {
         AutomationModule.Edit<Native> edit =
                 new AutomationModule.Edit<>(natives(c.lane), c.lane, asListed(c.lane), AutomationModule.ALL);
-        assertTrue(edit.change.empty() && edit.matched(c.lane));
-        assertEquals(c.lane.size(), edit.change.unchanged.size());
+        assertTrue(edit.change.isEmpty() && edit.matched(c.lane));
+        assertEquals(c.lane.size(), edit.change.unchanged);
     }
 
     @Property
     void replayingARequestIsAlreadyMatched(@ForAll("cases") Case c) {
         List<AutomationModule.Point> after =
                 new AutomationModule.Edit<>(natives(c.lane), c.lane, c.listed, c.range).desired;
-        assertTrue(new AutomationModule.Edit<>(natives(after), after, c.listed, c.range).change.empty());
+        assertTrue(new AutomationModule.Edit<>(natives(after), after, c.listed, c.range).change.isEmpty());
     }
 
     @Property
@@ -130,7 +130,7 @@ final class AutomationRangePropertyTest {
         else {
             for (AutomationModule.Point p : change.remove) assertTrue(c.scope().test(p));
             for (RangeEdit.Update<AutomationModule.Point> u : change.update)
-                assertTrue(c.scope().test(u.from));
+                assertTrue(c.scope().test(u.before));
             for (AutomationModule.Point p : change.insert) assertTrue(c.scope().test(p));
         }
     }

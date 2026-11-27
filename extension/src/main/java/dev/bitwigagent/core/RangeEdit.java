@@ -1,86 +1,112 @@
 package dev.bitwigagent.core;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.IdentityHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.function.Predicate;
 
 /**
- * The range rule shared by time-series records (automation points, notes). Without a scope only the listed records are
- * written: each is inserted, or updates the observed record with its identity; nothing is removed. With a scope the
- * observed records inside it become exactly the listed ones. Records are canonical values with {@code equals}, so a
- * listed record that writes what is already there is unchanged.
- *
- * @param <R> observed record
- * @param <L> listed (requested) record; it may omit fields the observed record keeps
+ * The range rule of time-series content (notes, automation points) as one pure function. Without a range the listed
+ * entries are written in place (inserted, or updated when an entry with the same identity exists) and nothing is
+ * removed. With a range, the entries inside it become exactly the listed ones. Entries are canonical records; their
+ * {@link Kind} says which ones are the same entry and whether two of them are equal as the host stores them.
  */
 public final class RangeEdit {
     private RangeEdit() {}
 
-    /** What a record type supplies: identities, the record a listed one writes over the observed one, lane order. */
-    public interface Kind<R, L> {
-        Object identity(R observed);
+    /** Identity and equality of one kind of entry. */
+    public interface Kind<R> {
+        /** Entries with equal keys are the same entry (a note's channel, pitch and onset). */
+        Object key(R entry);
 
-        Object listedIdentity(L listed);
-
-        /** The record written for {@code listed}; {@code observed} is null for a new record. */
-        R written(R observed, L listed);
-
-        Comparator<R> order();
+        /** Whether two entries with the same key are equal as the host stores them. */
+        boolean same(R a, R b);
     }
 
-    /** An observed record replaced by the record a listed one writes. */
+    /** An existing entry and what it becomes. */
     public static final class Update<R> {
-        public final R from, to;
+        public final R before, after;
 
-        Update(R from, R to) {
-            this.from = from;
-            this.to = to;
+        Update(R before, R after) {
+            this.before = before;
+            this.after = after;
         }
     }
 
-    /** The plan; {@code remove}, {@code unchanged} and {@code Update.from} are the observed instances themselves. */
+    /** What a write does to the observed entries; {@code unchanged} counts listed entries already equal. */
     public static final class Change<R> {
-        public final List<R> insert = new ArrayList<>(), remove = new ArrayList<>(), unchanged = new ArrayList<>();
-        public final List<Update<R>> update = new ArrayList<>();
+        public final List<R> insert, remove;
+        public final List<Update<R>> update;
+        public final int unchanged;
 
-        public boolean empty() {
-            return insert.isEmpty() && remove.isEmpty() && update.isEmpty();
+        Change(List<R> insert, List<Update<R>> update, List<R> remove, int unchanged) {
+            this.insert = Collections.unmodifiableList(insert);
+            this.update = Collections.unmodifiableList(update);
+            this.remove = Collections.unmodifiableList(remove);
+            this.unchanged = unchanged;
+        }
+
+        public boolean isEmpty() {
+            return insert.isEmpty() && update.isEmpty() && remove.isEmpty();
+        }
+
+        /** The entries the write puts into the content: inserts, then updated values. */
+        public List<R> written() {
+            List<R> out = new ArrayList<>(insert);
+            for (Update<R> u : update) out.add(u.after);
+            return out;
         }
     }
 
     /**
-     * Plans {@code listed} over {@code observed}. {@code scope} is null without a range, else whether an observed record
-     * lies inside it. Listed identities must be unique; an observed identity held by several records matches the first.
+     * The change that makes {@code observed} hold {@code listed}. {@code range} null: upsert, nothing removed. Else
+     * every observed entry in the range that is not listed is removed; listed entries must lie in the range and have
+     * distinct keys (the caller's rules refuse both before planning). Observed entries sharing a key (the host can
+     * hold two) count as one: the first equal one stays, the others are removed inside a range and kept outside one.
      */
-    public static <R, L> Change<R> plan(List<R> observed, List<L> listed, Predicate<R> scope, Kind<R, L> kind) {
-        Map<Object, R> byIdentity = new HashMap<>();
-        for (R record : observed) byIdentity.putIfAbsent(kind.identity(record), record);
-        Set<R> matched = Collections.newSetFromMap(new IdentityHashMap<>());
-        Change<R> change = new Change<>();
-        for (L item : listed) {
-            R from = byIdentity.get(kind.listedIdentity(item));
-            R to = kind.written(from, item);
-            if (from == null) change.insert.add(to);
-            else if (from.equals(to)) change.unchanged.add(from);
-            else change.update.add(new Update<>(from, to));
-            if (from != null) matched.add(from);
+    public static <R> Change<R> plan(List<R> observed, List<R> listed, Predicate<R> range, Kind<R> kind) {
+        Map<Object, List<R>> byKey = new HashMap<>();
+        for (R entry : observed)
+            byKey.computeIfAbsent(kind.key(entry), k -> new ArrayList<>()).add(entry);
+        List<R> insert = new ArrayList<>(), remove = new ArrayList<>();
+        List<Update<R>> update = new ArrayList<>();
+        Set<Object> keys = new HashSet<>();
+        int unchanged = 0;
+        for (R entry : listed) {
+            Object key = kind.key(entry);
+            if (!keys.add(key)) throw new IllegalArgumentException("listed entries repeat a key");
+            if (range != null && !range.test(entry))
+                throw new IllegalArgumentException("a listed entry lies outside the range");
+            List<R> existing = byKey.getOrDefault(key, List.of());
+            R kept = null;
+            for (R candidate : existing)
+                if (kind.same(candidate, entry)) {
+                    kept = candidate;
+                    break;
+                }
+            if (kept != null) unchanged++;
+            else if (existing.isEmpty()) insert.add(entry);
+            else update.add(new Update<>(kept = existing.get(0), entry));
+            if (range != null) for (R other : existing) if (other != kept) remove.add(other);
         }
-        if (scope != null)
-            for (R record : observed) if (!matched.contains(record) && scope.test(record)) change.remove.add(record);
-        return change;
+        if (range != null)
+            for (R entry : observed) if (range.test(entry) && !keys.contains(kind.key(entry))) remove.add(entry);
+        return new Change<>(insert, update, remove, unchanged);
     }
 
-    /** The records after {@code change}: untouched observed instances kept as they are, in {@code kind.order()}. */
-    public static <R> List<R> apply(List<R> observed, Change<R> change, Kind<R, ?> kind) {
-        Set<R> gone = Collections.newSetFromMap(new IdentityHashMap<>());
-        gone.addAll(change.remove);
-        List<R> out = new ArrayList<>();
-        for (Update<R> update : change.update) {
-            gone.add(update.from);
-            out.add(update.to);
-        }
-        out.addAll(change.insert);
-        for (R record : observed) if (!gone.contains(record)) out.add(record);
-        out.sort(kind.order());
+    /** {@code observed} after {@code change}: removed and updated entries (by identity) out, the written ones in. */
+    public static <R> List<R> apply(List<R> observed, Change<R> change) {
+        Map<R, Boolean> gone = new IdentityHashMap<>();
+        for (R entry : change.remove) gone.put(entry, true);
+        for (Update<R> u : change.update) gone.put(u.before, true);
+        List<R> out = new ArrayList<>(observed.size() + change.insert.size());
+        for (R entry : observed) if (!gone.containsKey(entry)) out.add(entry);
+        out.addAll(change.written());
         return out;
     }
 }
