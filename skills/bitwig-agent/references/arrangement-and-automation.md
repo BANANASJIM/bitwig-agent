@@ -19,7 +19,7 @@ In 6.0 the Detail Editor holds the note, audio and automation editors. Its Clip 
 
 ## Launcher and Arranger
 
-The Launcher is for trying combinations and the Arranger for fixed placement. Each track has one controlling sequencer at a time: launching or stopping a clip takes that track away from the Arranger, and stopping launcher clips does not give it back. Use Return playback to Arranger Timeline. If an Arranger edit is inaudible, check this first.
+The Launcher is for trying combinations and the Arranger for fixed placement. Each track has one controlling sequencer at a time: launching or stopping a clip takes that track away from the Arranger, and stopping launcher clips does not give it back. `launcher returnToArrangement` (one track ref, or `--target=all`) gives it back; `launcher stop --target=all` stops every track. If an Arranger edit is inaudible, check this first.
 
 - Before launching, check project and clip quantization, launch mode, release and Next Actions. A scene touches many tracks, and an empty slot can stop clips or record on armed tracks.
 - A launch or stop may queue to a quantization boundary, so `clips launch` and `scenes launch` return `sent`, which is not "playing". Observe the transition before dependent edits. A stopped playhead is not silence while tails ring.

@@ -36,6 +36,9 @@ def test_export_audio_and_tracks_bounce_are_strict_long_write_tools():
         )[0]["bitDepth"]
         == 24
     )
+    for types in ("mp3", "ogg", "opus", ["wav", "mp3", "ogg", "opus", "flac"], ["flac"]):
+        assert validate_call("export.audio", base | {"fileType": types})[0]["fileType"] == types
+    assert validate_call("export.audio", base | {"fileType": ["wav", "mp3"], "bitDepth": 32})[0]["bitDepth"] == 32
     assert TOOLS["export.audio"].read_only is False
     assert TOOLS["tracks.bounce"].read_only is False
     assert TOOLS["jobs.get"].read_only is True
@@ -58,7 +61,11 @@ def test_export_audio_and_tracks_bounce_are_strict_long_write_tools():
         {"baseName": "x" * 129},
         {"end": 0},
         {"end": 65537},
-        {"fileType": "mp3"},
+        {"fileType": "aiff"},
+        {"fileType": []},
+        {"fileType": ["wav", "wav"]},
+        {"fileType": ["wav", "aiff"]},
+        {"fileType": ["mp3", "flac"], "bitDepth": 32},
         {"format": "wav"},
         {"bitDepth": 20},
         {"fileType": "flac", "bitDepth": 32},
