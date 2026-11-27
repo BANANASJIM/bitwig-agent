@@ -170,7 +170,7 @@ def test_a_stopping_insert_that_already_created_its_device_is_never_resent():
     envelope = batch_call(host, {"calls": calls})
     assert not isinstance(envelope, Error)
     hint = envelope.result["next"]
-    assert hint.startswith("Call 1 (devices.insert) stopped: The insert applied")
+    assert hint.startswith("Call 1 (devices.insert) stopped: devices.insert applied")
     assert "do not repeat devices.insert" in hint
     assert "send it again" not in hint
     assert hint.endswith("Calls 2-3 were not run.")

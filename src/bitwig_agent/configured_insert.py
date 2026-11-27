@@ -1,11 +1,12 @@
 """devices.insert {params}, modulators.insert {params, map} and chains.insert {insert}: create, then configure or fill,
 in one call.
 
-The insert, each parameters.set, each modulators.map and the devices.insert that fills a new chain run as the
-standalone calls would, one entry each, under
+The insert, each parameters.set, each modulators.map and the devices.insert that fills a new chain (entry "fill") run
+as the standalone calls would, one entry each, under
 the batch rule: every step is resolved first, then they run in order and stop at the first that does not succeed.
 Once the insert applied, the result keeps the new object's ref and, after a failed step, a next naming the calls
-that finish the job on it: the object exists, so repeating the insert would duplicate it. Nothing is rolled back.
+that finish the job on it: the object exists, so repeating the insert would duplicate it. An unknown step may have
+happened, so next says to inspect it and never names it among the calls to resend. Nothing is rolled back.
 """
 
 from __future__ import annotations
@@ -27,7 +28,7 @@ PARAMETER_READ = {
 }
 """Where the refs of the new object, or of its parameters, are read, by insert method."""
 CREATED_STEP = {"chains.insert": "chain"}
-"""The entry name of the create step where it is not "insert" (chains.insert's own insert is the fill step)."""
+"""The entry name of the create step where it is not "insert" (chains.insert's fill step is "fill")."""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -56,7 +57,7 @@ Planner = Callable[[Any, dict[str, Any], dict[str, Any], int], Awaitable[list[St
 
 def refuse_all(extra: Mapping[str, Any], why: dict[str, Any]) -> list[Step]:
     """Every step the request asks for, in run order, refused for one reason."""
-    fill = [("insert", "devices.insert")] if "insert" in extra else []
+    fill = [("fill", "devices.insert")] if "insert" in extra else []
     params = [(f"params.{name}", "parameters.set") for name in extra.get("params", {})]
     maps = [(f"map[{i}]", "modulators.map") for i in range(len(extra.get("map", [])))]
     return [Refused(name, method, why) for name, method in fill + params + maps]
@@ -104,7 +105,7 @@ async def modulator_steps(client: Any, created: dict[str, Any], extra: dict[str,
 
 async def chain_steps(client: Any, created: dict[str, Any], extra: dict[str, Any], timeout_ms: int) -> list[Step]:
     """The new chain is filled by a devices.insert into it."""
-    return [Call("insert", "devices.insert", {"to": created["ref"], "insert": extra["insert"]})]
+    return [Call("fill", "devices.insert", {"to": created["ref"], "insert": extra["insert"]})]
 
 
 async def run(client: Any, step: Call, timeout_ms: int) -> dict[str, Any]:
@@ -138,14 +139,17 @@ def finish_hint(method: str, created: dict[str, Any], steps: list[Step], entries
     read = PARAMETER_READ[method] if "ref" in created else TOOLS[method].inspect
     open_steps = [(s, e) for s, e in zip(steps, entries, strict=True) if Outcome(e["outcome"]) not in SUCCEEDED]
     unknown = [s for s, e in open_steps if e["outcome"] == Outcome.UNKNOWN]
+    rest = [s for s, e in open_steps if e["outcome"] != Outcome.UNKNOWN]
     found = "its ref is in this result" if "ref" in created else f"it was not identified: find it with {read}"
-    hint = f"The insert applied and {found}; do not repeat {method}."
-    if unknown:
-        hint += (
-            f" {unknown[0].name} is unknown: inspect with {TOOLS[unknown[0].method].inspect} before any further write."
-        )
-    calls = " and ".join(dict.fromkeys(s.method for s, _ in open_steps))  # in run order
-    return f"{hint} Not done: {', '.join(s.name for s, _ in open_steps)}; finish with {calls} on the new object (refs from {read})."
+    hint = f"{method} applied and {found}; do not repeat {method}."
+    for step in unknown:
+        hint += f" {step.name} is unknown: inspect with {TOOLS[step.method].inspect} before any further write; never resend it."
+    if not rest:
+        return hint
+    calls = " and ".join(dict.fromkeys(s.method for s in rest))  # in run order
+    return (
+        f"{hint} Not done: {', '.join(s.name for s in rest)}; finish with {calls} on the new object (refs from {read})."
+    )
 
 
 def report(method: str, created: dict[str, Any], steps: list[Step], entries: list[dict[str, Any]]) -> dict[str, Any]:
@@ -197,8 +201,8 @@ async def modulators_insert(client: Any, args: dict[str, Any], timeout_ms: int) 
 
 async def chains_insert(client: Any, args: dict[str, Any], timeout_ms: int) -> dict[str, Any]:
     """Bitwig renames a chain after the file it is filled with: the filled device's ref carries the chain as read then."""
+    filling = "insert" in args  # insert_then takes it out of args
     result = await insert_then(chain_steps, "chains.insert", client, args, timeout_ms)
-    filled = result.get("entries", [{}, {}])[1]
-    if filled.get("outcome") == Outcome.APPLIED:
-        result["ref"] = filled["ref"]["chain"]
+    if filling and result["entries"][1]["outcome"] == Outcome.APPLIED:
+        result["ref"] = result["entries"][1]["ref"]["chain"]
     return result

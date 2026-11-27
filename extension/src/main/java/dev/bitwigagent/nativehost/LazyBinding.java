@@ -6,9 +6,11 @@ import dev.bitwigagent.core.RpcException;
 
 /**
  * Bindings resolved on first use and kept, so a key a host lacks fails only the features that use it (compat layer
- * §3.2). A failure to bind (a reflective, linkage or other unchecked error from the binding code) is that feature's
- * {@code native_unavailable} and is kept too: it cannot change for the loaded jar. A refusal the binding raises itself
- * is kept when it is {@code native_unavailable} or {@code host_mismatch}; any other (a cancelled request) is not.
+ * §3.2). A failure to bind (a reflective or linkage error) is that feature's {@code native_unavailable} and is kept
+ * too: it cannot change for the loaded jar. A refusal the binding raises itself is kept when it is
+ * {@code native_unavailable} or {@code host_mismatch}; any other (a cancelled request) is not. Any other unchecked
+ * error from the binding code is a bug, not a missing key: it propagates (the bridge reports it as {@code internal})
+ * and the next call binds again.
  *
  * <p>Not thread-safe, and the kept value is published without synchronization: an instance belongs to the thread that
  * calls {@link #get}, the extension's controller thread for {@link NativePorts}' handles and the owning adapter's
@@ -39,7 +41,7 @@ final class LazyBinding<T> {
         } catch (RpcException error) {
             if (error.is(Reason.NATIVE_UNAVAILABLE) || error.is(Reason.HOST_MISMATCH)) failure = error;
             throw error;
-        } catch (ReflectiveOperationException | LinkageError | RuntimeException error) {
+        } catch (ReflectiveOperationException | LinkageError error) {
             failure = Errors.notApplied(Reason.NATIVE_UNAVAILABLE, unavailable + Errors.diagnostic(error));
             throw failure;
         }

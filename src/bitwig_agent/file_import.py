@@ -56,16 +56,24 @@ def finish(entries: list[dict[str, Any]], clip: dict[str, Any] | None, track: di
     failed = next(e for e in entries if Outcome(e["outcome"]) not in SUCCEEDED)
     if failed["step"] == "import":
         return str(failed.get("next", "Inspect the slot with launcher.list before any further write."))
-    if failed["step"] == "copy" and failed["outcome"] == Outcome.UNKNOWN:
+    unknown = failed["outcome"] == Outcome.UNKNOWN
+    own = f" The {failed['step']} step said: {failed['next']}" if unknown and "next" in failed else ""
+    if failed["step"] == "copy" and unknown:
         return (
             f"The copy is unknown and the clip may already be on the arranger: inspect arranger.list "
-            f"{{target: {dumps(track)}}} before any further write, then delete the launcher clip {dumps(clip)} with "
-            "clips.delete; never repeat clips.copy or clips.import."
+            f"{dumps({'target': track})} before any further write, then ack arranger.quarantine. Only if the clip is "
+            f"there, delete the launcher clip {dumps(clip)} with clips.delete; never resend clips.copy or clips.import."
+            + own
         )
     if failed["step"] == "copy":
         return (
             f"The file is in the launcher clip {dumps(clip)}, not on the arranger: copy it with clips.copy and delete "
             "it with clips.delete, or delete it; do not repeat clips.import."
+        )
+    if unknown:
+        return (
+            f"The arranger clip is in this result; the delete of the launcher clip {dumps(clip)} is unknown: inspect "
+            f"launcher.list {dumps({'target': track})} before any further write; never resend clips.delete." + own
         )
     return f"The arranger clip is in this result; the launcher clip {dumps(clip)} remains: delete it with clips.delete."
 

@@ -149,7 +149,7 @@ def test_a_refused_copy_leaves_the_launcher_clip_named_in_next():
 
 
 def test_an_unknown_copy_says_to_inspect_the_arranger_before_anything_else():
-    unknown = unknown_result("not_observed", "The arranger copy was not observed.")
+    unknown = unknown_result("not_observed", "The arranger copy was not observed.", next="arranger.list")
     host = Host(**{"clips.copy": unknown})
     result = call(host, {"to": TO, "path": "/samples/beat.wav"})
     assert steps(result) == [
@@ -157,19 +157,32 @@ def test_an_unknown_copy_says_to_inspect_the_arranger_before_anything_else():
         ("copy", "unknown", "not_observed"),
         ("delete", "not_applied", "not_reached"),
     ]
-    assert result["next"].startswith("The copy is unknown")
-    assert f"arranger.list {{target: {dumps(TRACK_REF)}}} before any further write" in result["next"]
-    assert "never repeat clips.copy or clips.import" in result["next"]
+    assert result["next"] == (
+        f"The copy is unknown and the clip may already be on the arranger: inspect arranger.list "
+        f"{dumps({'target': TRACK_REF})} before any further write, then ack arranger.quarantine. Only if the clip is "
+        f"there, delete the launcher clip {dumps(TEMPORARY)} with clips.delete; never resend clips.copy or "
+        "clips.import. The copy step said: arranger.list"
+    )
 
 
-def test_a_failed_delete_keeps_the_arranger_clip_and_names_the_slot_clip():
+def test_an_unknown_delete_says_to_inspect_the_slot_never_to_resend_the_delete():
     unknown = unknown_result("not_observed", "Clip delete was not observed.")
     host = Host(**{"clips.delete": unknown})
     result = call(host, {"to": TO, "path": "/samples/beat.wav"})
     assert result["outcome"] == "unknown"
     assert result["ref"] == ARRANGER
-    assert "delete it with clips.delete" in result["next"]
+    assert result["next"] == (
+        f"The arranger clip is in this result; the delete of the launcher clip {dumps(TEMPORARY)} is unknown: inspect "
+        f"launcher.list {dumps({'target': TRACK_REF})} before any further write; never resend clips.delete."
+    )
     assert leaf_rule_holds(result)
+
+
+def test_a_refused_delete_names_the_slot_clip_to_delete():
+    host = Host(**{"clips.delete": bridge_error("busy", "Another write is running.")})
+    result = call(host, {"to": TO, "path": "/samples/beat.wav"})
+    assert result["ref"] == ARRANGER
+    assert result["next"].endswith(f"the launcher clip {dumps(TEMPORARY)} remains: delete it with clips.delete.")
 
 
 def test_a_file_soundfile_cannot_read_has_no_seconds(tmp_path):

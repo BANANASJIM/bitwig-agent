@@ -112,10 +112,9 @@ final class NativeHardwareInputs {
             return new Listing(List.of(), "audio_backend_has_no_named_busses");
         List<Input> out = new ArrayList<>();
         for (Object bus : (List<?>) a.invoke(busItems, a.invoke(inputBuses, a.invoke(buses, current)))) {
-            UUID id = (UUID) a.invoke(busUuid, bus);
-            if (id == null) continue;
+            String id = a.invoke(busUuid, bus).toString();
             String name = (String) a.invoke(busName, bus);
-            out.add(new Input(RoutingEntry.hardware("hardware_audio_input", id.toString(), name), bus));
+            out.add(new Input(RoutingEntry.hardware("hardware_audio_input", id, name), bus));
         }
         return new Listing(out, out.isEmpty() ? "no_named_input_busses_add_one_in_settings_audio" : null);
     }
