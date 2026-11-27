@@ -5,7 +5,16 @@ from typing import Annotated, Literal, Self
 from pydantic import Field, model_validator
 
 from bitwig_agent.protocol.annotations import ADD, REMOVE, SET
-from bitwig_agent.protocol.base import PROJECT_READY, Nonempty, StatusArgs, ToolSpec, UnitValue, omitted
+from bitwig_agent.protocol.base import (
+    NOT_RECORDING,
+    PROJECT_READY,
+    STOPPED,
+    Nonempty,
+    StatusArgs,
+    ToolSpec,
+    UnitValue,
+    omitted,
+)
 from bitwig_agent.protocol.limits import MAX_TIMEOUT_MS, MIN_TIMEOUT_MS, TRACK_WINDOW
 from bitwig_agent.protocol.positions import TrackPosition
 from bitwig_agent.protocol.refs import SendRef, TrackRef
@@ -176,14 +185,14 @@ SPECS: dict[str, ToolSpec] = {
             {"type": "audio", "name": "Bass", "position": {"after": EXAMPLE_TRACK}},
             {"type": "effect", "name": "Verb", "position": {"before": EXAMPLE_OTHER}},
         ),
-        requires=PROJECT_READY,
+        requires=PROJECT_READY + NOT_RECORDING,
     ),
     "tracks.group": ToolSpec(
         TrackGroupArgs,
         TRACKS_GROUP_DESCRIPTION,
         False,
         examples=({"targets": [EXAMPLE_TRACK, EXAMPLE_OTHER], "name": "Drums"},),
-        requires=PROJECT_READY,
+        requires=PROJECT_READY + NOT_RECORDING,
         annotations=ADD,
     ),
     "tracks.delete": ToolSpec(
@@ -191,21 +200,21 @@ SPECS: dict[str, ToolSpec] = {
         TRACKS_DELETE_DESCRIPTION,
         False,
         examples=({"target": EXAMPLE_TRACK},),
-        requires=PROJECT_READY,
+        requires=PROJECT_READY + STOPPED,
     ),
     "tracks.duplicate": ToolSpec(
         TrackArgs,
         TRACKS_DUPLICATE_DESCRIPTION,
         False,
         examples=({"target": EXAMPLE_TRACK},),
-        requires=PROJECT_READY,
+        requires=PROJECT_READY + NOT_RECORDING,
     ),
     "tracks.convert": ToolSpec(
         TrackConvertArgs,
         TRACKS_CONVERT_DESCRIPTION,
         False,
         examples=({"target": EXAMPLE_TRACK, "to": "hybrid"},),
-        requires=PROJECT_READY,
+        requires=PROJECT_READY + NOT_RECORDING,
         annotations=SET,
     ),
     "tracks.ungroup": ToolSpec(
@@ -213,7 +222,7 @@ SPECS: dict[str, ToolSpec] = {
         TRACKS_UNGROUP_DESCRIPTION,
         False,
         examples=({"target": {**EXAMPLE_TRACK, "name": "Drums"}},),
-        requires=PROJECT_READY,
+        requires=PROJECT_READY + NOT_RECORDING,
         annotations=REMOVE,
     ),
 }

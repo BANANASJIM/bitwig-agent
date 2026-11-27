@@ -9,7 +9,9 @@ from bitwig_agent.protocol.annotations import EDIT, RETRIGGER, STEER
 from bitwig_agent.protocol.base import (
     ENGINE,
     MAX_BEAT,
+    NOT_RECORDING,
     PROJECT_READY,
+    STOPPED,
     Nonempty,
     ReasonError,
     StatusArgs,
@@ -354,6 +356,10 @@ class ClipTargetArgs(StatusArgs):
     target: LauncherClipRef
 
 
+class ClipRecordArgs(StatusArgs):
+    target: SlotRef
+
+
 class ClipInsertArgs(StatusArgs):
     # Without the native binding the notes are written window by window: with notes the call waits longer.
     timeoutMs: int = long_timeout()
@@ -614,6 +620,16 @@ CLIPS_MOVE_DESCRIPTION = (
     "Arranger writes need a settled project and a stopped transport with recording/automation-write off; an unknown "
     "outcome refuses further arranger writes until you inspect arranger.list and ack the hold."
 )
+CLIPS_RECORD_DESCRIPTION = (
+    "Start recording into one launcher slot (Bitwig's slot record button), by slot ref from launcher.list. The "
+    "track must be observed armed (tracks.set arm=true), else unsafe_state with nothing sent; the slot may be empty "
+    "or hold a clip (Bitwig records over it or overdubs as its own settings say). It only starts recording and can "
+    "start playback: what arrives is whatever the track's input (tracks.routing.get) carries; nothing checks that "
+    "sound or notes arrive. End it with launcher.stop {target: the track} or transport.set playing=false. Outcome "
+    "applied: the slot was observed recording; sent: recording is queued (launch quantization); unknown: neither was "
+    "observed, never retry blindly. Allowed while recording or automation write is on."
+)
+
 CLIPS_LAUNCH_DESCRIPTION = (
     "Launch an existing launcher clip. Can start playback and produce audio. Recording and both automation-write "
     "flags must be observed false; modes are never silently disabled. Outcome applied means the clip was observed "
@@ -702,7 +718,7 @@ SPECS: dict[str, ToolSpec] = {
                 ],
             },
         ),
-        requires=PROJECT_READY,
+        requires=PROJECT_READY + NOT_RECORDING,
         summary="Create a named MIDI clip in an empty launcher slot (to: slot ref, loop {length}) or on an instrument track's timeline (to {track, start}, length), with optional notes (beats on the 1/128 grid, any duration). Returns the new ref. A launcher create selects it. Unobserved: unknown, ack the hold, never retry.",
     ),
     "clips.import": ToolSpec(
@@ -710,7 +726,7 @@ SPECS: dict[str, ToolSpec] = {
         CLIPS_IMPORT_DESCRIPTION,
         False,
         examples=({"to": SLOT_REF, "path": "/absolute/path/audio.wav"},),
-        requires=PROJECT_READY,
+        requires=PROJECT_READY + NOT_RECORDING,
         summary="Import a local audio or .mid file into an empty launcher slot (to: slot ref); path is absolute and normalized. Never overwrites; applied means a slot content transition was observed, not the file's content. An unobserved insertion is unknown and holds the slot until you inspect it and ack; never retry.",
     ),
     "clips.set": ToolSpec(
@@ -732,28 +748,41 @@ SPECS: dict[str, ToolSpec] = {
         ),
         summary="Set fields of one clip. Launcher: name, color, loop, Next Action, launch fields; arranger: name, length. Runs next action, launch, clip fields in order; the first failure stops the rest. Next Action and launch need a stopped transport.",
     ),
-    "clips.delete": ToolSpec(ClipDeleteArgs, CLIPS_DELETE_DESCRIPTION, False, examples=({"target": CLIP_REF},)),
+    "clips.delete": ToolSpec(
+        ClipDeleteArgs, CLIPS_DELETE_DESCRIPTION, False, examples=({"target": CLIP_REF},), requires=STOPPED
+    ),
     "clips.copy": ToolSpec(
         ClipCopyArgs,
         CLIPS_COPY_DESCRIPTION,
         False,
         examples=({"from": CLIP_REF, "to": SLOT_REF}, {"from": CLIP_REF, "to": {"track": TRACK_REF, "start": 0}}),
         summary="Copy a launcher clip (from) to an empty slot of the same track or onto its arranger timeline (to). Returns the new clip's ref.",
+        requires=NOT_RECORDING,
     ),
     "clips.move": ToolSpec(
         ClipMoveArgs,
         CLIPS_MOVE_DESCRIPTION,
         False,
         examples=({"target": ARRANGER_CLIP_REF, "to": {"start": 32}},),
+        requires=STOPPED,
     ),
     "clips.launch": ToolSpec(
         ClipTargetArgs,
         CLIPS_LAUNCH_DESCRIPTION,
         False,
         examples=({"target": CLIP_REF},),
-        requires=ENGINE,
+        requires=ENGINE + NOT_RECORDING,
         annotations=RETRIGGER,
         summary="Launch a launcher clip; can start playback. Needs the engine active and recording/automation write off. applied: observed playing; sent: queued; unknown: not observed, stop the writer and never retry blindly.",
+    ),
+    "clips.record": ToolSpec(
+        ClipRecordArgs,
+        CLIPS_RECORD_DESCRIPTION,
+        False,
+        examples=({"target": SLOT_REF},),
+        requires=ENGINE,
+        annotations=EDIT,
+        summary="Start recording into a launcher slot of an armed track (else unsafe_state). applied: observed recording; sent: queued. Only starts recording; end it with launcher.stop or transport.set playing=false.",
     ),
     "clips.transpose": ToolSpec(
         ClipTransposeArgs,

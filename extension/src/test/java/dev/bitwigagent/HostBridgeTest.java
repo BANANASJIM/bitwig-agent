@@ -7,6 +7,7 @@ import com.bitwig.extension.callback.*;
 import com.bitwig.extension.controller.api.*;
 import com.google.gson.*;
 import dev.bitwigagent.core.HostLimits;
+import dev.bitwigagent.core.HostOperation;
 import dev.bitwigagent.core.MethodSpecs;
 import dev.bitwigagent.core.MethodSpecsTest;
 import dev.bitwigagent.core.Refs;
@@ -418,7 +419,7 @@ public final class HostBridgeTest {
             boolean engine = HostFixture.SPECS.get(method).engineRequired;
             String refusal = null;
             try {
-                bridge.preflight(method);
+                bridge.preflight(method, new HostOperation(f.deadline()));
             } catch (RpcException e) {
                 refusal = e.reason.wire();
             }
@@ -429,14 +430,45 @@ public final class HostBridgeTest {
         f.tasks.advance(SETTLE);
         for (String method : HostFixture.SPECS.methods()) {
             if (!HostFixture.SPECS.get(method).engineRequired) continue;
-            RpcException refused = assertThrows(RpcException.class, () -> bridge.preflight(method), method);
+            RpcException refused = assertThrows(
+                    RpcException.class, () -> bridge.preflight(method, new HostOperation(f.deadline())), method);
             assertTrue(
                     refused.reason.wire().equals("engine_inactive")
                             && refused.getMessage().contains(method),
                     method + " names itself");
         }
         for (String method : HostFixture.SPECS.methods())
-            if (!HostFixture.SPECS.get(method).engineRequired) bridge.preflight(method);
+            if (!HostFixture.SPECS.get(method).engineRequired)
+                bridge.preflight(method, new HostOperation(f.deadline()));
+    }
+
+    @Test
+    void theDeclaredTransportStateIsAdmitted() {
+        Fake f = new Fake();
+        HostBridge bridge = f.bridge();
+        f.tasks.advance(SETTLE);
+        f.engine.data = true;
+        for (String[] state : new String[][] {{"isPlaying", "stopped"}, {"isArrangerRecordEnabled", "notRecording"}}) {
+            f.base.transport.child(state[0]).emit(true);
+            for (String method : HostFixture.SPECS.methods()) {
+                MethodSpecs.Transport declared = HostFixture.SPECS.get(method).transport;
+                boolean refused = state[1].equals("stopped")
+                        ? declared == MethodSpecs.Transport.STOPPED
+                        : declared != MethodSpecs.Transport.ANY;
+                String refusal = null;
+                try {
+                    bridge.preflight(method, new HostOperation(f.deadline()));
+                } catch (RpcException e) {
+                    refusal = e.reason.wire();
+                }
+                assertEquals(refused ? "unsafe_state" : null, refusal, method + " while " + state[0]);
+            }
+            f.base.transport.child(state[0]).emit(false);
+        }
+        assertEquals(MethodSpecs.Transport.STOPPED, HostFixture.SPECS.get("tracks.routing.set").transport);
+        assertEquals(MethodSpecs.Transport.NOT_RECORDING, HostFixture.SPECS.get("devices.sidechain.set").transport);
+        assertEquals(MethodSpecs.Transport.ANY, HostFixture.SPECS.get("transport.set").transport);
+        assertEquals(MethodSpecs.Transport.ANY, HostFixture.SPECS.get("clips.record").transport);
     }
 
     @Test

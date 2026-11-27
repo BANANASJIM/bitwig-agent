@@ -281,7 +281,7 @@ public final class GridModule implements HostModule {
         final JsonObject deletedPage = remoteDelete ? GridRemotePageWriter.Request.page(p) : null;
         final boolean fullSteps =
                 p.has("full") && !scalarWriting && p.get("full").getAsBoolean();
-        final Runnable safety = writing ? transportSafety.writeGuard(op, topology) : null;
+        final Runnable safety = writing ? () -> transportSafety.recheck(op) : null;
         final DeviceSources.RootReadTicket target =
                 method.equals("grid.get") || scalarWriting || topology || voicingGet || voicingSet || remotePages
                         ? target(p)

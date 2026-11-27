@@ -5,6 +5,7 @@ import dev.bitwigagent.core.BoundedJson;
 import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.HostModule;
 import dev.bitwigagent.core.HostOperation;
+import dev.bitwigagent.core.MethodSpecs;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Refs;
 import dev.bitwigagent.core.RpcException;
@@ -110,7 +111,7 @@ public final class ModulatorEditModule implements HostModule {
     public void dispatch(HostOperation op, String method, JsonObject p) {
         scheduler.check(op);
         ModulatorEditor edits = editor(op);
-        final Runnable safety = transportSafety.writeGuard(op, true);
+        final Runnable safety = () -> transportSafety.recheck(op);
         final boolean mapping = method.equals("modulators.map") || method.equals("modulators.unmap");
         final JsonObject modulatorRef =
                 method.equals("modulators.insert") ? null : p.getAsJsonObject(mapping ? "source" : "target");
@@ -192,7 +193,7 @@ public final class ModulatorEditModule implements HostModule {
         scheduler.check(op);
         op.inspect = Refs.read(ref);
         ModulatorEditor edits = editor(op);
-        final Runnable safety = transportSafety.writeGuard(op, false);
+        final Runnable safety = transportSafety.atLeast(op, MethodSpecs.Transport.NOT_RECORDING);
         final DeviceSources.RootReadTicket ticket = sources.rootRead(target.device);
         final JsonObject deviceRef = target.device.ref();
         sources.guardRootRead(ticket);

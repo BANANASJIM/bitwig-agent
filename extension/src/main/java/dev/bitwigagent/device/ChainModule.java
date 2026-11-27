@@ -9,6 +9,7 @@ import dev.bitwigagent.core.DisplaySolver;
 import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.HostModule;
 import dev.bitwigagent.core.HostOperation;
+import dev.bitwigagent.core.MethodSpecs;
 import dev.bitwigagent.core.Outcome;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Refs;
@@ -125,7 +126,7 @@ public final class ChainModule implements HostModule {
                 op,
                 target,
                 walk -> parameter(walk, target, solve.field),
-                transportSafety.writeGuard(op, true));
+                transportSafety.atLeast(op, MethodSpecs.Transport.STOPPED));
         chains.async(
                 op,
                 target,

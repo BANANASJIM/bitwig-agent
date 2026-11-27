@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pydantic import Field
 
-from bitwig_agent.protocol.base import MAX_BEAT, Nonempty, StatusArgs, ToolSpec, omitted
+from bitwig_agent.protocol.base import MAX_BEAT, NOT_RECORDING, STOPPED, Nonempty, StatusArgs, ToolSpec, omitted
 from bitwig_agent.protocol.refs import MarkerRef
 
 
@@ -35,13 +35,20 @@ _MARKER = {
 SPECS: dict[str, ToolSpec] = {
     "markers.list": ToolSpec(StatusArgs, MARKERS_LIST_DESCRIPTION, True, records="markers"),
     "markers.insert": ToolSpec(
-        MarkerInsertArgs, MARKERS_INSERT_DESCRIPTION, False, examples=({"beat": 16, "name": "Verse"},)
+        MarkerInsertArgs,
+        MARKERS_INSERT_DESCRIPTION,
+        False,
+        examples=({"beat": 16, "name": "Verse"},),
+        requires=STOPPED,
     ),
     "markers.set": ToolSpec(
         MarkerSetArgs,
         MARKERS_SET_DESCRIPTION,
         False,
         examples=({"target": _MARKER, "name": "Verse 1"},),
+        requires=NOT_RECORDING,
     ),
-    "markers.delete": ToolSpec(MarkerDeleteArgs, MARKERS_DELETE_DESCRIPTION, False, examples=({"target": _MARKER},)),
+    "markers.delete": ToolSpec(
+        MarkerDeleteArgs, MARKERS_DELETE_DESCRIPTION, False, examples=({"target": _MARKER},), requires=NOT_RECORDING
+    ),
 }

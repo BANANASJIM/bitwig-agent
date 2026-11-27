@@ -23,7 +23,11 @@ import dev.bitwigagent.host.ProjectState;
 import dev.bitwigagent.host.TransportSafety;
 import java.util.*;
 
-/** Absolute transport controls; recording and automation modes are read-only safety inputs. */
+/**
+ * Absolute transport controls, including the recording and automation-write modes. Those modes stay writable while
+ * recording or automation write is on, so recording can always be turned off, and playing=false always stops; every
+ * other field, playing=true included, is refused then.
+ */
 public final class TransportModule implements HostModule {
     static final Set<String> METHODS = Set.of("transport.get", "transport.set");
     private static final String[] ORDER = {
@@ -40,8 +44,28 @@ public final class TransportModule implements HostModule {
         "preRoll",
         "defaultLaunchQuantization",
         "recordQuantizationGrid",
-        "playing"
+        "playing",
+        "arrangerRecordEnabled",
+        "arrangerOverdubEnabled",
+        "clipLauncherOverdubEnabled",
+        "arrangerAutomationWriteEnabled",
+        "automationWriteMode"
     };
+    /** Fields writable while recording or automation write is on: the modes themselves. */
+    static final Set<String> RECORDING_FIELDS = Set.of(
+            "arrangerRecordEnabled",
+            "arrangerOverdubEnabled",
+            "clipLauncherOverdubEnabled",
+            "arrangerAutomationWriteEnabled",
+            "automationWriteMode");
+    /** Recording state Bitwig may switch along with a requested field (Global Record also turns automation write on). */
+    static final List<String> SIDE_EFFECTS = List.of(
+            "arrangerRecordEnabled",
+            "arrangerOverdubEnabled",
+            "clipLauncherOverdubEnabled",
+            "arrangerAutomationWriteEnabled",
+            "clipLauncherAutomationWriteEnabled",
+            "automationWriteMode");
 
     private static final ValueMatch BEATS_AND_TEMPO = ValueMatch.raw(1e-6);
     private static final Set<String> BEATS_AND_TEMPO_KEYS = Set.of("tempo", "position", "loopStart", "loopLength");
@@ -91,6 +115,17 @@ public final class TransportModule implements HostModule {
         observe("preRoll", transport.preRoll());
         observe("defaultLaunchQuantization", transport.defaultLaunchQuantization());
         observe("recordQuantizationGrid", application.recordQuantizationGrid());
+        observe("arrangerRecordEnabled", transport.isArrangerRecordEnabled());
+        observe("arrangerOverdubEnabled", transport.isArrangerOverdubEnabled());
+        observe("clipLauncherOverdubEnabled", transport.isClipLauncherOverdubEnabled());
+        observe("arrangerAutomationWriteEnabled", transport.isArrangerAutomationWriteEnabled());
+        observe("clipLauncherAutomationWriteEnabled", launcherAutomationWrite());
+        observe("automationWriteMode", transport.automationWriteMode());
+    }
+
+    @SuppressWarnings("deprecation")
+    private SettableBooleanValue launcherAutomationWrite() {
+        return transport.isClipLauncherAutomationWriteEnabled();
     }
 
     @Override
@@ -108,6 +143,11 @@ public final class TransportModule implements HostModule {
         if (!method.equals("transport.set"))
             throw Errors.notApplied(Reason.UNKNOWN_METHOD, "Unknown transport method.");
         if (p.size() == 0) throw Errors.notApplied(Reason.INVALID_PARAMS, "At least one transport field is required.");
+        if (p.has("clipLauncherAutomationWriteEnabled"))
+            throw Errors.notApplied(
+                    Reason.UNSUPPORTED_SCOPE,
+                    "clipLauncherAutomationWriteEnabled has no effect in Bitwig 6 (one automation write button); use"
+                            + " arrangerAutomationWriteEnabled. Nothing was written.");
         if (p.has("timeSignature") && !validSignature(Params.string(p, "timeSignature")))
             throw Errors.notApplied(
                     Reason.INVALID_PARAMS,
@@ -184,6 +224,7 @@ public final class TransportModule implements HostModule {
                 p,
                 scheduler.observeUntil(op),
                 p.has("playing") && p.get("playing").getAsBoolean() && !projectState.engineActive());
+        for (String key : SIDE_EFFECTS) request.before.put(key, values.get(key).value);
         boolean stopping = p.has("playing") && !p.get("playing").getAsBoolean();
         try {
             if (stopping) write(request, "playing");
@@ -201,6 +242,7 @@ public final class TransportModule implements HostModule {
         final HostOperation op;
         final JsonObject p;
         final Map<String, Long> writes = new LinkedHashMap<>();
+        final Map<String, JsonElement> before = new LinkedHashMap<>();
         final long until;
         final boolean silentEngine;
 
@@ -284,7 +326,20 @@ public final class TransportModule implements HostModule {
             case "preRoll":
             case "defaultLaunchQuantization":
             case "recordQuantizationGrid":
+            case "automationWriteMode":
                 enums.get(key).set(value.getAsString());
+                break;
+            case "arrangerRecordEnabled":
+                transport.isArrangerRecordEnabled().set(value.getAsBoolean());
+                break;
+            case "arrangerOverdubEnabled":
+                transport.isArrangerOverdubEnabled().set(value.getAsBoolean());
+                break;
+            case "clipLauncherOverdubEnabled":
+                transport.isClipLauncherOverdubEnabled().set(value.getAsBoolean());
+                break;
+            case "arrangerAutomationWriteEnabled":
+                transport.isArrangerAutomationWriteEnabled().set(value.getAsBoolean());
                 break;
             case "loopStart":
                 transport.arrangerLoopStart().set(value.getAsDouble());
@@ -297,9 +352,16 @@ public final class TransportModule implements HostModule {
         }
     }
 
+    /**
+     * Stopping playback or turning a recording mode off is always allowed; turning a mode on or changing the write mode
+     * needs the recording state observed (it may be on); starting playback and every other field need recording and
+     * automation write observed off, as for launches.
+     */
     private void guard(String key, JsonElement value) {
-        if (key.equals("playing") && !value.getAsBoolean()) return;
-        transportSafety.requirePlaybackSafe();
+        boolean off = value.isJsonPrimitive() && value.getAsJsonPrimitive().isBoolean() && !value.getAsBoolean();
+        if (RECORDING_FIELDS.contains(key)) {
+            if (!off) transportSafety.requireObserved();
+        } else if (!(key.equals("playing") && off)) transportSafety.requirePlaybackSafe();
     }
 
     private void await(Request request) {
@@ -353,6 +415,16 @@ public final class TransportModule implements HostModule {
         if (!worst.succeeded()) result.addProperty("reason", (reason != null ? reason : worstReason).wire());
         nest(fields);
         result.add("fields", fields);
+        JsonObject effects = new JsonObject();
+        for (Map.Entry<String, JsonElement> seen : request.before.entrySet()) {
+            JsonElement now = values.get(seen.getKey()).value;
+            if (p.has(seen.getKey()) || now.equals(seen.getValue())) continue;
+            JsonObject change = new JsonObject();
+            change.add("before", seen.getValue());
+            change.add("after", now);
+            effects.add(seen.getKey(), change);
+        }
+        if (effects.size() > 0) result.add("observedSideEffects", effects);
         if (request.silentEngine)
             Results.addWarning(
                     result,
@@ -398,7 +470,6 @@ public final class TransportModule implements HostModule {
         tempoRange.addProperty("maximum", 666);
         tempoRange.addProperty("scope", "toolkit_supported_shipped_controller_range_not_api_raw_limit");
         result.add("tempoRange", tempoRange);
-        Results.addPlaybackSafety(result, transportSafety.observation());
         return result;
     }
 

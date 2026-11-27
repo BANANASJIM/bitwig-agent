@@ -8,10 +8,10 @@ import dev.bitwigagent.core.Holds;
 import dev.bitwigagent.core.HostLimits;
 import dev.bitwigagent.core.HostModule;
 import dev.bitwigagent.core.HostOperation;
+import dev.bitwigagent.core.MethodSpecs;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Refs;
 import dev.bitwigagent.core.Results;
-import dev.bitwigagent.core.SafetyObservation;
 import dev.bitwigagent.core.Scheduler;
 import dev.bitwigagent.host.NativeRuntime;
 import dev.bitwigagent.host.ProjectState;
@@ -299,7 +299,7 @@ public final class ArrangerModule implements HostModule {
         }
         String where = ids.length == 1 ? "track " + ids[0] : ids.length + " tracks";
         if (write) op.inspect = dev.bitwigagent.core.Refs.read("clip:arranger");
-        SafetyObservation safety = write ? transportSafety.stopped(op) : null;
+        Runnable safety = write ? transportSafety.atLeast(op, MethodSpecs.Transport.STOPPED) : null;
         if (access == null) access = NativeArrangerAccess.bind(natives.get(op).access());
         Runnable check = () -> {
             scheduler.check(op);
@@ -309,7 +309,7 @@ public final class ArrangerModule implements HostModule {
                 throw Errors.notApplied(
                         Reason.TARGET_CHANGED,
                         "The track or scene window changed while the arranger operation was queued.");
-            if (write) transportSafety.guardStopped(safety);
+            if (write) safety.run();
         };
         Runnable beforeWrite = () -> {
             check.run();

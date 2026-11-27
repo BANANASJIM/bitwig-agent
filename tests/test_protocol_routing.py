@@ -135,3 +135,46 @@ def test_routing_tools_are_writes_only_where_they_change_state():
     assert TOOLS["devices.sidechain.get"].read_only
     assert not TOOLS["tracks.routing.set"].read_only
     assert not TOOLS["devices.sidechain.set"].read_only
+
+
+BUS = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0"
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        {"input": {"kind": "hardware_audio_input", "id": BUS, "name": "Stereo 1"}},
+        {"input": {"kind": "hardware_note_input", "id": f"{BUS}/0/1"}, "expect": {"input": {"kind": "all_ins"}}},
+        {
+            "input": {"kind": "none"},
+            "expect": {"input": {"kind": "hardware_audio_input", "id": BUS, "name": "Stereo 1"}},
+        },
+    ],
+)
+def test_track_inputs_take_hardware_entries_by_id(args):
+    assert validate_call("tracks.routing.set", {"target": TRACK, **args})[0] == {"target": TRACK, **args}
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {"kind": "hardware_audio_input"},
+        {"kind": "hardware_audio_input", "id": ""},
+        {"kind": "hardware_audio_input", "id": BUS, "track": OTHER_TRACK},
+        {"kind": "all_ins", "id": BUS},
+        {"kind": "all_ins", "name": "All ins"},
+        {"kind": "hardware_note_input", "id": BUS, "nativeType": "x"},
+    ],
+)
+def test_hardware_entries_need_exactly_an_id(entry):
+    with pytest.raises(ValidationError):
+        validate_call("tracks.routing.set", {"target": TRACK, "input": entry})
+
+
+def test_a_sidechain_takes_no_hardware_source():
+    with pytest.raises(ValidationError):
+        validate_call("devices.sidechain.set", {**SIDECHAIN, "source": {"kind": "hardware_audio_input", "id": BUS}})
+    assert validate_call(
+        "devices.sidechain.set",
+        {**SIDECHAIN, "expect": {"source": {"kind": "hardware_audio_input", "id": BUS, "name": "Stereo 1"}}},
+    )

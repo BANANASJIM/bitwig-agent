@@ -6,6 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from bitwig_agent.protocol import TOOLS, invalid_params_message, invalid_params_reason, validate_call
+from bitwig_agent.protocol.annotations import EDIT
 from bitwig_agent.protocol.clips import MAX_TRANSFORM_TARGETS
 from bitwig_agent.protocol.launcher import ARRANGER_CLIP_REF, CLIP_REF, SCENE_REF, SLOT_REF, TRACK_REF
 
@@ -516,3 +517,14 @@ def test_shared_note_rule_vectors(case):
     with pytest.raises(ValidationError) as error:
         validate_call(case["method"], args)
     assert error.value.errors()[0]["msg"].removeprefix("Value error, ") == case["error"]
+
+
+def test_clips_record_takes_a_slot_ref_and_needs_the_engine():
+    assert validate_call("clips.record", {"target": SLOT_REF})[0] == {"target": SLOT_REF}
+    for bad in ({"target": CLIP_REF}, {}, {"target": SLOT_REF, "length": 4}):
+        with pytest.raises(ValidationError):
+            validate_call("clips.record", bad)
+    spec = TOOLS["clips.record"]
+    assert spec.requires == ("engine",)
+    assert spec.inspect == "launcher.list"
+    assert spec.annotations is EDIT

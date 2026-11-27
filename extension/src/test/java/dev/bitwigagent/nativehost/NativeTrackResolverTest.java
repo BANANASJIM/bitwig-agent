@@ -62,6 +62,7 @@ public final class NativeTrackResolverTest {
         bind(runtime, NativeAutomationAccess::new);
         bind(runtime, NativeTrackGroupAccess::new);
         bind(runtime, NativeRoutingAccess::new);
+        bind(runtime, NativeHardwareInputs::new);
         bind(runtime, NativeRenderAccess::new);
         bind(runtime, NativeLauncherSettingsAccess::new);
         bind(runtime, NativeChainAccess::new);

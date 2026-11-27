@@ -156,6 +156,7 @@ public final class LauncherState implements RenderModule.LauncherContent {
                 if (!value) invalidateMutations(track);
             });
             track.isQueuedForStop().markInterested();
+            track.arm().markInterested();
             ClipLauncherSlotBank bank = track.clipLauncherSlotBank();
             for (int j = 0; j < HostLimits.SCENES; j++)
                 slots[t][j] = new Slot((ClipLauncherSlot) bank.getItemAt(j), cursorSlot);
@@ -417,6 +418,30 @@ public final class LauncherState implements RenderModule.LauncherContent {
         op.result.complete(out);
     }
 
+    /** Waits for a slot record to be observed recording or queued, then completes the result. */
+    void awaitRecording(HostOperation op, Target target, JsonObject ref) {
+        ClipLauncherSlot api = target.slot.api;
+        scheduler.poll(
+                op,
+                until(op),
+                () -> {
+                    guard(op, target);
+                    return api.isRecording().get() || api.isRecordingQueued().get();
+                },
+                done -> {
+                    boolean recording = api.isRecording().get(),
+                            queued = api.isRecordingQueued().get();
+                    JsonObject out = written(
+                            recording ? Outcome.APPLIED : queued ? Outcome.SENT : Outcome.UNKNOWN,
+                            Verification.API_READBACK);
+                    out.add("ref", ref);
+                    if (!recording && !queued) out.addProperty("reason", Reason.NOT_OBSERVED.wire());
+                    out.addProperty("recordingState", recording ? "recording" : queued ? "queued" : "not_observed");
+                    out.add("slot", slotJson(target));
+                    op.result.complete(out);
+                });
+    }
+
     // ---- cursor identity, for reads ----
 
     /** The absolute scene of the cursor clip's own slot; -1 while that is not observed. */
@@ -475,6 +500,7 @@ public final class LauncherState implements RenderModule.LauncherContent {
             api.isPlaying().addValueObserver((BooleanValueChangedCallback) value -> playingReady = true);
             api.isPlaybackQueued().addValueObserver((BooleanValueChangedCallback) value -> queuedReady = true);
             api.isRecording().addValueObserver((BooleanValueChangedCallback) value -> recordingReady = true);
+            api.isRecordingQueued().markInterested();
         }
 
         public boolean ready() {

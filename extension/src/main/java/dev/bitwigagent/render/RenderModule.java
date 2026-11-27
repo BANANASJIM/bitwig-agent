@@ -13,7 +13,6 @@ import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Refs;
 import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.RpcException;
-import dev.bitwigagent.core.SafetyObservation;
 import dev.bitwigagent.core.Scheduler;
 import dev.bitwigagent.core.Verification;
 import dev.bitwigagent.host.NativeRuntime;
@@ -408,7 +407,6 @@ public final class RenderModule implements HostModule, JobsModule.Source {
                     Reason.BUSY,
                     "The previous tracks.bounce returned before it was verified; no request was queued.",
                     "Verify it with jobs.get " + previous.id + ".");
-        SafetyObservation safety = transportSafety.stopped(op);
         boolean export = method.equals(EXPORT);
         List<JsonElement> sources = new ArrayList<>();
         List<String> ids = new ArrayList<>();
@@ -454,7 +452,7 @@ public final class RenderModule implements HostModule, JobsModule.Source {
         Access bridge = access(op);
         Runnable check = () -> {
             scheduler.check(op);
-            transportSafety.guardStopped(safety);
+            transportSafety.recheck(op);
             for (int i = 0; i < ids.size(); i++)
                 if (slots[i] >= 0 && epochs.get(slots[i]) != seen[i])
                     throw Errors.notApplied(

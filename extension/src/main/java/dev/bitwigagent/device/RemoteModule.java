@@ -7,6 +7,7 @@ import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.HostLimits;
 import dev.bitwigagent.core.HostModule;
 import dev.bitwigagent.core.HostOperation;
+import dev.bitwigagent.core.MethodSpecs;
 import dev.bitwigagent.core.Outcome;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Refs;
@@ -376,7 +377,7 @@ public final class RemoteModule implements HostModule, ParameterResolver.RemoteP
             HostOperation op, Remote source, int slot, JsonObject ref, double requested, RequestSnapshot snapshot) {
         RemoteControl control = source.controls[slot];
         JsonElement asked = new JsonPrimitive(requested);
-        transportSafety.requirePlaybackSafe();
+        transportSafety.atLeast(op, MethodSpecs.Transport.NOT_RECORDING);
         scheduler.check(op);
         snapshot.require(op);
         long sequence = source.controlSequences[slot];

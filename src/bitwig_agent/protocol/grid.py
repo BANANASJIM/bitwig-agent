@@ -9,7 +9,9 @@ from pydantic.config import JsonDict
 from bitwig_agent.protocol.annotations import SET
 from bitwig_agent.protocol.base import (
     MAX_STRING_UNITS,
+    NOT_RECORDING,
     PROJECT_READY,
+    STOPPED,
     TRACK,
     UTF16_BYTES_PER_UNIT,
     StatusArgs,
@@ -702,7 +704,7 @@ SPECS: dict[str, ToolSpec] = {
                 ],
             },
         ),
-        requires=PROJECT_READY,
+        requires=PROJECT_READY + NOT_RECORDING,
         expose=False,
     ),
     "devices.remote.define": ToolSpec(
@@ -732,12 +734,14 @@ SPECS: dict[str, ToolSpec] = {
         ),
         annotations=SET,
         summary="Set a Remote Controls page of a Grid device from parameter refs.",
+        requires=NOT_RECORDING,
     ),
     "devices.remote.delete": ToolSpec(
         RemoteDeleteArgs,
         REMOTE_DELETE_DESCRIPTION,
         False,
         examples=({"target": {"kind": "remotePage", "device": DEVICE, "index": 1, "name": "Macros"}},),
+        requires=NOT_RECORDING,
     ),
     "grid.voicing.get": ToolSpec(
         GridVoicingGetArgs, GRID_VOICING_GET_DESCRIPTION, True, examples=(TARGET,), expose=False
@@ -750,7 +754,7 @@ SPECS: dict[str, ToolSpec] = {
             {**TARGET, "expected": {"voices": 1, "voiceStacking": 1}, "set": {"voices": 8, "voiceStacking": 2}},
             {**TARGET, "expected": {"voices": 1, "monoMode": "true_mono"}, "set": {"monoMode": "digi_mono"}},
         ),
-        requires=PROJECT_READY,
+        requires=PROJECT_READY + NOT_RECORDING,
         expose=False,
     ),
     "grid.modules.insert": ToolSpec(
@@ -767,7 +771,7 @@ SPECS: dict[str, ToolSpec] = {
                 ],
             },
         ),
-        requires=PROJECT_READY,
+        requires=PROJECT_READY + STOPPED,
         expose=False,
     ),
     "grid.modules.set": ToolSpec(
@@ -788,7 +792,7 @@ SPECS: dict[str, ToolSpec] = {
                 "customName": "",
             },
         ),
-        requires=PROJECT_READY,
+        requires=PROJECT_READY + STOPPED,
         expose=False,
     ),
     "grid.modules.move": ToolSpec(
@@ -805,7 +809,7 @@ SPECS: dict[str, ToolSpec] = {
                 "y": 2,
             },
         ),
-        requires=PROJECT_READY,
+        requires=PROJECT_READY + STOPPED,
         expose=False,
     ),
     "grid.modules.delete": ToolSpec(
@@ -813,7 +817,7 @@ SPECS: dict[str, ToolSpec] = {
         GRID_MODULES_DELETE_DESCRIPTION,
         False,
         examples=({**TARGET, "moduleId": "abcdef01-2345-6789-abcd-0123456789ab"},),
-        requires=PROJECT_READY,
+        requires=PROJECT_READY + STOPPED,
         expose=False,
     ),
     "grid.connections.set": ToolSpec(
@@ -865,7 +869,7 @@ SPECS: dict[str, ToolSpec] = {
                 ],
             },
         ),
-        requires=PROJECT_READY,
+        requires=PROJECT_READY + STOPPED,
         expose=False,
     ),
 }

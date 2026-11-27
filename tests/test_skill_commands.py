@@ -46,6 +46,7 @@ RESULT_NAMES = {
     "isError",
     "deltaDb",
     "onsetResolution",
+    "hardwareInputs",
     "unreadFields",
 }
 
