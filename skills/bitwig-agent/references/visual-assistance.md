@@ -21,7 +21,7 @@ In delegated mode do the authorized action, take a new image and check the contr
 
 ## Handoff between API and GUI
 
-The API target and the visible editor are separate observations. `notes read` can select a clip while the visible device panel still shows another track; `tracks select` navigates to a track and `devices select` alone does not prove the panel switched. Before a GUI parameter edit verify the header and the control, and after GUI changes re-read the affected refs.
+The API target and the visible editor are separate observations. `notes get` can select a clip while the visible device panel still shows another track; `tracks select` navigates to a track and `devices select` alone does not prove the panel switched. Before a GUI parameter edit verify the header and the control, and after GUI changes re-read the affected refs.
 
 An expanded Grid canvas can still belong to device A after the lower panel shows B: read the canvas title, and if it names the old device, close it and open the new device's Show Expanded Device View control. In the tested 6.1.4 UI the miniature Grid preview was draggable and double-clicking it did not open the editor.
 

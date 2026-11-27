@@ -130,11 +130,11 @@ public final class Refs {
         return ref;
     }
 
-    public static JsonObject arrangerClip(JsonObject track, double startBeats, String name) {
+    public static JsonObject arrangerClip(JsonObject track, double clipStart, String name) {
         JsonObject ref = of("clip");
         ref.add("track", track);
         ref.addProperty("lane", "main");
-        ref.addProperty("startBeats", startBeats);
+        ref.addProperty("start", clipStart);
         ref.addProperty("name", name);
         return ref;
     }

@@ -9,9 +9,12 @@ import dev.bitwigagent.HostBridge;
 import dev.bitwigagent.HostFixture;
 import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.HostOperation;
+import dev.bitwigagent.core.Outcome;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Refs;
+import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.RpcException;
+import dev.bitwigagent.core.Verification;
 import dev.bitwigagent.host.DeviceSources;
 import java.util.*;
 import org.junit.jupiter.api.Test;
@@ -25,38 +28,50 @@ public final class RoutingModuleTest {
         ok("tracks.routing.get", target());
         ok("tracks.routing.get", with(target(), "\"includeChoices\":true"));
         bad("tracks.routing.get", with(target(), "\"includeChoices\":1"));
-        bad("tracks.routing.get", json("{\"trackId\":\"" + A + "\"}"));
+        bad("tracks.routing.get", json("{\"track\":" + HostFixture.track(A) + "}"));
         bad("tracks.routing.get", json("{\"target\":{\"kind\":\"track\",\"id\":\"nope\",\"name\":\"x\"}}"));
         ok(
                 "tracks.routing.set",
-                set("{\"kind\":\"track_audio_input\",\"trackId\":\"" + B + "\"}", "{\"kind\":\"none\"}", null, null));
+                set(
+                        "{\"kind\":\"track_audio_input\",\"track\":" + HostFixture.track(B) + "}",
+                        "{\"kind\":\"none\"}",
+                        null,
+                        null));
         ok("tracks.routing.set", set("{\"kind\":\"none\"}", null, null, null));
         ok(
                 "tracks.routing.set",
                 set(
                         null,
                         null,
-                        "{\"kind\":\"pre_fader\",\"trackId\":\"" + B + "\"}",
+                        "{\"kind\":\"pre_fader\",\"track\":" + HostFixture.track(B) + "}",
                         "{\"kind\":\"other\",\"name\":\"In 1\"}"));
         ok(
                 "tracks.routing.set",
                 set(
                         "{\"kind\":\"none\"}",
-                        "{\"kind\":\"track_note_input\",\"trackId\":\"" + B + "\"}",
+                        "{\"kind\":\"track_note_input\",\"track\":" + HostFixture.track(B) + "}",
                         "{\"kind\":\"all_ins\"}",
                         "{\"kind\":\"none\"}"));
         bad("tracks.routing.set", target());
         bad("tracks.routing.set", set("{\"kind\":\"none\"}", "{\"kind\":\"none\"}", null, null, "expectedOutput"));
         bad(
                 "tracks.routing.set",
-                set("{\"kind\":\"pre_fader\",\"trackId\":\"" + B + "\"}", "{\"kind\":\"none\"}", null, null));
+                set(
+                        "{\"kind\":\"pre_fader\",\"track\":" + HostFixture.track(B) + "}",
+                        "{\"kind\":\"none\"}",
+                        null,
+                        null));
         bad(
                 "tracks.routing.set",
-                set(null, null, "{\"kind\":\"track_audio_input\",\"trackId\":\"" + B + "\"}", "{\"kind\":\"none\"}"));
+                set(
+                        null,
+                        null,
+                        "{\"kind\":\"track_audio_input\",\"track\":" + HostFixture.track(B) + "}",
+                        "{\"kind\":\"none\"}"));
         bad("tracks.routing.set", set("{\"kind\":\"track_audio_input\"}", "{\"kind\":\"none\"}", null, null));
         bad(
                 "tracks.routing.set",
-                set("{\"kind\":\"none\",\"trackId\":\"" + B + "\"}", "{\"kind\":\"none\"}", null, null));
+                set("{\"kind\":\"none\",\"track\":" + HostFixture.track(B) + "}", "{\"kind\":\"none\"}", null, null));
         bad("tracks.routing.set", set("{\"kind\":\"other\",\"name\":\"Out\"}", "{\"kind\":\"none\"}", null, null));
         bad("tracks.routing.set", set("{\"kind\":\"none\"}", "{\"kind\":\"other\"}", null, null));
         bad("tracks.routing.set", set("{\"kind\":\"none\"}", "{\"kind\":\"none\",\"name\":\"x\"}", null, null));
@@ -70,7 +85,7 @@ public final class RoutingModuleTest {
         bad("tracks.routing.set", set(null, null, "{\"kind\":\"hardware\"}", "{\"kind\":\"none\"}"));
         bad(
                 "tracks.routing.set",
-                set(null, null, "{\"kind\":\"post_fader\",\"trackId\":\"x\"}", "{\"kind\":\"none\"}"));
+                set(null, null, "{\"kind\":\"post_fader\",\"trackId\":\"" + B + "\"}", "{\"kind\":\"none\"}"));
         ok("devices.sidechain.set", sidechain());
         JsonObject modulator = sidechain();
         modulator.getAsJsonObject("target").addProperty("modulatorId", C);
@@ -84,7 +99,7 @@ public final class RoutingModuleTest {
         index.getAsJsonObject("target").addProperty("index", -1);
         bad("devices.sidechain.set", index);
         JsonObject output = sidechain();
-        output.add("source", json("{\"kind\":\"track_audio_input\",\"trackId\":\"" + B + "\"}"));
+        output.add("source", json("{\"kind\":\"track_audio_input\",\"track\":" + HostFixture.track(B) + "}"));
         bad("devices.sidechain.set", output);
         JsonObject noExpected = sidechain();
         noExpected.remove("expect");
@@ -93,7 +108,7 @@ public final class RoutingModuleTest {
         legacy.addProperty("componentIndex", 0);
         bad("devices.sidechain.set", legacy);
         ok("devices.sidechain.get", json("{\"target\":" + DEVICE + ",\"includeChoices\":false}"));
-        bad("devices.sidechain.get", json("{\"trackId\":\"" + A + "\",\"deviceIndex\":0}"));
+        bad("devices.sidechain.get", json("{\"track\":" + HostFixture.track(A) + ",\"deviceIndex\":0}"));
         bad(
                 "devices.sidechain.get",
                 json("{\"target\":{\"kind\":\"device\",\"chain\":{\"kind\":\"chain\",\"device\":" + DEVICE
@@ -127,17 +142,21 @@ public final class RoutingModuleTest {
                 RoutingModule.sourceKinds(List.of("HARDWARE_AUDIO_SOURCES")).equals(List.of("none")),
                 "hardware audio is deferred");
         assertTrue(RoutingModule.trackSourceGroups("GROUP").isEmpty(), "unknown native kind admits nothing");
-        JsonObject observed = json("{\"kind\":\"pre_fader\",\"trackId\":\"" + B + "\",\"name\":\"Pre\"}");
+        JsonObject observed = json("{\"kind\":\"pre_fader\",\"track\":" + HostFixture.track(B) + ",\"name\":\"Pre\"}");
         assertTrue(
                 RoutingModule.sameEntry(
-                        json("{\"kind\":\"pre_fader\",\"trackId\":\"" + B.toUpperCase(Locale.ROOT) + "\"}"), observed),
+                        json("{\"kind\":\"pre_fader\",\"track\":" + HostFixture.track(B.toUpperCase(Locale.ROOT))
+                                + "}"),
+                        observed),
                 "CAS ignores UUID case and display name");
         assertTrue(
-                !RoutingModule.sameEntry(json("{\"kind\":\"post_fader\",\"trackId\":\"" + B + "\"}"), observed),
+                !RoutingModule.sameEntry(
+                        json("{\"kind\":\"post_fader\",\"track\":" + HostFixture.track(B) + "}"), observed),
                 "CAS compares kind");
         assertTrue(
-                !RoutingModule.sameEntry(json("{\"kind\":\"pre_fader\",\"trackId\":\"" + C + "\"}"), observed),
-                "CAS compares trackId");
+                !RoutingModule.sameEntry(
+                        json("{\"kind\":\"pre_fader\",\"track\":" + HostFixture.track(C) + "}"), observed),
+                "CAS compares the track id");
         JsonObject other = json("{\"kind\":\"other\",\"name\":\"Out 1\",\"nativeType\":\"x\"}");
         assertTrue(
                 RoutingModule.sameEntry(json("{\"kind\":\"other\",\"name\":\"Out 1\"}"), other),
@@ -244,7 +263,7 @@ public final class RoutingModuleTest {
         assertEquals(Refs.device(HostFixture.track(A), 0, "Compressor"), changed.current);
         JsonObject p = sidechain();
         JsonObject result = f.call("devices.sidechain.set", p);
-        assertTrue(f.adapter.writes == 1, "sidechain set reaches the adapter with a stopped transport");
+        assertTrue(f.adapter.writes == 1, "sidechain set reaches the adapter");
         assertEquals(p.getAsJsonObject("target"), result.getAsJsonObject("ref"), "the written component's ref");
         f.host.tracks[0].child("name").emit("Lead");
         f.call("devices.sidechain.get", get);
@@ -254,8 +273,26 @@ public final class RoutingModuleTest {
         assertTrue(missing.adapter.calls == 0, "an unobserved device is refused before native access");
     }
 
+    @Test
+    void sidechainSetMayRunWhilePlayingButNotWhileRecording() {
+        Fixture playing = new Fixture();
+        playing.observeDevice("Compressor");
+        playing.host.transport.child("isPlaying").emit(true);
+        playing.call("devices.sidechain.set", sidechain());
+        assertEquals(1, playing.adapter.writes, "a playing transport admits a sidechain write");
+        Fixture recording = new Fixture();
+        recording.observeDevice("Compressor");
+        recording.host.transport.child("isArrangerRecordEnabled").emit(true);
+        assertRpcError("unsafe_state", recording.start("devices.sidechain.set", sidechain()));
+        assertEquals(0, recording.adapter.calls, "recording blocks a sidechain write before native access");
+    }
+
     static JsonObject outputTo(String id) {
-        return set("{\"kind\":\"track_audio_input\",\"trackId\":\"" + id + "\"}", "{\"kind\":\"none\"}", null, null);
+        return set(
+                "{\"kind\":\"track_audio_input\",\"track\":" + HostFixture.track(id) + "}",
+                "{\"kind\":\"none\"}",
+                null,
+                null);
     }
 
     static final JsonObject DEVICE_REF = Refs.device(HostFixture.track(A), 0, "Compressor");
@@ -290,8 +327,9 @@ public final class RoutingModuleTest {
 
     static JsonObject sidechain() {
         return json("{\"target\":{\"kind\":\"sidechain\",\"device\":" + DEVICE
-                + ",\"index\":0,\"id\":\"SIDECHAIN\"},\"source\":{\"kind\":\"pre_fader\",\"trackId\":\"" + B
-                + "\"},\"expect\":{\"source\":{\"kind\":\"none\"}}}");
+                + ",\"index\":0,\"id\":\"SIDECHAIN\"},\"source\":{\"kind\":\"pre_fader\",\"track\":"
+                + HostFixture.track(B)
+                + "},\"expect\":{\"source\":{\"kind\":\"none\"}}}");
     }
 
     static JsonObject json(String text) {
@@ -311,34 +349,35 @@ public final class RoutingModuleTest {
     }
 
     @Test
-    void trackNamesAnnotateEntriesWithoutChangingThem() {
+    void entryTrackRefsGetTheirPublicNames() {
         JsonObject result = JsonParser.parseString(
-                        "{\"output\":{\"entry\":{\"kind\":\"track_audio_input\",\"trackId\":\"m\"},\"choices\":["
-                                + "{\"entry\":{\"kind\":\"post_fader\",\"trackId\":\"a\"},\"name\":\"Post-Fader\"},{\"entry\":{\"kind\":\"none\"},\"name\":null},"
-                                + "{\"entry\":{\"kind\":\"track_notes\",\"trackId\":\"gone\"},\"name\":\"\"}]},"
-                                + "\"components\":[{\"source\":{\"kind\":\"pre_fader\",\"trackId\":\"a\"}}]}")
+                        "{\"output\":{\"entry\":{\"kind\":\"track_audio_input\",\"track\":{\"kind\":\"track\",\"id\":\"m\"}},\"choices\":["
+                                + "{\"entry\":{\"kind\":\"track_notes\",\"track\":{\"kind\":\"track\",\"id\":\"gone\"}},\"name\":\"\"}]},"
+                                + "\"components\":[{\"source\":{\"kind\":\"pre_fader\",\"track\":{\"kind\":\"track\",\"id\":\"a\"}}}]}")
                 .getAsJsonObject();
-        RoutingModule.annotateTrackNames(result, Map.of("m", "Master", "a", "Drums"));
+        RoutingModule.nameTracks(result, Map.of("m", "Master", "a", "Drums"));
         JsonObject output = result.getAsJsonObject("output");
-        JsonArray choices = output.getAsJsonArray("choices");
-        assertTrue(output.get("trackName").getAsString().equals("Master"), "current entry gets its track name");
+        assertEquals(
+                json("{\"kind\":\"track\",\"id\":\"m\",\"name\":\"Master\"}"),
+                output.getAsJsonObject("entry").getAsJsonObject("track"),
+                "the current entry's track is a full track ref");
         assertTrue(
-                choices.get(0).getAsJsonObject().get("trackName").getAsString().equals("Drums"),
-                "choice row gets the track name");
-        assertTrue(
-                !choices.get(0).getAsJsonObject().getAsJsonObject("entry").has("trackName"),
-                "entry stays verbatim for expected*");
-        assertTrue(
-                !choices.get(1).getAsJsonObject().has("trackName")
-                        && !choices.get(2).getAsJsonObject().has("trackName"),
-                "no name for none or unknown tracks");
-        assertTrue(
+                !output.getAsJsonArray("choices")
+                        .get(0)
+                        .getAsJsonObject()
+                        .getAsJsonObject("entry")
+                        .getAsJsonObject("track")
+                        .has("name"),
+                "no name for a track outside the window");
+        assertEquals(
+                "Drums",
                 result.getAsJsonArray("components")
                         .get(0)
                         .getAsJsonObject()
-                        .get("sourceTrackName")
-                        .getAsString()
-                        .equals("Drums"),
+                        .getAsJsonObject("source")
+                        .getAsJsonObject("track")
+                        .get("name")
+                        .getAsString(),
                 "sidechain source named");
     }
 
@@ -444,7 +483,7 @@ public final class RoutingModuleTest {
             writes++;
             if (failAfterWrite) throw Errors.unknown(Reason.NATIVE_UNAVAILABLE, "simulated native failure");
             JsonObject out = new JsonObject();
-            out.addProperty("outcome", unknown ? "unknown" : "applied");
+            Results.stamp(out, unknown ? Outcome.UNKNOWN : Outcome.APPLIED, Verification.NATIVE_READBACK);
             return out;
         }
     }

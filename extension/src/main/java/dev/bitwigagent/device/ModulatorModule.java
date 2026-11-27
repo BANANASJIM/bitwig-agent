@@ -1,7 +1,6 @@
 package dev.bitwigagent.device;
 
 import com.google.gson.*;
-import dev.bitwigagent.bitwig614.Bitwig614ModulatorAdapter;
 import dev.bitwigagent.core.BoundedJson;
 import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.HostModule;
@@ -11,6 +10,7 @@ import dev.bitwigagent.core.RpcException;
 import dev.bitwigagent.core.Scheduler;
 import dev.bitwigagent.host.DeviceSources;
 import dev.bitwigagent.host.NativeRuntime;
+import dev.bitwigagent.nativehost.NativeModulatorAdapter;
 import java.util.Set;
 import java.util.UUID;
 
@@ -50,7 +50,7 @@ public final class ModulatorModule implements HostModule {
         scheduler.check(op);
         ModulatorEditor editor = edits.editor(op);
         if (adapter == null)
-            adapter = new Bitwig614ModulatorAdapter(natives.get(op).access());
+            adapter = new NativeModulatorAdapter(natives.get(op).access());
         boolean one = method.equals("modulators.get");
         JsonObject modulatorRef = one ? p.getAsJsonObject("target") : null;
         DeviceSources.Source device =

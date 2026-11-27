@@ -7,6 +7,7 @@ import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.Outcome;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Results;
+import dev.bitwigagent.core.Verification;
 import dev.bitwigagent.host.DeviceSources;
 import java.util.*;
 import java.util.function.Consumer;
@@ -126,7 +127,8 @@ public final class GridModuleWriter {
                 snapshots.guardTarget(target);
                 contexts.capture(target.target, target.graph, after.modules, context, check);
                 check.run();
-                JsonObject result = Results.outcome(changed ? Outcome.APPLIED : Outcome.ALREADY_MATCHED);
+                JsonObject result = Results.outcome(
+                        changed ? Outcome.APPLIED : Outcome.ALREADY_MATCHED, Verification.NATIVE_READBACK);
                 result.addProperty("moduleId", moduleId.toString());
                 result.addProperty("operation", request == null ? "delete" : "move");
                 result.add("previousPosition", selected.position());
@@ -143,7 +145,6 @@ public final class GridModuleWriter {
                 result.addProperty("mutationDispatched", changed);
                 result.addProperty("nativeMutation", changed);
                 result.addProperty("nativeUndo", changed);
-                result.addProperty("verification", "later_document_event_bounded_native_graph_observation");
                 result.addProperty(
                         "nativeUndoScope",
                         changed ? "native_operation_not_verified_grouping_or_commit" : "no_native_operation");

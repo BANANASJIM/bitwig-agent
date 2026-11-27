@@ -10,6 +10,7 @@ import dev.bitwigagent.core.Outcome;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.Scheduler;
+import dev.bitwigagent.core.Verification;
 import dev.bitwigagent.host.DeviceSources;
 import dev.bitwigagent.host.RequestSnapshot;
 import dev.bitwigagent.host.SelectionLease;
@@ -90,7 +91,7 @@ public final class DeviceModule implements HostModule {
             selection.requireFree();
             op.markDispatched();
             device.device.selectInEditor();
-            JsonObject result = Results.outcome(Outcome.SENT);
+            JsonObject result = Results.sent();
             result.add("ref", device.ref());
             op.result.complete(result);
             return;
@@ -124,7 +125,7 @@ public final class DeviceModule implements HostModule {
                 NativeChains.Device device = walk.device(target, true);
                 walk.dispatch(selection::requireFree);
                 walk.a.select(device.device);
-                JsonObject result = Results.outcome(Outcome.SENT);
+                JsonObject result = Results.sent();
                 result.add("ref", device.ref);
                 return result;
             });
@@ -134,7 +135,8 @@ public final class DeviceModule implements HostModule {
         JsonElement asked = new JsonPrimitive(wanted);
         chains.run(op, target, walk -> {
             NativeChains.Device device = walk.device(target, true);
-            if (on(walk, device) == wanted) return result(device.ref, asked, wanted, Outcome.ALREADY_MATCHED, null);
+            if (on(walk, device) == wanted)
+                return result(device.ref, asked, wanted, Outcome.ALREADY_MATCHED, null, Verification.NATIVE_READBACK);
             Object onOff = walk.a.enabled(device.device);
             if (!walk.a.writable(onOff))
                 throw Errors.notApplied(Reason.INVALID_TARGET, "The host does not let this device be bypassed.");
@@ -142,8 +144,14 @@ public final class DeviceModule implements HostModule {
             walk.a.write(onOff, wanted ? 1 : 0);
             boolean observed = on(walk, device);
             return observed == wanted
-                    ? result(device.ref, asked, wanted, Outcome.APPLIED, null)
-                    : result(device.ref, asked, observed, Outcome.UNKNOWN, Reason.READBACK_MISMATCH);
+                    ? result(device.ref, asked, wanted, Outcome.APPLIED, null, Verification.NATIVE_READBACK)
+                    : result(
+                            device.ref,
+                            asked,
+                            observed,
+                            Outcome.UNKNOWN,
+                            Reason.READBACK_MISMATCH,
+                            Verification.NATIVE_READBACK);
         });
     }
 
@@ -155,7 +163,8 @@ public final class DeviceModule implements HostModule {
     private void setEnabled(HostOperation op, DeviceSources.Source device, boolean wanted) {
         JsonElement asked = new JsonPrimitive(wanted);
         if (device.device.isEnabled().get() == wanted) {
-            op.result.complete(result(device.ref(), asked, wanted, Outcome.ALREADY_MATCHED, null));
+            op.result.complete(
+                    result(device.ref(), asked, wanted, Outcome.ALREADY_MATCHED, null, Verification.API_READBACK));
             return;
         }
         Enabled state = enabled.get(device);
@@ -171,19 +180,25 @@ public final class DeviceModule implements HostModule {
                 () -> {
                     snapshot.require(op);
                     if (state.sequence <= sequence || device.device.isEnabled().get() != wanted) return null;
-                    return () -> op.result.complete(result(device.ref(), asked, wanted, Outcome.APPLIED, null));
+                    return () -> op.result.complete(
+                            result(device.ref(), asked, wanted, Outcome.APPLIED, null, Verification.API_READBACK));
                 },
                 () -> op.result.complete(result(
-                        device.ref(), asked, device.device.isEnabled().get(), Outcome.UNKNOWN, Reason.NOT_OBSERVED)));
+                        device.ref(),
+                        asked,
+                        device.device.isEnabled().get(),
+                        Outcome.UNKNOWN,
+                        Reason.NOT_OBSERVED,
+                        Verification.API_READBACK)));
     }
 
     private static JsonObject result(
-            JsonObject ref, JsonElement requested, boolean observed, Outcome outcome, Reason reason) {
-        JsonObject result = Results.outcome(outcome);
+            JsonObject ref, JsonElement requested, boolean observed, Outcome outcome, Reason reason, Verification how) {
+        JsonObject result = Results.outcome(outcome, how);
         if (reason != null) result.addProperty("reason", reason.wire());
         result.add("ref", ref);
         JsonObject fields = new JsonObject();
-        fields.add("enabled", Results.field(requested, new JsonPrimitive(observed), outcome, reason));
+        fields.add("enabled", Results.field(requested, new JsonPrimitive(observed), outcome, reason, how));
         result.add("fields", fields);
         return result;
     }
@@ -235,7 +250,7 @@ public final class DeviceModule implements HostModule {
         JsonObject result = new JsonObject();
         result.addProperty("scope", "installed_bitwig_factory_devices");
         result.addProperty("completePluginCatalog", false);
-        result.addProperty("verification", "local_file_presence_not_insertion_or_audio_proof");
+        Results.readBy(result, Verification.FILE_READBACK);
         result.addProperty("bitwigIdAvailable", false);
         JsonArray devices = new JsonArray();
         result.add("devices", devices);
@@ -264,8 +279,10 @@ public final class DeviceModule implements HostModule {
                 String name = file.substring(0, file.length() - ".bwdevice".length());
                 JsonObject item = new JsonObject();
                 item.addProperty("name", name);
-                item.addProperty("kind", "file");
-                item.addProperty("path", path.toString());
+                JsonObject insert = new JsonObject();
+                insert.addProperty("kind", "file");
+                insert.addProperty("path", path.toString());
+                item.add("insert", insert);
                 item.addProperty("sourceKind", "installed_bitwig_factory_device");
                 String category = texts.category(name), description = texts.description(name);
                 if (category != null) item.addProperty("category", category);

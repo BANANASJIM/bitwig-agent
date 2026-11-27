@@ -32,6 +32,9 @@ public final class ErrorsTest {
                 "outcomes",
                 JsonParser.parseString("[\"applied\",\"already_matched\",\"sent\",\"not_applied\",\"unknown\"]"));
         assertThrows(IllegalStateException.class, () -> Reason.check(parse(reordered)), "severity order matters");
+        JsonObject verifications = bundleJson();
+        verifications.add("verifications", JsonParser.parseString("[\"native_readback\",\"api_readback\"]"));
+        assertThrows(IllegalStateException.class, () -> Reason.check(parse(verifications)), "a missing verification");
     }
 
     private static JsonObject bundleJson() {

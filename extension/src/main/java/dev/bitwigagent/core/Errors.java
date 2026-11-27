@@ -69,7 +69,7 @@ public final class Errors {
     /** As above; {@code inspect}, the method's read, is the {@code next} when the failure carries none. */
     public static JsonObject unknownResult(RpcException error, String inspect) {
         JsonObject out = new JsonObject();
-        out.addProperty("outcome", Outcome.UNKNOWN.wire());
+        Results.unknown(out);
         out.addProperty("reason", error.reason.wire());
         out.addProperty("message", error.getMessage());
         String next = error.next != null ? error.next : inspect;
@@ -91,7 +91,7 @@ public final class Errors {
     public static JsonObject entryResult(Throwable error) {
         RpcException rpc = cause(error);
         JsonObject out = unknownResult(rpc);
-        if (!rpc.unknown) out.addProperty("outcome", Outcome.NOT_APPLIED.wire());
+        if (!rpc.unknown) Results.notApplied(out);
         return out;
     }
 

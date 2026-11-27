@@ -16,8 +16,8 @@ def test_export_audio_and_tracks_bounce_are_strict_long_write_tools():
         "sources": ["master", ref(track)],
         "directory": "/home/me/Music",
         "baseName": "Mix",
-        "startBeats": 0,
-        "endBeats": 16,
+        "start": 0,
+        "end": 16,
         "fileType": "wav",
     }
     assert validate_call("export.audio", base) == (base, 30000)
@@ -56,8 +56,8 @@ def test_export_audio_and_tracks_bounce_are_strict_long_write_tools():
         {"baseName": "a/b"},
         {"baseName": " a"},
         {"baseName": "x" * 129},
-        {"endBeats": 0},
-        {"endBeats": 65537},
+        {"end": 0},
+        {"end": 65537},
         {"fileType": "mp3"},
         {"format": "wav"},
         {"bitDepth": 20},
@@ -69,7 +69,7 @@ def test_export_audio_and_tracks_bounce_are_strict_long_write_tools():
     ):
         with pytest.raises(ValidationError):
             validate_call("export.audio", base | bad)
-    bounce = {"targets": [ref(track)], "startBeats": 8, "endBeats": 24, "tap": "pre_fx", "inPlace": True}
+    bounce = {"targets": [ref(track)], "start": 8, "end": 24, "tap": "pre_fx", "inPlace": True}
     assert validate_call("tracks.bounce", bounce) == (bounce, 30000)
     assert validate_call("tracks.bounce", {k: v for k, v in bounce.items() if k != "inPlace"})[0] == {
         k: v for k, v in bounce.items() if k != "inPlace"
@@ -82,7 +82,7 @@ def test_export_audio_and_tracks_bounce_are_strict_long_write_tools():
         {"trackIds": [track]},
         {"inPlace": False},
         {"tap": "custom"},
-        {"endBeats": 8},
+        {"end": 8},
     ):
         with pytest.raises(ValidationError):
             validate_call("tracks.bounce", bounce | bad)

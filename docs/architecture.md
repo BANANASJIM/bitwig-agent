@@ -30,7 +30,7 @@ The extension binds `127.0.0.1:61172`; the Python client connects to IPv4 loopba
 | [`frontends/cli.py`](https://github.com/BANANASJIM/bitwig-agent/blob/main/src/bitwig_agent/frontends/cli.py) | CLI argument parsing, help layout and exit codes on top of `core` (`bitwig-agent`) |
 | [`install.py`](https://github.com/BANANASJIM/bitwig-agent/blob/main/src/bitwig_agent/install.py) | Release-version extension download/copy, integrity check, backups and printed MCP configuration |
 
-The catalog is not a planner. Tool examples are schema examples, not live target IDs. Tool annotations are hints, not authority or a proof that a call has no side effects. For example, `notes.read` selects a clip.
+The catalog is not a planner. Tool examples are schema examples, not live target IDs. Tool annotations are hints, not authority or a proof that a call has no side effects. For example, `notes.get` selects a clip.
 
 Python rejects invalid arguments before dispatch, including unknown fields and inappropriate value types. Java independently validates the transport and domain request; calling TCP directly does not remove host-side checks. The maintained Python dependency range is Python 3.11+, `mcp>=2.3.0,<3` and `pydantic>=2.12,<3`; the source lockfile selects exact development versions. The adapter uses the SDK 2 low-level constructor handlers and explicit result models. SDK attributes use snake_case; MCP wire fields retain their camelCase aliases, and the shared validator—not SDK convenience wrapping—owns argument validation. Package dependency resolution and native host compatibility are different concerns.
 
@@ -45,7 +45,7 @@ The main sources are under [`extension/src/main/java/dev/bitwigagent`](https://g
 | `core` | Shared mechanisms: `MethodSpecs`, `SchemaValidator`, `Refs`, `Errors`/`ErrorCode`/`Reason`/`Outcome`, `Params`, `Results`, `Batch`, `Scheduler`, `HostOperation`, `HostModule`, `Holds`, value/match/position rules, display solving |
 | `host` | Shared host observations and services: `TrackWindow`, `TrackRefs`, `ProjectState`, `TransportSafety`, `SelectionLease`, `LauncherStructureLock`, `NativeRuntime`, `DeviceSources`, `RequestSnapshot`, `NativeReadContext` |
 | `grid`, `device`, `launcher`, `arranger`, `mix`, `project`, `render`, `routing`, `automation`, `transport`, `actions`, `recovery` | Domain modules and their host-free rules, one package per domain |
-| `bitwig614` | Exact-version native bindings: the only package that reflects into the host |
+| `nativehost` | Version-gated native bindings: the only package that reflects into the host; host names come from the selected version's name table |
 
 Tests mirror these packages. Domain packages mirror the Python `protocol/` modules, grouped as `device` (devices, chains, parameters, modulators), `launcher` (launcher, scenes, clips, notes), `arranger` (arranger, markers), `mix` (tracks, meters) and `project` (status, context, project).
 
@@ -53,12 +53,12 @@ Java `core` holds the extension's shared protocol mechanisms; Python `core` is t
 
 Known couplings (follow-up; `tests/test_java_packages.py` is tightened once they are gone):
 
-- Domain packages still name `Bitwig614*` classes directly instead of going only through their ports.
-- `bitwig614` still builds JSON and calls domain rules (for example `AutomationModule` helpers).
+- Domain packages still name `nativehost.Native*` classes directly instead of going only through their ports.
+- `nativehost` still builds JSON and calls domain rules (for example `AutomationModule` helpers).
 - `core.HostOperation` implements `rpc.RpcServer.Expiring`.
 - `core.Results` takes `host.ProjectState.Readiness`.
 - `host.DeviceSources` calls `device.NativeChains.nested`.
-- `bitwig614.Bitwig614GridInsertionAccess` checks the origin of the root `BitwigAgentExtension`.
+- `nativehost.NativeGridInsertionAccess` checks the origin of the root `BitwigAgentExtension`.
 
 - `BitwigAgentExtension` creates the bridge/listener, forwards controller flushes and closes services on exit.
 - `RpcServer` owns transport framing, admission and bounded response delivery. It does not own project state, selection or domain business logic.
@@ -73,20 +73,20 @@ Known couplings (follow-up; `tests/test_java_packages.py` is tightened once they
   - `Holds` owns every unresolved or in-flight write: `status` lists them, writes in the domain are refused while one stands, and `AckModule` (`ack`) releases an unresolved one. `JobsModule` (`jobs.get`) reports the long jobs that in-flight holds stand for.
 - `HostOperation` tracks deadlines and turns a failure after dispatch into an unknown result. Host API work crosses the scheduler boundary rather than running on the network thread.
 - The device domain is split by what it proves. `DeviceListModule` lists a track's or a chain's devices; `DeviceChainModule` lists chains and owns the observed-delta verification of `devices.insert`/`delete`/`move` for a root chain and for a layer chain (`DeviceChainEdit` is the pure rule set); `DeviceModule` reads, bypasses and selects one device; `RemoteModule` owns each root device's own Remote Controls page (`devices.remote.get`, the internal page switch and the control write that `parameters.set` routes to it); `ParameterModule` lists and writes direct parameters.
-- `DeviceSources` owns fixed root device addresses and continuity observations, resolves root device refs, and (`DeviceSources.Native`) corroborates a root device's native owner. `NativeChains` resolves chain refs and devices inside chains on the document thread for each request (walk from the verified root, chain by UUID, device by index, ref compared there; `Bitwig614ChainAccess` holds the descriptors), and `NativeChainEdits` inserts, deletes and moves inside a chain, proving each edit by the chain's device objects. `ParameterModule` owns continuously observed source-specific direct-parameter data and writes one parameter by ref; no request depends on another, so there is no shared binding. Its `DirectParameterValueDisplayObserver` per device proxy observes no parameter at rest: a list asks for the ids it returns and a `{display}` write for the one it solves, and each stops observing when its request ends.
+- `DeviceSources` owns fixed root device addresses and continuity observations, resolves root device refs, and (`DeviceSources.Native`) corroborates a root device's native owner. `NativeChains` resolves chain refs and devices inside chains on the document thread for each request (walk from the verified root, chain by UUID, device by index, ref compared there; `NativeChainAccess` holds the descriptors), and `NativeChainEdits` inserts, deletes and moves inside a chain, proving each edit by the chain's device objects. `ParameterModule` owns continuously observed source-specific direct-parameter data and writes one parameter by ref; no request depends on another, so there is no shared binding. Its `DirectParameterValueDisplayObserver` per device proxy observes no parameter at rest: a list asks for the ids it returns and a `{display}` write for the one it solves, and each stops observing when its request ends.
 - Refs (protocol 0.5): `core.Refs` builds every kind and compares a requested ref with the one found at its location, by the field roles the Python `protocol/refs.py` exports in the bundle. `TrackRefs`, `DeviceSources` and `ParameterResolver` (one branch per parameter owner: device, Remote Controls page, modulator, Grid module, track) locate the object, comparing every ancestor device before looking below it; a ref that locates nothing is `target_not_found` with `next` naming the read for its variant. Grid module and modulator parameters are bound on the document thread through `ParameterResolver.ModuleOwners` (implemented by `GridSnapshotReader` and `ModulatorEditor`). Native readers capture a device from its resolved `DeviceSources.Source`, never from a separately passed track id. A `RequestSnapshot` taken right before dispatch turns a later change into `target_changed` (an error before dispatch, an unknown result after). `Positions` resolves `"start"`/`"end"`/`{before}`/`{after}` to an index; `ValueInput`, `ValueMatch` and `Batch` are the shared write-value, match and batch rules.
 - Discovery (`status`, which collects each module's `HostModule.status` section and, with `detail:"full"`, the implemented surface), track and device lists, Actions, transport, mix, devices and Launcher/MIDI have separate domain modules and observations. Their result semantics differ: a dispatch-only Action is not equivalent to an acknowledged parameter change.
 - `GridModule` separates target/RPC guards from bounded graph serialization and scalar, boolean-panel and topology writers. `GridTopologyQuarantine` serializes native topology lifetimes and keeps one quarantine record per Grid device, released only by `ack` after a graph re-check.
-- `ProjectModule` owns `project.save` (public Save action) and `project.saveAs`; `ProjectSaveAsPlan` mirrors the native folder rules host-free and `Bitwig614ProjectSaveAsAccess` calls the dialog-free save pipeline with a completion callback.
-- `RenderModule` owns `export.audio` and `tracks.bounce` (followed with `jobs.get`); `RenderPlan` names the output files and checks their headers host-free, and `Bitwig614RenderAccess` starts the native render jobs and exposes their completion latch (bounce readback reuses `Bitwig614ArrangerAccess`).
+- `ProjectModule` owns `project.save` (public Save action) and `project.saveAs`; `ProjectSaveAsPlan` mirrors the native folder rules host-free and `NativeProjectSaveAsAccess` calls the dialog-free save pipeline with a completion callback.
+- `RenderModule` owns `export.audio` and `tracks.bounce` (followed with `jobs.get`); `RenderPlan` names the output files and checks their headers host-free, and `NativeRenderAccess` starts the native render jobs and exposes their completion latch (bounce readback reuses `NativeArrangerAccess`).
 - `MixModule` owns `tracks.get/set/select/sends.set` and the `brief` row `context.get` uses; `TrackLifecycleModule` owns `tracks.insert/group/delete` (a named group is created and named inside one native transaction, so one Undo); `MeterModule` owns `meters.get`; `AutomationModule` resolves its parameter ref (a track's volume or pan, or a Grid module parameter) through `ParameterResolver`.
-- `RoutingModule` owns `tracks.routing.*` and `devices.sidechain.*` (validation, bank/device targets, stopped-transport safety and quarantine); `Bitwig614RoutingAccess` binds the native output/input choosers and sidechain components, enforces audio/note kinds, checks cycles before writing and reads every write back by identity.
+- `RoutingModule` owns `tracks.routing.*` and `devices.sidechain.*` (validation, bank/device targets, stopped-transport safety and quarantine); `NativeRoutingAccess` binds the native output/input choosers and sidechain components, enforces audio/note kinds, checks cycles before writing and reads every write back by identity.
 - `ModulatorModule` answers `modulators.list`/`get` from `ModulatorEditor` (typed rows with refs) and `ModulatorSnapshotReader` (bounded, nonloading string-panel rows). They share root target/read-context machinery, not Grid write authority.
-- `ModulatorEditModule` (RPC boundary), `ModulatorEditor` (ref resolution, `expect`, dispatch, readback) and `Bitwig614ModulatorEditAccess` (descriptors) own device-modulator edits, including the control writes `parameters.set` routes to them. They reuse the Grid parameter reader for typed values and Grid targets, and the Grid parameter/topology context checks, but not Grid write authority or topology quarantine.
+- `ModulatorEditModule` (RPC boundary), `ModulatorEditor` (ref resolution, `expect`, dispatch, readback) and `NativeModulatorEditAccess` (descriptors) own device-modulator edits, including the control writes `parameters.set` routes to them. They reuse the Grid parameter reader for typed values and Grid targets, and the Grid parameter/topology context checks, but not Grid write authority or topology quarantine.
 
-`Bitwig614TrackResolver` maps a public track proxy to its native track model and identity for the render and automation accessors. `Bitwig614Runtime` is lazy and shared through `NativeRuntime`. It checks the exact host version, loaded JAR CodeSource/hash/ClassLoader and mapped descriptors before private dispatch. Native target/read-context helpers corroborate ownership and lifecycle. Grid and modulator availability remains independently reported; successful read binding does not enable a writer.
+`NativeTrackResolver` maps a public track proxy to its native track model and identity for the render and automation accessors. `NativeHost` is lazy and shared through `NativeRuntime`. It selects the `shared/host.json` entry for the exact host version, checks the loaded JAR CodeSource/hash/ClassLoader against it, and resolves every binding through that entry's name table (`shared/names_<version>.json`: semantic keys such as `app.singleton` mapped to obfuscated host classes and members) before private dispatch. Binding code names host symbols only by those keys. Native target/read-context helpers corroborate ownership and lifecycle. Grid and modulator availability remains independently reported; successful read binding does not enable a writer.
 
-The unnamed-package [`BitwigAgent614GridInsertion.java`](https://github.com/BANANASJIM/bitwig-agent/blob/main/extension/src/main/java/BitwigAgent614GridInsertion.java) is intentional: the native superclass is in that package and the loader expects the exact class name. It is a narrow insertion boundary, not another transport, planner or generic transaction framework.
+Each supported host has one unnamed-package insertion class, `extension/src/host/<version>/BitwigAgentGridInsertion_<version>.java`, compiled against that version's jar (the build checks the jar's SHA-256 against `host.json`). The unnamed package is intentional: the native superclass is in that package and the loader expects the exact per-version class name. It is a narrow insertion boundary, not another transport, planner or generic transaction framework.
 
 ## Request lifecycle and outcomes
 
@@ -114,7 +114,7 @@ Names can change, same-metadata replacement can be ambiguous, and module/modulat
 - A Grid page's `window.complete` is page coverage. Whole-result coverage may still be partial, and stored connections are not proof of the active DSP graph.
 - MIDI reads use explicit channel/grid/window bounds and do not establish lossless arbitrary-clip export; selection/grid settling is not a general acknowledgement barrier.
 - String panels are written only through `grid.parameters.set`/`grid.apply` (Grid modules, e.g. Comment TEXT). Arranger clips (`arranger.list` and the arranger forms of `clips.*`), arranger automation points (`automation.points.*`) and track routing/device sidechains (`tracks.routing.*`, `devices.sidechain.*`, bank tracks only; hardware entries deferred) use version-gated native access; launcher automation, automation clips and dedicated master/cue tools are outside the structured surface.
-- Version `0.2.0` maps private access to **Bitwig 6.1.4 / API 25** and the exact loaded host-JAR hash; the older `0.1.2` release retains its 6.1.3 boundary. This is a single-version cutover, not a compatibility platform. [Native evidence](../VERIFICATION.md) is bounded to exercised Linux cases; a host package or successful macOS/Windows Python install does not extend it. Do not bypass the gate.
+- Version `0.5.0` maps private access to **Bitwig 6.1.4 and 6.1.7 / API 25**, each with its exact loaded host-JAR hash in `shared/host.json`; older releases keep their own boundary. Other versions fail closed. [Native evidence](../VERIFICATION.md) is bounded to exercised Linux cases; a host package or successful macOS/Windows Python install does not extend it. Do not bypass the gate.
 
 The agent can explicitly use separately authorized Computer Use for an unsupported operation, but there is no implicit GUI fallback.
 
@@ -123,7 +123,7 @@ The agent can explicitly use separately authorized Computer Use for an unsupport
 | Path | Responsibility |
 |---|---|
 | `src/bitwig_agent/` | Protocol and catalog, transport client, core call path, composed tools, MCP and CLI front ends, release installer |
-| `extension/src/main/java/dev/bitwigagent/` | Composition root; `rpc`, `core`, `host`, domain packages and `bitwig614` native adapters |
+| `extension/src/main/java/dev/bitwigagent/` | Composition root; `rpc`, `core`, `host`, domain packages and `nativehost` native adapters |
 | `extension/src/test/`, `tests/` | Simulated-host Java checks and host-free Python regressions |
 | `scripts/` | Source builds/checks and offline evidence helpers |
 | `examples/` | Client configuration and explicit opt-in music recipes |
@@ -147,12 +147,12 @@ flowchart LR
         M[core] --> H
         H --> D[domain packages]
         D --> HS[host]
-        D --> N[bitwig614]
+        D --> N[nativehost]
     end
     C -- "loopback TCP" --> R
 ```
 
-Enforced by tests: `protocol/` imports only the standard library, pydantic and itself; front ends import only `core` among internal modules. Java layering is by package (`tests/test_java_packages.py`): the root holds only composition, `rpc` imports only `core`, only `bitwig614` reflects into the host, and the unnamed package holds only `BitwigAgent614GridInsertion`; javac enforces package-private boundaries.
+Enforced by tests: `protocol/` imports only the standard library, pydantic and itself; front ends import only `core` among internal modules. Java layering is by package (`tests/test_java_packages.py`): the root holds only composition, `rpc` imports only `core`, only `nativehost` reflects into the host, and the unnamed package holds only the per-version `BitwigAgentGridInsertion_<version>` classes; javac enforces package-private boundaries.
 
 ## Evidence is layered
 

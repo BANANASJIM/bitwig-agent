@@ -7,7 +7,7 @@ JSON config (all paths absolute, artifact directory must not already exist):
    "display":":1", "window_id":"0x12345", "port":61172,
    "artifacts":"/path/to/new-run", "isolated_display_confirmed":true}
 No launch, installation, mutation, GUI input, screenshot, default display, or
-automatic retry is performed. notes.read is excluded because it selects a clip.
+automatic retry is performed. notes.get is excluded because it selects a clip.
 Requires Linux /proc, xprop and the existing Python development environment.
 A matching title/project name is NOT proof of the loaded full file path; exact
 file identity and actual reopen/music/UI behavior require independent evidence.
@@ -35,7 +35,7 @@ from mcp.types import TextContent
 
 from bitwig_agent.client import MAX_PORT
 from bitwig_agent.protocol import TOOLS
-from bitwig_agent.protocol.base import REASONS, SUCCEEDED, Outcome
+from bitwig_agent.protocol.base import REASONS, SUCCEEDED, Outcome, leaf_rule_holds
 
 
 def registry_matches(java_methods, advertised):
@@ -103,6 +103,8 @@ class NativeOutcomeGuard:
             self.stop("Malformed native result; inspect raw evidence before continuing.")
         if result.get("topologyQuarantined") is True or result.get("topologyAdmissionBlocked") is True:
             self.stop("Native topology admission is blocked; coordinator inspection is required.")
+        if not leaf_rule_holds(result):
+            self.stop("Native result is applied without a verification; the protocol rule is broken.")
         outcome = result.get("outcome")
         if outcome == Outcome.UNKNOWN or any(
             isinstance(field, dict) and field.get("outcome") == Outcome.UNKNOWN
@@ -313,7 +315,7 @@ async def probe(target, report):  # noqa: PLR0915
             report["notExercised"].append("Per-track/launcher/device reads: fixture has no observed tracks")
         elif not device_count:
             report["notExercised"].append("devices.get/devices.remote.get/parameters.list: no observed devices")
-        report["notExercised"].append("notes.read: selects a GUI clip; excluded from no-selection preflight")
+        report["notExercised"].append("notes.get: selects a GUI clip; excluded from no-selection preflight")
         report["afterTransport"] = await call("transport.get")
         report["afterStatus"] = await call("status")
         if report["afterStatus"].get("projectName") != target.fixture.stem:

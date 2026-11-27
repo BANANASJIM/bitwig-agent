@@ -4,7 +4,7 @@ Keep changes focused on helping agents complete real Bitwig tasks. Domain operat
 
 ## Source setup
 
-End users should use the [released wheel and extension](README.md#quickstart) when its host boundary fits. Current source requires a checkout, [pixi](https://pixi.sh/latest/installation/), and your own licensed **Bitwig 6.1.4 / API 25** installation. Pixi supplies Python, JDK 25 and PMD from conda-forge; the extension's loader superclass uses class-file version 69, so JDK 25 is needed to compile/run Java checks, while generated extension classes still target Java 11. This is a clean private-binding cutover, not simultaneous 6.1.3/6.1.4 support; published `0.1.2` remains unchanged.
+End users should use the [released wheel and extension](README.md#quickstart) when its host boundary fits. Current source requires a checkout, [pixi](https://pixi.sh/latest/installation/), and your own licensed **Bitwig 6.1.4 or 6.1.7 / API 25** installation. Pixi supplies Python, JDK 25 and PMD from conda-forge; the extension's loader superclass uses class-file version 69, so JDK 25 is needed to compile/run Java checks, while generated extension classes still target Java 11.
 
 From the repository root:
 
@@ -13,7 +13,7 @@ pixi install --locked
 pixi run install
 ```
 
-`install` builds `build/BitwigAgent.bwextension` and copies it into your Bitwig Extensions directory. The extension build compiles against your installed host JAR, `/opt/bitwig-studio/bin/bitwig.jar` unless `BITWIG_API_JAR` names another. The build downloads and verifies pinned Gson on first use. The proprietary host JAR is not bundled. Installation does not enable the controller: follow [the enable/connect steps](README.md#2-enable-in-bitwig). The checkout's CLI and MCP server run from its editable pixi environment (`pixi run bitwig-agent --help`). For a checkout-based MCP configuration, run `pixi run bitwig-agent-install --mcp-config`; keep the checkout's `.pixi` environment available to the client. Pixi cannot install PyPI-only applications globally, so there is no pixi equivalent of a tool install.
+`install` builds `build/BitwigAgent.bwextension` and copies it into your Bitwig Extensions directory. The extension build compiles against your installed host JAR, `/opt/bitwig-studio/bin/bitwig.jar` unless `BITWIG_API_JAR` names another; that JAR must be one `src/bitwig_agent/shared/host.json` lists by SHA-256, and only that version's Grid insertion adapter is built. A release build (`python scripts/build.py --release`) needs every listed version: set `BITWIG_HOST_JARS` to a directory of `<version>.jar` files (for example `6.1.4.jar`, `6.1.7.jar`); each adapter is compiled against its own JAR after a SHA-256 check. The build downloads and verifies pinned Gson on first use. The proprietary host JAR is not bundled. Installation does not enable the controller: follow [the enable/connect steps](README.md#2-enable-in-bitwig). The checkout's CLI and MCP server run from its editable pixi environment (`pixi run bitwig-agent --help`). For a checkout-based MCP configuration, run `pixi run bitwig-agent-install --mcp-config`; keep the checkout's `.pixi` environment available to the client. Pixi cannot install PyPI-only applications globally, so there is no pixi equivalent of a tool install.
 
 ## Development checks
 
@@ -69,7 +69,7 @@ The tools decide formatting, types, duplicate code, the `protocol/` import direc
 - **Changing code.** Refactor fully to the right design and update every call site: no shims, aliases, re-exports or legacy paths. A behaviour-preserving refactor proves it (for example, exported schemas byte-identical); a behaviour change is explicit and versioned.
 - **Comments.** None unless the code cannot say it: reverse-engineered native facts, measured host behaviour, a non-obvious external constraint. Never restate code or narrate reasoning; delete stale comments.
 - **Errors and writes.** Writes compare-and-set, read back, and never retry `unknown` (outcomes are defined in [PROTOCOL.md](PROTOCOL.md#results-errors-and-recovery)). Build failures only through `Errors` with a `Reason` (Java) and `bridge_error` / `unknown_result` (Python); an error means nothing changed, a possible change is an `unknown` result. A safety gate must answer a failure that was actually observed; no gates against imagined ones.
-- **Coverage.** Lines a PR changes must be at least 90% covered by Python or Java tests; there is no global target. Native bindings (`Bitwig614*`) are excluded because native E2E covers them. Run `pixi run coverage` (also `check.py --layer coverage`, off by default since it repeats the test runs); CI runs it on PRs. The threshold and exclusions live in `scripts/coverage-gate.py`.
+- **Coverage.** Lines a PR changes must be at least 90% covered by Python or Java tests; there is no global target. Native bindings (`nativehost/Native*` and `extension/src/host/`) are excluded because native E2E covers them. Run `pixi run coverage` (also `check.py --layer coverage`, off by default since it repeats the test runs); CI runs it on PRs. The threshold and exclusions live in `scripts/coverage-gate.py`.
 - **Tests.** Test every layer. Shared fakes live in one place (`tests/fakes.py`; one strict fake host in Java); never import from another test file. A change to native bindings needs native E2E on an isolated test instance.
 - **Language.** English everywhere in this repository. Commit subjects are imperative; no AI attribution in commits or PRs.
 
@@ -85,6 +85,10 @@ Pull requests follow [the template](.github/pull_request_template.md): why, a be
 - Preserve third-party notices. Project contributions are distributed under the [MIT License](LICENSE); third-party material retains its own applicable license.
 
 For security-sensitive issues, use the private route in [SECURITY.md](SECURITY.md), not a public issue containing exploit details or private data.
+
+## Contributing a platform name table
+
+Private features are natively tested on Linux only. Bitwig obfuscates `bitwig.jar` separately per platform (for 6.1.7 the Linux, Windows and macOS jars differ, and so do their member names), so Windows or macOS support needs a name table generated from that platform's jar. The remapping tool currently lives outside this repository; an in-repo tool and runbook are planned. A contributor needs that platform's `bitwig.jar` for a supported version, the matching Linux name table in `src/bitwig_agent/shared/`, (`names_<version>.json`), and the ability to run the native smoke on that platform.
 
 ## Releases
 

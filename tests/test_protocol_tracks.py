@@ -27,7 +27,7 @@ def test_tracks_are_addressed_by_ref_and_the_old_names_are_gone():
     ("method", "args", "field"),
     [
         ("tracks.set", {"target": TRACK, "mute": False}, "name"),
-        ("transport.set", {"playing": False}, "loopDurationBeats"),
+        ("transport.set", {"playing": False}, "loop"),
     ],
 )
 def test_absent_changes_not_serialized_and_explicit_null_rejected(method, args, field):

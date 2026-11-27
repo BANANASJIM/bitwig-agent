@@ -1,8 +1,8 @@
 package dev.bitwigagent.grid;
 
 import com.google.gson.*;
-import dev.bitwigagent.core.Outcome;
 import dev.bitwigagent.core.Reason;
+import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.RpcException;
 import java.util.*;
 
@@ -28,15 +28,15 @@ final class GridDiff {
 
     /** A batch entry whose write failed: unknown once its dispatch may have landed, else not_applied. */
     static void failed(JsonObject entry, Throwable error, boolean unknown) {
-        entry.addProperty("outcome", (unknown ? Outcome.UNKNOWN : Outcome.NOT_APPLIED).wire());
+        if (unknown) Results.unknown(entry);
+        else Results.notApplied(entry);
         entry.addProperty(
                 "reason", (error instanceof RpcException ? ((RpcException) error).reason : Reason.INTERNAL).wire());
         entry.addProperty("message", error.getMessage());
     }
 
     static void notApplied(JsonObject entry, Reason reason) {
-        entry.addProperty("outcome", Outcome.NOT_APPLIED.wire());
-        entry.addProperty("reason", reason.wire());
+        Results.notApplied(entry).addProperty("reason", reason.wire());
     }
 
     /** Writers attach graph (after) and graphBefore; the default response replaces both with the diff. */

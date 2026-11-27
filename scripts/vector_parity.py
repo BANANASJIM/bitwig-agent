@@ -40,7 +40,7 @@ REF_MODELS = {model.__name__ for model in Ref.__subclasses__()}
 SKIPS: dict[tuple[str, str, str], str] = {
     (
         "devices.insert",
-        "id",
+        "insert.id",
         "accept",
     ): "per-kind id caps (clap 256, vst3 32) make the shared 4096 unreachable; rejects still run",
     (
@@ -49,18 +49,18 @@ SKIPS: dict[tuple[str, str, str], str] = {
         "accept",
     ): "a note must fit the clip length (loop 4096, arranger 65536), so beat 4194304 is unreachable here",
     (
-        "notes.edit",
+        "notes.set",
         "edits.0.beat",
         "accept",
     ): "no explicit window: the host derives a grid of <=128 steps (step<=4 beats, startStep<=1048576) and rejects extremes the schema allows; error names the fix",
     (
         "clips.insert",
-        "notes.0.durationBeats",
+        "notes.0.duration",
         "accept",
     ): "same derived-grid limit (a 4096-beat note needs >128 steps)",
     (
-        "notes.edit",
-        "edits.0.durationBeats",
+        "notes.set",
+        "edits.0.duration",
         "accept",
     ): "same derived-grid limit as edits.0.beat (duration 4096 beats needs >128 steps)",
     **{
@@ -68,9 +68,9 @@ SKIPS: dict[tuple[str, str, str], str] = {
             m,
             f,
             "accept",
-        ): "endBeats must exceed startBeats by at most 65536, so a bound on one side is reachable only with a matching partner; rejects still run"
+        ): "end must exceed start by at most 65536, so a bound on one side is reachable only with a matching partner; rejects still run"
         for m in ("export.audio", "tracks.bounce")
-        for f in ("startBeats", "endBeats")
+        for f in ("start", "end")
     },
 }
 
@@ -96,9 +96,7 @@ def as_path(value):
 
 
 def file_insert(params, value):
-    params["kind"] = "file"
-    params.pop("id", None)
-    params["path"] = as_path(value)
+    params["insert"] = {"kind": "file", "path": as_path(value)}
 
 
 def project_path(params, value):
@@ -120,9 +118,9 @@ def window_fix(field):
     def fix(params, value):
         if field == "pitchStart" and 0 <= value < MIDI_PITCH_COUNT:
             params["pitchCount"] = max(1, min(params["pitchCount"], MIDI_PITCH_COUNT - value))
-        if "edits" in params and "stepSizeBeats" in params:
+        if "edits" in params and "stepSize" in params:
             params["edits"] = [
-                {"op": "clear", "beat": params["startStep"] * params["stepSizeBeats"], "pitch": params["pitchStart"]}
+                {"op": "clear", "beat": params["startStep"] * params["stepSize"], "pitch": params["pitchStart"]}
             ]
 
     return fix
@@ -165,20 +163,20 @@ def automation_fix(field):
     def fix(params, value):
         box = params.get("range")
         if box and isinstance(value, (int, float)) and 0 <= value <= MAX_BEAT:
-            if field == "startBeat":
-                box["endBeat"] = max(box["endBeat"], value)
-            elif field == "endBeat":
-                box["startBeat"] = min(box["startBeat"], value)
+            if field == "start":
+                box["end"] = max(box["end"], value)
+            elif field == "end":
+                box["start"] = min(box["start"], value)
         if "points" not in params:
             return
-        low = box["startBeat"] if box else 0.0
+        low = box["start"] if box else 0.0
         if field == "points":
-            span = (box["endBeat"] - low) if box else float(value)
+            span = (box["end"] - low) if box else float(value)
             params["points"] = [
                 {"beat": low + span * i / max(value, 1), "value": 0.5, "interpolation": "linear"} for i in range(value)
             ]
         elif box:
-            params["points"] = [p for p in params["points"] if box["startBeat"] <= p["beat"] <= box["endBeat"]]
+            params["points"] = [p for p in params["points"] if box["start"] <= p["beat"] <= box["end"]]
 
     return fix
 
@@ -204,7 +202,7 @@ FIXUPS = {
     **{
         (m, f"range.{f}"): automation_fix(f)
         for m in ("automation.points.get", "automation.points.set")
-        for f in ("startBeat", "endBeat")
+        for f in ("start", "end")
     },
     ("automation.points.set", "points"): automation_fix("points"),
     **{
@@ -216,15 +214,15 @@ FIXUPS = {
     ("grid.modules.insert", "modules.0.typeName"): drop("modules.0.typeId"),
     ("grid.parameters.set", "display"): drop("value"),
     ("transport.set", "timeSignature"): lambda p, v: p.__setitem__("timeSignature", "3/4"),
-    ("devices.insert", "path"): file_insert,
+    ("devices.insert", "insert.path"): file_insert,
     ("clips.import", "path"): lambda p, v: p.__setitem__("path", as_path(v)),
     ("clips.set", "expect"): lambda p, v: p.__setitem__("expect", {"name": "Hook"}),
     ("project.saveAs", "path"): project_path,
     ("export.audio", "directory"): lambda p, v: p.__setitem__("directory", as_path(v)),
     **{
         (m, f): window_fix(f)
-        for m in ("notes.read", "notes.edit")
-        for f in ("stepSizeBeats", "startStep", "steps", "pitchStart", "pitchCount")
+        for m in ("notes.get", "notes.set")
+        for f in ("stepSize", "startStep", "steps", "pitchStart", "pitchCount")
     },
 }
 

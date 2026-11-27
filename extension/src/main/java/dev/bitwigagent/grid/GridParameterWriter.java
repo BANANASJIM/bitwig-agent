@@ -7,6 +7,7 @@ import dev.bitwigagent.core.Params;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.RpcException;
+import dev.bitwigagent.core.Verification;
 import dev.bitwigagent.host.DeviceSources;
 import java.math.BigDecimal;
 import java.math.BigInteger;
@@ -107,7 +108,7 @@ public final class GridParameterWriter {
         values.guardParameter(binding);
         check.run();
         JsonObject result = values.parameterResult(binding, current);
-        result.addProperty("outcome", (changed ? Outcome.APPLIED : Outcome.ALREADY_MATCHED).wire());
+        Results.stamp(result, changed ? Outcome.APPLIED : Outcome.ALREADY_MATCHED, Verification.NATIVE_READBACK);
         result.add("previousValue", previous);
         result.add("requestedValue", request.value);
         if (request.display != null) {
@@ -115,7 +116,6 @@ public final class GridParameterWriter {
             result.addProperty("displayMismatch", GridDisplayUnits.mismatch(current, request.display));
         }
         result.addProperty("mutationDispatched", changed);
-        result.addProperty("verification", "exact_native_model_readback");
         result.addProperty("nativeMutation", changed);
         result.addProperty("nativeUndo", changed);
         result.addProperty(
@@ -215,7 +215,7 @@ public final class GridParameterWriter {
                     dispatch.run();
                     sent[0] = true;
                 });
-                item.add("outcome", one.get("outcome"));
+                Results.copyOutcome(item, one);
                 if (one.has("previousValues")) {
                     item.add("previousValues", one.get("previousValues"));
                     item.add("values", one.getAsJsonObject("parameter").get("values"));
@@ -238,7 +238,7 @@ public final class GridParameterWriter {
                 stopped = true;
             }
         }
-        JsonObject result = Results.outcome(Results.worst(writes));
+        JsonObject result = Results.ofEntries(writes);
         result.addProperty("written", written);
         result.add("writes", writes);
         return result;

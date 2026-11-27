@@ -16,7 +16,7 @@ import org.junit.jupiter.api.Test;
 public final class ClipEditTest {
 
     private static JsonObject loop(double length) {
-        return obj("{\"lengthBeats\":" + length + "}");
+        return obj("{\"length\":" + length + "}");
     }
 
     /** One launcher clip "Riff" in scene 0 with three channel-0 notes. */
@@ -82,7 +82,7 @@ public final class ClipEditTest {
                 params("target", ref, "loop", loop(4097)),
                 params("target", ref, "nextAction", "random"),
                 params("target", ref, "nextActionLoopCount", 65),
-                params("target", ref, "nextActionDelayBeats", -1),
+                params("target", ref, "nextActionDelay", -1),
                 params("target", ref, "launchMode", ""),
                 params("target", ref, "launchQuantization", 1),
                 params("target", ref, "useLoopStartAsQuantizationReference", "yes"),
@@ -117,7 +117,7 @@ public final class ClipEditTest {
     void aFieldTheClipKindDoesNotTakeIsUnsupportedScope() {
         LauncherFake f = lane();
         JsonObject launcherRef = f.clip(0);
-        assertRpcError("unsupported_scope", f.start("clips.set", params("target", launcherRef, "lengthBeats", 8)));
+        assertRpcError("unsupported_scope", f.start("clips.set", params("target", launcherRef, "length", 8)));
         JsonObject arranger = arrangerRef(f, 8, "Verse");
         assertRpcError("unsupported_scope", f.start("clips.set", params("target", arranger, "loop", loop(8))));
         assertRpcError("unsupported_scope", f.start("clips.set", params("target", arranger, "color", "#ff8800")));
@@ -127,8 +127,7 @@ public final class ClipEditTest {
                 "unsupported_scope",
                 f.start("clips.set", params("target", arranger, "useLoopStartAsQuantizationReference", true)));
         assertRpcError(
-                "unsupported_scope",
-                f.start("clips.move", params("target", launcherRef, "to", obj("{\"startBeats\":4}"))));
+                "unsupported_scope", f.start("clips.move", params("target", launcherRef, "to", obj("{\"start\":4}"))));
         assertEquals(0, f.lane.edited, "nothing reached the arranger lane");
         assertTrue(f.services.holds.list().isEmpty());
     }
@@ -497,8 +496,7 @@ public final class ClipEditTest {
     void anExpectThatMatchesLetsTheWriteThrough() {
         LauncherFake f = riff();
         JsonObject r = f.call(
-                "clips.set",
-                set(f, "name", "Verse", "expect", obj("{\"name\":\"Riff\",\"loop\":{\"lengthBeats\":4}}")));
+                "clips.set", set(f, "name", "Verse", "expect", obj("{\"name\":\"Riff\",\"loop\":{\"length\":4}}")));
         assertEquals("applied", r.get("outcome").getAsString());
         assertEquals("Verse", f.slots[0].name);
 
@@ -524,10 +522,10 @@ public final class ClipEditTest {
 
         error = assertRpcError(
                 "target_changed",
-                f.startAndDrain("clips.set", set(f, "name", "Verse", "expect", obj("{\"loop\":{\"lengthBeats\":8}}"))));
+                f.startAndDrain("clips.set", set(f, "name", "Verse", "expect", obj("{\"loop\":{\"length\":8}}"))));
         assertEquals(
                 4.0,
-                error.observed.getAsJsonObject("loop").get("lengthBeats").getAsDouble(),
+                error.observed.getAsJsonObject("loop").get("length").getAsDouble(),
                 "the loop length is read natively without selecting");
         assertEquals(5, f.selected);
 
@@ -548,9 +546,9 @@ public final class ClipEditTest {
     void anArrangerClipIsResizedThenRenamedAndTheRefCarriesTheNewName() {
         LauncherFake f = lane();
         JsonObject r =
-                f.call("clips.set", params("target", arrangerRef(f, 8, "Verse"), "lengthBeats", 16, "name", "Chorus"));
+                f.call("clips.set", params("target", arrangerRef(f, 8, "Verse"), "length", 16, "name", "Chorus"));
         assertEquals("applied", r.get("outcome").getAsString());
-        assertEquals("applied", outcomeOf(r, "lengthBeats"));
+        assertEquals("applied", outcomeOf(r, "length"));
         assertEquals("applied", outcomeOf(r, "name"));
         assertEquals(16, f.lane.clips.get(0)[1]);
         assertEquals("Chorus", f.lane.names.get(0));
@@ -568,20 +566,19 @@ public final class ClipEditTest {
         LauncherFake f = lane();
         RpcException error = assertRpcError(
                 "target_changed",
-                f.startAndDrain("clips.set", params("target", arrangerRef(f, 8, "Wrong"), "lengthBeats", 16)));
+                f.startAndDrain("clips.set", params("target", arrangerRef(f, 8, "Wrong"), "length", 16)));
         assertEquals("Verse", error.current.get("name").getAsString());
         assertEquals(4, f.lane.clips.get(0)[1]);
         assertRpcError(
                 "target_not_found",
-                f.startAndDrain("clips.set", params("target", arrangerRef(f, 40, "Verse"), "lengthBeats", 16)));
+                f.startAndDrain("clips.set", params("target", arrangerRef(f, 40, "Verse"), "length", 16)));
         assertTrue(f.services.holds.list().isEmpty());
     }
 
     @Test
     void anArrangerClipIsMovedOnItsOwnTrack() {
         LauncherFake f = lane();
-        JsonObject r =
-                f.call("clips.move", params("target", arrangerRef(f, 8, "Verse"), "to", obj("{\"startBeats\":32}")));
+        JsonObject r = f.call("clips.move", params("target", arrangerRef(f, 8, "Verse"), "to", obj("{\"start\":32}")));
         assertEquals("applied", r.get("outcome").getAsString());
         assertEquals(32, f.lane.clips.get(0)[0]);
         assertEquals(4, f.lane.clips.get(0)[1], "the length is kept");
@@ -590,7 +587,7 @@ public final class ClipEditTest {
         RpcException error = assertRpcError(
                 "target_changed",
                 f.startAndDrain(
-                        "clips.move", params("target", arrangerRef(f, 32, "Wrong"), "to", obj("{\"startBeats\":0}"))));
+                        "clips.move", params("target", arrangerRef(f, 32, "Wrong"), "to", obj("{\"start\":0}"))));
         assertEquals("Verse", error.current.get("name").getAsString());
         assertEquals(32, f.lane.clips.get(0)[0], "a stale move writes nothing");
     }
@@ -889,7 +886,7 @@ public final class ClipEditTest {
         assertUnknown("not_ready", op);
         f.scrollStuck = false;
         f.onSelect = () -> {};
-        HostOperation read = f.startAndDrain("notes.read", params("target", f.clip(3)));
+        HostOperation read = f.startAndDrain("notes.get", params("target", f.clip(3)));
         assertTrue(read.result.join().has("notes"), "the next cursor operation is admitted");
     }
 
@@ -912,7 +909,7 @@ public final class ClipEditTest {
         assertTrue(arranger.getMessage().contains("expect.nextAction"));
         assertRpcError(
                 "unsupported_scope",
-                f.start("clips.set", params("target", f.clip(3), "name", "x", "expect", obj("{\"lengthBeats\":4}"))));
+                f.start("clips.set", params("target", f.clip(3), "name", "x", "expect", obj("{\"length\":4}"))));
         assertEquals(0, f.lane.edited);
     }
 }

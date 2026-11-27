@@ -15,8 +15,7 @@ from bitwig_agent.protocol.registry import TOOLS
 SYNONYMS = {
     "offset": ("moduleOffset",),
     "limit": ("moduleLimit",),
-    "tempo": ("tempoBpm",),
-    "bpm": ("tempoBpm",),
+    "bpm": ("tempo",),
     "instanceId": ("moduleId", "targetModuleId", "sourceModuleId"),
     "moduleInstanceId": ("moduleId",),
     "instanceIds": ("moduleIds",),

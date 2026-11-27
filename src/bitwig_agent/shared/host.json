@@ -1,5 +1,14 @@
-{
-  "version": "6.1.4",
-  "apiVersion": 25,
-  "jarSha256": "77a50264156a9f79c925fa85e0456720ce157bfa10e2503d6049e2f733af4ba6"
-}
+[
+  {
+    "version": "6.1.4",
+    "apiVersion": 25,
+    "jarSha256": "77a50264156a9f79c925fa85e0456720ce157bfa10e2503d6049e2f733af4ba6",
+    "names": "names_6_1_4"
+  },
+  {
+    "version": "6.1.7",
+    "apiVersion": 25,
+    "jarSha256": "a3e52ddc94cfe69e08f75a96b2ee43b04a932d804948fa09c013ea7a04a43c44",
+    "names": "names_6_1_7"
+  }
+]

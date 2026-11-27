@@ -83,6 +83,7 @@ public final class TrackLifecycleModuleTest {
                         && result.get("trackCountBefore").getAsInt() == 2
                         && result.get("trackCountAfter").getAsInt() == 1,
                 "deleted once, verified");
+        assertEquals("api_readback", result.get("verification").getAsString());
         HostFixture silent = new HostFixture();
         TrackLifecycleModule other = lifecycle(silent);
         HostOperation nothing = silent.submit(other, "tracks.delete", delete(HostFixture.B, "Track 1"));
@@ -110,12 +111,7 @@ public final class TrackLifecycleModuleTest {
         f.next();
         JsonObject result = op.result.join();
         assertTrue(id(result).equals(HostFixture.C), "new unique UUID selected by difference");
-        assertTrue(
-                result.getAsJsonObject("insertion")
-                        .get("verification")
-                        .getAsString()
-                        .equals("unique_added_uuid_count_type_position"),
-                "creation evidence declared");
+        assertTrue(result.get("verification").getAsString().equals("api_readback"), "creation evidence declared");
         assertTrue(
                 f.tracks[2].child("name").writes == 1
                         && f.tracks[2].child("name").data.equals("Created"),
@@ -872,7 +868,7 @@ public final class TrackLifecycleModuleTest {
                 "the new group is identified and named");
         JsonObject info = result.getAsJsonObject("group");
         assertTrue(
-                info.get("verification").getAsString().startsWith("unique_added_group_uuid")
+                result.get("verification").getAsString().equals("api_readback")
                         && info.getAsJsonArray("children").size() == 2
                         && info.get("parent").isJsonNull(),
                 "group evidence lists children and parent");

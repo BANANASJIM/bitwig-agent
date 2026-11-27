@@ -3,8 +3,6 @@ package dev.bitwigagent.render;
 import com.bitwig.extension.controller.api.Project;
 import com.bitwig.extension.controller.api.Track;
 import com.google.gson.*;
-import dev.bitwigagent.bitwig614.Bitwig614RenderAccess;
-import dev.bitwigagent.bitwig614.Bitwig614Runtime;
 import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.Holds;
 import dev.bitwigagent.core.HostModule;
@@ -17,11 +15,14 @@ import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.RpcException;
 import dev.bitwigagent.core.SafetyObservation;
 import dev.bitwigagent.core.Scheduler;
+import dev.bitwigagent.core.Verification;
 import dev.bitwigagent.host.NativeRuntime;
 import dev.bitwigagent.host.TrackEpochs;
 import dev.bitwigagent.host.TrackRefs;
 import dev.bitwigagent.host.TrackWindow;
 import dev.bitwigagent.host.TransportSafety;
+import dev.bitwigagent.nativehost.NativeHost;
+import dev.bitwigagent.nativehost.NativeRenderAccess;
 import dev.bitwigagent.project.ProjectSaveAsPlan;
 import dev.bitwigagent.recovery.JobsModule;
 import java.nio.file.Path;
@@ -103,12 +104,12 @@ public final class RenderModule implements HostModule, JobsModule.Source {
 
     static final String SWITCH_FIX =
             "actions.invoke actionId=switch_playback_to_arranger_for_all_tracks (every track follows the arranger again)";
-    static final String COPY_FIX = "clips.copy its launcher clip onto the arranger (to {track, startBeats})";
+    static final String COPY_FIX = "clips.copy its launcher clip onto the arranger (to {track, start})";
 
     public interface Access {
         void execute(Runnable work);
 
-        String nativeJarSha256();
+        void provenance(JsonObject out);
         /** Document thread: refuse what the native job would refuse or ask about, then dispatch once. null source = master. */
         Handle export(
                 Object projectProxy,
@@ -337,10 +338,9 @@ public final class RenderModule implements HostModule, JobsModule.Source {
     }
 
     private static void range(JsonObject p) {
-        double start = p.get("startBeats").getAsDouble(),
-                end = p.get("endBeats").getAsDouble();
+        double start = p.get("start").getAsDouble(), end = p.get("end").getAsDouble();
         if (end <= start || end - start > MAX_LENGTH)
-            throw Errors.invalid("endBeats must be after startBeats, at most " + (int) MAX_LENGTH + " beats later.");
+            throw Errors.invalid("end must be after start, at most " + (int) MAX_LENGTH + " beats later.");
     }
 
     @Override
@@ -364,14 +364,13 @@ public final class RenderModule implements HostModule, JobsModule.Source {
         }
         result.addProperty(
                 "binding",
-                "exact_" + Bitwig614Runtime.VERSION
+                "exact_" + NativeHost.SUPPORTED
                         + "_hash_gated_export_audio_and_bounce_in_place_jobs_with_native_latch");
-        result.addProperty("verification", "native_job_latch_then_file_headers_or_arranger_readback");
         return result;
     }
 
     private Access access(HostOperation op) {
-        if (access == null) access = Bitwig614RenderAccess.bind(natives.get(op).access());
+        if (access == null) access = NativeRenderAccess.bind(natives.get(op).access());
         return access;
     }
 
@@ -411,8 +410,7 @@ public final class RenderModule implements HostModule, JobsModule.Source {
             proxies.add(master ? null : window.bank().getItemAt(slots[i]));
             if (!master) seen[i] = epochs.get(slots[i]);
         }
-        double start = p.get("startBeats").getAsDouble(),
-                end = p.get("endBeats").getAsDouble();
+        double start = p.get("start").getAsDouble(), end = p.get("end").getAsDouble();
         String tap = p.has("tap") ? p.get("tap").getAsString() : "post_fader";
         Job next;
         if (export) {
@@ -532,8 +530,8 @@ public final class RenderModule implements HostModule, JobsModule.Source {
     static boolean overlaps(JsonArray rows, double start, double end) {
         for (JsonElement element : rows) {
             JsonObject row = element.getAsJsonObject();
-            double from = row.get("startBeats").getAsDouble();
-            if (from < end && from + row.get("lengthBeats").getAsDouble() > start) return true;
+            double from = row.get("start").getAsDouble();
+            if (from < end && from + row.get("length").getAsDouble() > start) return true;
         }
         return false;
     }
@@ -634,14 +632,14 @@ public final class RenderModule implements HostModule, JobsModule.Source {
                     JsonObject c = after.rows.get(k).getAsJsonObject();
                     int old = indexOf(before.natives, after.natives.get(k));
                     if (old < 0 || !sameSpan(before.rows.get(old).getAsJsonObject(), c)) trackChanged = true;
-                    boolean overlaps = c.get("startBeats").getAsDouble() < current.end - EPS
-                            && current.start < c.get("endBeats").getAsDouble() - EPS;
+                    boolean overlaps = c.get("start").getAsDouble() < current.end - EPS
+                            && current.start < c.get("end").getAsDouble() - EPS;
                     if (!overlaps) continue;
                     inRange++;
                     if (old < 0
                             && "audio".equals(str(c, "kind"))
-                            && near(c.get("startBeats").getAsDouble(), current.start)
-                            && near(c.get("endBeats").getAsDouble(), current.end)) added = c;
+                            && near(c.get("start").getAsDouble(), current.start)
+                            && near(c.get("end").getAsDouble(), current.end)) added = c;
                 }
                 changed |= trackChanged;
                 if (added == null) problem = trackChanged ? "no_new_audio_clip_at_requested_range" : "lane_unchanged";
@@ -652,7 +650,7 @@ public final class RenderModule implements HostModule, JobsModule.Source {
                             "clipRef",
                             Refs.arrangerClip(
                                     current.sources.get(i).getAsJsonObject(),
-                                    added.get("startBeats").getAsDouble(),
+                                    added.get("start").getAsDouble(),
                                     str(added, "name") == null ? "" : str(added, "name")));
                 }
                 if (problem != null) {
@@ -674,8 +672,8 @@ public final class RenderModule implements HostModule, JobsModule.Source {
     }
 
     private static boolean sameSpan(JsonObject a, JsonObject b) {
-        return near(a.get("startBeats").getAsDouble(), b.get("startBeats").getAsDouble())
-                && near(a.get("lengthBeats").getAsDouble(), b.get("lengthBeats").getAsDouble());
+        return near(a.get("start").getAsDouble(), b.get("start").getAsDouble())
+                && near(a.get("length").getAsDouble(), b.get("length").getAsDouble());
     }
 
     private static String str(JsonObject o, String key) {
@@ -723,13 +721,13 @@ public final class RenderModule implements HostModule, JobsModule.Source {
             else op.fail(Errors.unknown(reason, detail));
             return;
         }
-        JsonObject result = Results.outcome(Outcome.APPLIED);
+        JsonObject result =
+                Results.outcome(Outcome.APPLIED, bounce ? Verification.NATIVE_READBACK : Verification.FILE_READBACK);
         common(result, current, bridge);
         if (bounce) {
             result.add("tracks", evaluation.get("tracks"));
             trackTypes(current, evaluation.getAsJsonArray("tracks"));
             result.addProperty("nativeUndo", true);
-            result.addProperty("verification", "native_job_latch_and_arranger_readback");
         } else {
             result.add("files", evaluation.get("files"));
             result.addProperty("mayOpenFileManager", true);
@@ -739,7 +737,6 @@ public final class RenderModule implements HostModule, JobsModule.Source {
                 result.add("warnings", warnings);
                 result.addProperty("next", fixNext(current.fixes));
             }
-            result.addProperty("verification", "native_job_latch_and_file_headers");
         }
         op.result.complete(result);
     }
@@ -781,8 +778,8 @@ public final class RenderModule implements HostModule, JobsModule.Source {
 
     private void common(JsonObject result, Job current, Access bridge) {
         result.addProperty("method", current.method);
-        result.addProperty("startBeats", current.start);
-        result.addProperty("endBeats", current.end);
+        result.addProperty("start", current.start);
+        result.addProperty("end", current.end);
         result.addProperty("tap", current.tap);
         if (current.export != null) {
             result.addProperty("fileType", current.export.fileType);
@@ -795,8 +792,7 @@ public final class RenderModule implements HostModule, JobsModule.Source {
         current.done();
         long end = current.handle != null && current.settled ? current.doneAt : scheduler.now();
         result.addProperty("elapsedMs", TimeUnit.NANOSECONDS.toMillis(end - current.started));
-        result.addProperty("nativeVersion", Bitwig614Runtime.VERSION);
-        result.addProperty("nativeJarSha256", bridge.nativeJarSha256());
+        bridge.provenance(result);
     }
 
     @Override
@@ -832,7 +828,10 @@ public final class RenderModule implements HostModule, JobsModule.Source {
                                 Outcome outcome = outcome(evaluation);
                                 report(current, outcome);
                                 row.addProperty("state", "completed");
-                                row.addProperty("outcome", outcome.wire());
+                                Results.stamp(
+                                        row,
+                                        outcome,
+                                        current.bounce() ? Verification.NATIVE_READBACK : Verification.FILE_READBACK);
                                 if (outcome != Outcome.APPLIED)
                                     row.addProperty(
                                             "reason", failure(current, outcome).wire());

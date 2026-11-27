@@ -3,9 +3,12 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
+from bitwig_agent.presets import search
 from bitwig_agent.protocol import TOOLS, validate_call
 from bitwig_agent.protocol.base import TRACK
 from bitwig_agent.protocol.launcher import SLOT_REF
+from bitwig_agent.protocol.messages import invalid_params_message
+from bitwig_agent.protocol.positions import DEVICE_POSITION
 from bitwig_agent.protocol.topics import REFS
 
 UUID = "abcdef01-2345-6789-abcd-0123456789ab"
@@ -37,13 +40,27 @@ FILE = {"kind": "file", "path": "/tmp/Poly Sketch.bwpreset"}
 )
 def test_insertion_rejects_ambiguous_or_malformed_identifiers(kind, fields):
     with pytest.raises(ValidationError):
-        validate_call("devices.insert", {"to": {"parent": TRACK_REF}, "kind": kind, **fields})
+        validate_call("devices.insert", {"to": TRACK_REF, "insert": {"kind": kind, **fields}})
 
 
 def test_file_insertion_preserves_path_and_omits_id():
-    args = {"to": {"parent": CHAIN}, "kind": "file", "path": "/tmp/Poly Sketch.bwpreset"}
+    args = {"to": CHAIN, "insert": FILE}
     params, _ = validate_call("devices.insert", args)
     assert params == args
+
+
+def test_a_presets_search_hit_inserts_unchanged(tmp_path):
+    preset = tmp_path / "Warm Pad.bwpreset"
+    preset.write_bytes(b"")
+    hit = search({}, [("user", tmp_path)])["presets"][0]
+    params, _ = validate_call("devices.insert", {"to": TRACK_REF, "insert": hit["insert"]})
+    assert params["insert"] == {"kind": "file", "path": str(preset)}
+
+
+def test_an_integer_position_is_refused_in_one_readable_sentence():
+    with pytest.raises(ValidationError) as caught:
+        validate_call("devices.insert", {"to": TRACK_REF, "position": 1, "insert": FILE})
+    assert invalid_params_message("devices.insert", caught.value) == f"position: Value error, {DEVICE_POSITION}"
 
 
 @pytest.mark.parametrize(
@@ -79,11 +96,12 @@ def test_file_insertion_preserves_path_and_omits_id():
 def test_file_import_and_device_insertion_share_path_syntax(path):
     cases: list[tuple[str, dict[str, Any]]] = [
         ("clips.import", {"to": SLOT_REF}),
-        ("devices.insert", {"to": {"parent": TRACK_REF}, "kind": "file"}),
     ]
     for method, args in cases:
         with pytest.raises(ValidationError):
             validate_call(method, {**args, "path": path})
+    with pytest.raises(ValidationError):
+        validate_call("devices.insert", {"to": TRACK_REF, "insert": {"kind": "file", "path": path}})
 
 
 @pytest.mark.parametrize("parent", [TRACK_REF, CHAIN])
@@ -98,37 +116,37 @@ def test_file_import_and_device_insertion_share_path_syntax(path):
 )
 def test_insert_position_round_trips_for_a_track_and_a_chain(parent, position):
     args = {
-        "to": {"parent": parent, "position": position},
-        "kind": "bitwig",
-        "id": "11111111-2222-4333-8444-555555555555",
+        "to": parent,
+        "position": position,
+        "insert": {"kind": "bitwig", "id": "11111111-2222-4333-8444-555555555555"},
     }
     params, _ = validate_call("devices.insert", args)
     assert params == args
-    params, _ = validate_call("devices.insert", {**args, "to": {"parent": parent}})
-    assert "position" not in params["to"]
+    params, _ = validate_call("devices.insert", {"to": parent, "insert": args["insert"]})
+    assert "position" not in params
 
 
 @pytest.mark.parametrize(
     "changes",
     [
-        {"to": {"parent": TRACK_REF, "position": "before"}},
-        {"to": {"parent": TRACK_REF, "position": "middle"}},
-        {"to": {"parent": TRACK_REF, "position": {"before": TRACK_REF}}},
-        {"to": {"parent": TRACK_REF, "position": {"before": DEVICE, "after": DEVICE}}},
-        {"to": {"parent": TRACK_REF, "position": 1}},
-        {"to": {"parent": DEVICE}},
-        {"to": {"parent": {"kind": "track", "id": TRACK}}},
-        {"to": {"position": "end"}},
-        {"to": TRACK_REF},
+        {"position": "before"},
+        {"position": "middle"},
+        {"position": {"before": TRACK_REF}},
+        {"position": {"before": DEVICE, "after": DEVICE}},
+        {"position": 1},
+        {"to": DEVICE},
+        {"to": {"kind": "track", "id": TRACK}},
+        {"to": {"parent": TRACK_REF}},
         {"parent": TRACK_REF},
-        {"position": "end"},
+        {"kind": "clap", "id": "x.y"},
+        {"insert": {"kind": "clap", "id": "x.y", "name": "Synth"}},
         {"expectedDeviceCount": 2},
         {"trackId": TRACK},
         {"deviceIndex": 1},
     ],
 )
 def test_insert_rejects_old_fields_and_malformed_positions(changes):
-    args = {"to": {"parent": TRACK_REF}, "kind": "clap", "id": "x.y", **changes}
+    args = {"to": TRACK_REF, "insert": {"kind": "clap", "id": "x.y"}, **changes}
     with pytest.raises(ValidationError):
         validate_call("devices.insert", args)
 
@@ -148,7 +166,7 @@ def test_device_targets_take_a_root_or_a_chain_device_ref(method, target):
 def test_device_targets_reject_other_refs_and_the_old_triple(method, target):
     required: dict[str, dict[str, Any]] = {
         "devices.set": {"enabled": True},
-        "devices.move": {"to": {"position": "end"}},
+        "devices.move": {"position": "end"},
     }
     args = required.get(method, {})
     with pytest.raises(ValidationError):
@@ -159,14 +177,19 @@ def test_set_requires_enabled_and_move_a_destination():
     assert validate_call("devices.set", {"target": DEVICE, "enabled": False})[0]["enabled"] is False
     with pytest.raises(ValidationError):
         validate_call("devices.set", {"target": DEVICE})
-    for to in ({"position": "start"}, {"position": {"after": CHAIN_DEVICE}}, {"parent": CHAIN, "position": "end"}):
-        params, _ = validate_call("devices.move", {"target": CHAIN_DEVICE, "to": to})
-        assert params["to"] == to
-    for bad in ({}, {"parent": CHAIN}, {"position": "middle"}, {"toIndex": 1}):
+    for where in ({"position": "start"}, {"position": {"after": CHAIN_DEVICE}}, {"to": CHAIN, "position": "end"}):
+        params, _ = validate_call("devices.move", {"target": CHAIN_DEVICE, **where})
+        assert params == {"target": CHAIN_DEVICE, **where}
+    for bad in (
+        {},
+        {"to": CHAIN},
+        {"position": "middle"},
+        {"position": 0},
+        {"to": {"position": "end"}},
+        {"toIndex": 1},
+    ):
         with pytest.raises(ValidationError):
-            validate_call("devices.move", {"target": CHAIN_DEVICE, "to": bad})
-    with pytest.raises(ValidationError):
-        validate_call("devices.move", {"target": CHAIN_DEVICE})
+            validate_call("devices.move", {"target": CHAIN_DEVICE, **bad})
 
 
 def test_lists_take_a_container_target_and_chains_a_device():

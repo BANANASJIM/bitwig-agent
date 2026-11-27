@@ -14,3 +14,8 @@ def test_a_typo_keeps_the_single_close_spelling():
 
 def test_nothing_close_suggests_nothing():
     assert "did you mean" not in unknown_method_message("zzzz.qqqq")
+
+
+def test_a_read_verb_suggests_the_get_of_that_resource():
+    assert "(did you mean notes.get?)" in unknown_method_message("notes.read")
+    assert "(did you mean notes.set?)" in unknown_method_message("notes.edit")

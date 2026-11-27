@@ -8,7 +8,6 @@ import com.google.gson.*;
 import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.HostModule;
 import dev.bitwigagent.core.HostOperation;
-import dev.bitwigagent.core.Outcome;
 import dev.bitwigagent.core.Params;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Results;
@@ -133,7 +132,7 @@ public final class ActionModule implements HostModule {
         selection.requireFree();
         request.markDispatched();
         action.invoke();
-        JsonObject result = Results.outcome(Outcome.SENT);
+        JsonObject result = Results.sent();
         result.addProperty("actionId", actionId);
         request.result.complete(result);
     }

@@ -248,11 +248,18 @@ def help(topic: str | None = None) -> dict[str, Any]:
     }
 
 
+STRING_UNION = "string_union"
+
+
 def field_types(name: str) -> dict[str, Any]:
-    """Field name to its JSON schema type (None where the schema gives none)."""
+    """Field name to its JSON schema type: STRING_UNION for a union with a string member, None for other unions."""
     if not exists(name):
         raise ValueError(unknown_method_message(name))
-    return {key: prop.get("type") for key, prop in TOOLS[name].model.model_json_schema()["properties"].items()}
+    return {
+        key: prop.get("type")
+        or (STRING_UNION if any(member.get("type") == "string" for member in prop.get("anyOf", ())) else None)
+        for key, prop in TOOLS[name].model.model_json_schema()["properties"].items()
+    }
 
 
 def unknown_field_message(name: str, key: str) -> str:

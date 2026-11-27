@@ -23,7 +23,7 @@ from typing import Any
 
 from bitwig_agent.audio import analysis
 from bitwig_agent.errors import BridgeError, HostChanged, bridge_error, changed_before, unknown_result
-from bitwig_agent.protocol.base import SUCCEEDED
+from bitwig_agent.protocol.base import SUCCEEDED, Outcome, Verification
 
 NODE = "Bitwig Studio"
 SINK = "bwtest"
@@ -171,6 +171,20 @@ def describe(links: list[tuple[str, str]]) -> dict[str, Any]:
     }
 
 
+def _read_back(confirmed: bool, moved: bool, mode: str) -> dict[str, Any]:
+    """The outcome of a relink from the links read back afterwards."""
+    if not confirmed:
+        return unknown_result(
+            "readback_mismatch",
+            f"The PipeWire links read back after {mode} are not the requested ones.",
+            "Inspect the links with audio.route mode=status before another change.",
+        )
+    return {
+        "outcome": Outcome.APPLIED if moved else Outcome.ALREADY_MATCHED,
+        "verification": Verification.SYSTEM_READBACK,
+    }
+
+
 def _route_silent(links: list[tuple[str, str]], saved: dict[str, list[str]]) -> dict[str, Any]:
     if not links and not saved:
         raise bridge_error("not_ready", f"No '{NODE}' output links in PipeWire; is Bitwig running and playing out?")
@@ -189,11 +203,13 @@ def _route_silent(links: list[tuple[str, str]], saved: dict[str, list[str]]) -> 
         if out in previous and (out, sink_port) not in links:
             link([out, sink_port], "connect")
             moved = True
+    now = current_links()
+    confirmed = describe(now)["silent"] and all((out, OUT_PORTS[out]) in now for out in previous if out in OUT_PORTS)
     return {
-        "outcome": "applied" if moved else "already_matched",
+        **_read_back(confirmed, moved, "silent"),
         "mode": "silent",
         "sinkCreated": created,
-        **describe(current_links()),
+        **describe(now),
         "savedPrevious": previous,
     }
 
@@ -215,8 +231,11 @@ def _route_restore(links: list[tuple[str, str]], saved: dict[str, list[str]]) ->
     for out, target in current_links():
         if target.startswith(f"{SINK}:"):
             link(["-d", out, target], "disconnect")
-    save_state({})
-    return {"outcome": "applied", "mode": "restore", "restored": restored, **describe(current_links())}
+    now = current_links()
+    confirmed = all((r["from"], r["to"]) in now for r in restored) and not any(t.startswith(f"{SINK}:") for _, t in now)
+    if confirmed:  # an unconfirmed restore keeps what it saved, so it can run again after inspection
+        save_state({})
+    return {**_read_back(confirmed, True, "restore"), "mode": "restore", "restored": restored, **describe(now)}
 
 
 def route(args: dict[str, Any]) -> dict[str, Any]:
@@ -487,7 +506,7 @@ async def _record(
             created.append((src, dst))
         if from_start:
             transport_started = writes.transport = True
-            for change in ({"playing": False}, {"positionBeats": 0}, {"playing": True}):
+            for change in ({"playing": False}, {"position": 0}, {"playing": True}):
                 require_success("transport.set", await bridge.call("transport.set", change, timeout_ms))
         started = time.monotonic()
         await sleep(seconds)
@@ -514,6 +533,7 @@ async def _record(
         )
     return {
         "outcome": "applied",
+        "verification": Verification.FILE_READBACK,
         "path": path,
         "requestedSeconds": seconds,
         "elapsedSeconds": round(elapsed, 3),

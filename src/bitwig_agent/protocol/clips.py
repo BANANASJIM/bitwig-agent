@@ -39,7 +39,7 @@ class ClipNote(StrictModel):
     beat: float = Field(ge=0, le=MAX_BEAT, description="Onset in beats from the clip start, on a grid of 1/128 beat.")
     pitch: int = Field(ge=0, le=127)
     velocity: int = Field(ge=1, le=127)
-    durationBeats: float = Field(ge=BEAT_GRID, le=MAX_CLIP_BEATS)
+    duration: float = Field(ge=BEAT_GRID, le=MAX_CLIP_BEATS)
 
 
 ONSET_GRID = Decimal(1) / BEAT_GRID_DIVISOR
@@ -78,9 +78,7 @@ def window_problem(at: str, span: Span, window: NoteWindow) -> str | None:
     step, rest = divmod(span.beat, window.grid)
     window_end = (window.start + window.steps) * window.grid
     if rest:
-        return (
-            f"{at} beat {plain(span.beat)} does not align with stepSizeBeats {plain(window.grid)}: use a multiple of it"
-        )
+        return f"{at} beat {plain(span.beat)} does not align with stepSize {plain(window.grid)}: use a multiple of it"
     if not (
         window.start <= step < window.start + window.steps
         and window.pitch <= span.pitch < window.pitch + window.pitches
@@ -93,7 +91,7 @@ def window_problem(at: str, span: Span, window: NoteWindow) -> str | None:
     if span.end > window_end:
         return (
             f"{at} ends at beat {plain(span.requested_end)}, past the window end {plain(window_end)}: shorten it to "
-            f"durationBeats <= {plain(window_end - span.beat)}"
+            f"duration <= {plain(window_end - span.beat)}"
         )
     return None
 
@@ -111,7 +109,7 @@ def length_problem(at: str, span: Span, length: Decimal) -> str | None:
     if span.beat >= length:
         return f"{at} starts at beat {plain(span.beat)}, at or past the clip length {plain(length)}"
     return (
-        f"{at} ends at beat {plain(span.requested_end)}, past the clip length {plain(length)}: shorten it to durationBeats <= "
+        f"{at} ends at beat {plain(span.requested_end)}, past the clip length {plain(length)}: shorten it to duration <= "
         f"{plain(length - span.beat)}"
     )
 
@@ -136,7 +134,7 @@ def collision_problems(spans: list[Span], field: str) -> list[tuple[int, str]]:
                 (
                     span.position,
                     f"{field}[{span.position}] starts at beat {plain(span.beat)} before {field}[{holder.position}] on pitch "
-                    f"{span.pitch} ends at beat {plain(holder.requested_end)}: shorten {field}[{holder.position}] to durationBeats <= "
+                    f"{span.pitch} ends at beat {plain(holder.requested_end)}: shorten {field}[{holder.position}] to duration <= "
                     f"{plain(span.beat - holder.beat)}",
                 )
             )
@@ -156,7 +154,7 @@ def note_violations(
     for index, note in enumerate(notes):
         beat = Decimal(str(note.beat))
         is_set = getattr(note, "op", "set") == "set"
-        duration = Decimal(str(note.durationBeats)) if is_set else Decimal(0)
+        duration = Decimal(str(note.duration)) if is_set else Decimal(0)
         spans.append(Span(index, note.pitch, is_set, beat, beat + stored_duration(duration), beat + duration))
     found: list[tuple[int, str]] = []
     for span in spans:
@@ -182,18 +180,18 @@ def require_location(target: Any, location: type, method: str, label: str) -> No
 
 
 class InsertLoop(StrictModel):
-    lengthBeats: int = Field(ge=1, le=MAX_CLIP_BEATS, description="Loop length and playback stop of the new clip.")
+    length: int = Field(ge=1, le=MAX_CLIP_BEATS, description="Loop length and playback stop of the new clip.")
 
 
 class SetLoop(StrictModel):
-    lengthBeats: float = Field(
+    length: float = Field(
         ge=BEAT_GRID, le=MAX_CLIP_BEATS, description="Loop length; the play stop moves to the new loop end."
     )
 
 
 class ArrangerDestination(StrictModel):
     track: TrackRef
-    startBeats: Beats
+    start: Beats
 
 
 def _destination_tag(value: Any) -> str:
@@ -214,7 +212,7 @@ class ClipInsertArgs(StatusArgs):
     to: Destination
     name: str = Field(min_length=1, max_length=128)
     loop: InsertLoop = omitted(description="Launcher slot only: the loop length.")
-    lengthBeats: Annotated[float, Field(ge=BEAT_GRID, le=MAX_ARRANGER_CLIP_BEATS)] = omitted(
+    length: Annotated[float, Field(ge=BEAT_GRID, le=MAX_ARRANGER_CLIP_BEATS)] = omitted(
         description="Arranger position only: the clip length."
     )
     notes: Annotated[list[ClipNote], Field(min_length=1, max_length=256)] = omitted()
@@ -225,17 +223,17 @@ class ClipInsertArgs(StatusArgs):
     def validate_shape(self) -> Self:
         launcher = isinstance(self.to, SlotRef)
         supplied = self.model_fields_set
-        if launcher and ("loop" not in supplied or "lengthBeats" in supplied):
-            raise ValueError("a launcher slot takes loop:{lengthBeats}, not lengthBeats")
-        if not launcher and ("lengthBeats" not in supplied or "loop" in supplied):
-            raise ValueError("an arranger position takes lengthBeats, not loop")
+        if launcher and ("loop" not in supplied or "length" in supplied):
+            raise ValueError("a launcher slot takes loop:{length}, not length")
+        if not launcher and ("length" not in supplied or "loop" in supplied):
+            raise ValueError("an arranger position takes length, not loop")
         if "notes" not in supplied:
             if {"channel", "detail"} & supplied:
                 raise ValueError("channel and detail are only valid together with notes")
             return self
         if not launcher and "detail" in supplied:
             raise ValueError("detail applies to launcher slots only")
-        length = Decimal(str(self.loop.lengthBeats if launcher else self.lengthBeats))
+        length = Decimal(str(self.loop.length if launcher else self.length))
         refuse_violations("notes", note_violations(self.notes, "notes", length))
         return self
 
@@ -251,20 +249,20 @@ class ClipImportArgs(StatusArgs):
 
 
 class LoopExpect(StrictModel):
-    lengthBeats: float
+    length: float
 
 
 class ClipExpect(Expect):
     """The current values readable without selecting the clip: color and the launch fields are not."""
 
     name: str = omitted()
-    lengthBeats: float = omitted()
+    length: float = omitted()
     loop: LoopExpect = omitted()
     nextAction: Literal["play_next", "stop"] = omitted()
     nextActionEnabled: bool = omitted()
     nextActionLinkToLoop: bool = omitted()
     nextActionLoopCount: int = omitted()
-    nextActionDelayBeats: float = omitted()
+    nextActionDelay: float = omitted()
 
 
 NEXT_ACTION = (
@@ -272,18 +270,18 @@ NEXT_ACTION = (
     "nextActionEnabled",
     "nextActionLinkToLoop",
     "nextActionLoopCount",
-    "nextActionDelayBeats",
+    "nextActionDelay",
 )
 LAUNCH = ("launchQuantization", "launchMode", "useLoopStartAsQuantizationReference")
 LAUNCHER_ONLY = ("color", "loop", *NEXT_ACTION, *LAUNCH)
-SETTINGS = ("name", "lengthBeats", *LAUNCHER_ONLY)
+SETTINGS = ("name", "length", *LAUNCHER_ONLY)
 
 
 class ClipSetArgs(StatusArgs):
     target: ClipRef
     name: Annotated[str, Field(min_length=1, max_length=128)] = omitted()
     color: Annotated[str, Field(pattern=COLOR)] = omitted(description='"#rrggbb"; Bitwig may snap it to its palette.')
-    lengthBeats: Annotated[float, Field(ge=BEAT_GRID, le=MAX_ARRANGER_CLIP_BEATS)] = omitted(
+    length: Annotated[float, Field(ge=BEAT_GRID, le=MAX_ARRANGER_CLIP_BEATS)] = omitted(
         description="Arranger clip only: the timeline length; the start stays."
     )
     loop: SetLoop = omitted(description="Launcher clip only.")
@@ -291,7 +289,7 @@ class ClipSetArgs(StatusArgs):
     nextActionEnabled: bool = omitted()
     nextActionLinkToLoop: bool = omitted()
     nextActionLoopCount: Annotated[int, Field(ge=1, le=64)] = omitted()
-    nextActionDelayBeats: Annotated[float, Field(ge=0, le=MAX_BEAT)] = omitted()
+    nextActionDelay: Annotated[float, Field(ge=0, le=MAX_BEAT)] = omitted()
     launchQuantization: Nonempty = omitted(
         description="One of the host's own options, listed in the result's options.launchQuantization. Selects the clip."
     )
@@ -313,12 +311,10 @@ class ClipSetArgs(StatusArgs):
             wrong = [key for key in LAUNCHER_ONLY if key in supplied] + [
                 f"expect.{key}" for key in expected & set(LAUNCHER_ONLY)
             ]
-            hint = "an arranger clip takes name and lengthBeats"
+            hint = "an arranger clip takes name and length"
         else:
-            wrong = [key for key in ("lengthBeats",) if key in supplied] + [
-                f"expect.{key}" for key in expected & {"lengthBeats"}
-            ]
-            hint = "a launcher clip takes loop:{lengthBeats}"
+            wrong = [key for key in ("length",) if key in supplied] + [f"expect.{key}" for key in expected & {"length"}]
+            hint = "a launcher clip takes loop:{length}"
         if wrong:
             raise ReasonError("unsupported_scope", f"{', '.join(wrong)} cannot be set on this clip: {hint}")
         return self
@@ -334,7 +330,7 @@ class ClipCopyArgs(StatusArgs):
 
 
 class ArrangerMove(StrictModel):
-    startBeats: Beats
+    start: Beats
 
 
 class ClipMoveArgs(StatusArgs):
@@ -366,12 +362,12 @@ class ClipTransformArgs(StatusArgs):
     op: Literal["doubleContent"]
 
 
-GRID_FIELDS = {"stepSizeBeats", "startStep", "steps", "pitchStart", "pitchCount"}
+GRID_FIELDS = {"stepSize", "startStep", "steps", "pitchStart", "pitchCount"}
 
 
 class NoteWindowArgs(ClipTargetArgs):
     channel: Annotated[int, Field(ge=0, le=15)] = omitted()
-    stepSizeBeats: Annotated[float, Field(ge=BEAT_GRID, le=4)] = omitted()
+    stepSize: Annotated[float, Field(ge=BEAT_GRID, le=4)] = omitted()
     startStep: Annotated[int, Field(ge=0, le=1048576)] = omitted()
     steps: Annotated[int, Field(ge=1, le=128)] = omitted()
     pitchStart: Annotated[int, Field(ge=0, le=127)] = omitted()
@@ -386,7 +382,7 @@ class NoteWindowArgs(ClipTargetArgs):
         supplied = GRID_FIELDS & self.model_fields_set
         if supplied and supplied != GRID_FIELDS:
             raise ValueError(
-                "stepSizeBeats, startStep, steps, pitchStart and pitchCount must be supplied together or all omitted"
+                "stepSize, startStep, steps, pitchStart and pitchCount must be supplied together or all omitted"
             )
         if supplied and self.pitchStart + self.pitchCount > MIDI_PITCH_COUNT:
             raise ValueError(f"pitchStart + pitchCount must not exceed {MIDI_PITCH_COUNT}")
@@ -398,15 +394,15 @@ class NoteEdit(StrictModel):
     beat: float = Field(ge=0, le=MAX_BEAT)
     pitch: int = Field(ge=0, le=127)
     velocity: Annotated[int, Field(ge=1, le=127)] = omitted()
-    durationBeats: Annotated[float, Field(ge=BEAT_GRID, le=MAX_CLIP_BEATS)] = omitted()
+    duration: Annotated[float, Field(ge=BEAT_GRID, le=MAX_CLIP_BEATS)] = omitted()
 
     @model_validator(mode="after")
     def validate_operation(self) -> Self:
-        supplied = self.model_fields_set & {"velocity", "durationBeats"}
-        if self.op == "set" and supplied != {"velocity", "durationBeats"}:
-            raise ValueError("set requires velocity and durationBeats")
+        supplied = self.model_fields_set & {"velocity", "duration"}
+        if self.op == "set" and supplied != {"velocity", "duration"}:
+            raise ValueError("set requires velocity and duration")
         if self.op == "clear" and supplied:
-            raise ValueError("clear forbids velocity and durationBeats")
+            raise ValueError("clear forbids velocity and duration")
         return self
 
 
@@ -417,7 +413,7 @@ class NoteEditArgs(NoteWindowArgs):
     @model_validator(mode="after")
     def validate_edits(self) -> Self:
         window = (
-            NoteWindow(Decimal(str(self.stepSizeBeats)), self.startStep, self.steps, self.pitchStart, self.pitchCount)
+            NoteWindow(Decimal(str(self.stepSize)), self.startStep, self.steps, self.pitchStart, self.pitchCount)
             if self.explicit_window
             else None
         )
@@ -428,7 +424,7 @@ class NoteEditArgs(NoteWindowArgs):
 NOTE_WINDOW = {
     "target": CLIP_REF,
     "channel": 0,
-    "stepSizeBeats": 0.25,
+    "stepSize": 0.25,
     "startStep": 0,
     "steps": 16,
     "pitchStart": 0,
@@ -437,7 +433,7 @@ NOTE_WINDOW = {
 
 
 CLIPS_GET_DESCRIPTION = (
-    "Read exact launcher clip timing and Next Action settings of one clip: loop {lengthBeats}, play and loop starts, "
+    "Read exact launcher clip timing and Next Action settings of one clip: loop {length}, play and loop starts, "
     "nextAction fields, in the shape clips.set writes. Source-bound native model access; no cursor selection. "
     "launchQuantization, launchMode and useLoopStartAsQuantizationReference are not read back here (they need the clip selected): "
     "the per-field outcomes of clips.set are their evidence. Requires the inspected Bitwig 6.1.4 JAR. Readback is not "
@@ -458,11 +454,11 @@ NOTE_WINDOWS = (
 )
 CLIPS_INSERT_DESCRIPTION = (
     "Create a named MIDI clip in an EMPTY launcher slot (to: a slot ref from launcher.list, scene included; loop "
-    "{lengthBeats} sets loop length and playback stop) or on an instrument track's arranger timeline (to {track, "
-    "startBeats}, lengthBeats; refused on overlap, never overwrites). Optional notes (beat, pitch, velocity, "
-    "durationBeats; optional channel, default 0) are written in the same call and must fit the length. "
+    "{length} sets loop length and playback stop) or on an instrument track's arranger timeline (to {track, "
+    "start}, length; refused on overlap, never overwrites). Optional notes (beat, pitch, velocity, "
+    "duration; optional channel, default 0) are written in the same call and must fit the length. "
     + NOTE_RULES
-    + "Launcher: the note result is noteWrite, in notes.edit's shape (detail=full for the full one). "
+    + "Launcher: the note result is noteWrite, in notes.set's shape (detail=full for the full one). "
     + NOTE_WINDOWS
     + "A launcher create selects the clip in the host UI. Returns the new clip's ref. An unobserved create is "
     "outcome unknown (reason not_observed): inspect, then ack the hold; never retry."
@@ -478,10 +474,10 @@ CLIPS_IMPORT_DESCRIPTION = (
 CLIPS_SET_DESCRIPTION = (
     "Set the supplied fields of ONE existing clip; each fields entry has its own outcome and expect compares bare "
     "current values first (stale/target_changed with observed). Launcher clip: name, color (#rrggbb; Bitwig may snap "
-    "it, then unknown/readback_mismatch), loop {lengthBeats} (also moves the play stop), Next Action fields "
-    "(nextAction play_next|stop, nextActionEnabled, nextActionLinkToLoop, nextActionLoopCount, nextActionDelayBeats; "
+    "it, then unknown/readback_mismatch), loop {length} (also moves the play stop), Next Action fields "
+    "(nextAction play_next|stop, nextActionEnabled, nextActionLinkToLoop, nextActionLoopCount, nextActionDelay; "
     "native, no selection) and launchQuantization, launchMode, useLoopStartAsQuantizationReference (select the clip; "
-    "options lists the host's own values; clips.get does not report them, the per-field outcomes are the evidence). Arranger clip: name, lengthBeats (the start stays; overlap is refused). "
+    "options lists the host's own values; clips.get does not report them, the per-field outcomes are the evidence). Arranger clip: name, length (the start stays; overlap is refused). "
     "Next Action and launch fields need a stopped, non-recording transport. Paths run in the order next action, launch, clip; the first that does "
     "not succeed stops the rest (not_applied, not_reached). An arranger set needs a settled project and a stopped transport. Returns the new ref. Never retry unknown."
 )
@@ -492,14 +488,14 @@ CLIPS_DELETE_DESCRIPTION = (
 )
 CLIPS_COPY_DESCRIPTION = (
     "Copy an occupied launcher clip (from) to another empty slot of the same track (to: a slot ref) or onto the same "
-    "track's arranger timeline (to {track, startBeats}; Bitwig's copy of launcher clips, any overlap is refused). "
+    "track's arranger timeline (to {track, start}; Bitwig's copy of launcher clips, any overlap is refused). "
     "Slot to slot works only within 16 scenes of the source (else unsupported_scope: copy via an empty slot within 16 "
-    "scenes, or notes.read + clips.insert {notes} for MIDI clips). Returns the new clip's ref; nameChanged is "
+    "scenes, or notes.get + clips.insert {notes} for MIDI clips). Returns the new clip's ref; nameChanged is "
     "reported if the host renames a slot copy. Needs a stopped transport, recording/automation-write off; arranger "
     "writes also need a settled project. An unobserved copy is outcome unknown and holds that slot; never retry."
 )
 CLIPS_MOVE_DESCRIPTION = (
-    "Move one arranger clip to to.startBeats on its own track; the length is kept and an overlap with another clip "
+    "Move one arranger clip to to.start on its own track; the length is kept and an overlap with another clip "
     "is refused. One native undoable edit verified by native readback; already_matched when it is already there. "
     "Arranger writes need a settled project and a stopped transport with recording/automation-write off; an unknown "
     "outcome refuses further arranger writes until you inspect arranger.list and ack the hold."
@@ -531,35 +527,35 @@ CLIPS_TRANSFORM_DESCRIPTION = (
     "before any is written; one stale target refuses the whole batch (entries). Then it writes in order and stops at "
     "the first entry that is not applied, already_matched or sent (later entries not_applied, not_reached)."
 )
-NOTES_READ_DESCRIPTION = (
+NOTES_GET_DESCRIPTION = (
     "Read a clip/channel/grid/pitch window. Selects the target clip in the host UI (moves the editor cursor; see "
-    "context.get). channel is zero-based MIDI 0..15; beat 0 is clip start. stepSizeBeats=0.25,startStep=0,steps=16 "
+    "context.get). channel is zero-based MIDI 0..15; beat 0 is clip start. stepSize=0.25,startStep=0,steps=16 "
     "covers four beats. Omit all five grid fields (channel defaults to 0) to read the whole clip loop over all "
     "pitches at 1/32 (loop <=16 beats) or 1/16 note, 128 steps max; if the loop is longer, windowCoversLoop=false "
-    "and continuation gives the next explicit window. Rows are {beat, pitch, velocity 1..127, durationBeats}: the "
-    "unit notes.edit takes; channel is the window's. At most 2048 onsets returned: inspect completeWindow, "
+    "and continuation gives the next explicit window. Rows are {beat, pitch, velocity 1..127, duration}: the "
+    "unit notes.set takes; channel is the window's. At most 2048 onsets returned: inspect completeWindow, "
     "notesInWindow, notesReturned, continuingAtWindowStart (notes sustaining into the window start) and subdivide "
     "steps or pitchCount when incomplete. Grid data is only scheduled-settled (gridReadiness), not a host-data "
     "barrier; late callbacks lack window identity. One onset per grid cell: sub-step and multiple onsets per cell "
     "are not exposed; the read never covers the whole clip (use the loop window)."
 )
-NOTES_EDIT_DESCRIPTION = (
+NOTES_SET_DESCRIPTION = (
     "Edit up to 256 onset cells. Selects the target clip in the host UI (moves the editor cursor; see context.get). "
-    "The window (stepSizeBeats,startStep,steps,pitchStart,pitchCount; all five or none) may be omitted: it is then "
+    "The window (stepSize,startStep,steps,pitchStart,pitchCount; all five or none) may be omitted: it is then "
     "derived from the onsets and the pitch range (echoed with derived=true). "
     + NOTE_WINDOWS
     + "channel defaults to 0. Each set requires op=set, absolute beat, MIDI pitch, integer velocity 1..127 and "
-    "durationBeats; clear requires only op=clear,beat,pitch. "
+    "duration; clear requires only op=clear,beat,pitch. "
     + NOTE_RULES
-    + "With an explicit window, beats align exactly to stepSizeBeats instead and every note must end inside it. "
+    + "With an explicit window, beats align exactly to stepSize instead and every note must end inside it. "
     "Notes must fit the observed clip loop; sustains are protected, no clear-all, and already-matching cells are not "
     "rewritten. Result is compact: outcome is the worst over every edit (applied, already_matched, or unknown with "
     "a reason); summary {requested, dispatched, alreadyMatched, verified, unverified}; unverifiedEdits lists only "
     "unverified edits (index, outcome, reason, observed cell). detail=full also returns the window's note listing "
-    "(as notes.read) and every edit. Verification is per-cell readback after scheduled grid settling "
-    "(gridReadiness), not a host-data barrier. Verify unverified edits with notes.read. No automatic retry."
+    "(as notes.get) and every edit. Verification is per-cell readback after scheduled grid settling "
+    "(gridReadiness), not a host-data barrier. Verify unverified edits with notes.get. No automatic retry."
 )
-_EDIT = {"op": "set", "beat": 0.0, "pitch": 60, "velocity": 90, "durationBeats": 1.0}
+_EDIT = {"op": "set", "beat": 0.0, "pitch": 60, "velocity": 90, "duration": 1.0}
 
 
 SPECS: dict[str, ToolSpec] = {
@@ -569,17 +565,17 @@ SPECS: dict[str, ToolSpec] = {
         CLIPS_INSERT_DESCRIPTION,
         False,
         examples=(
-            {"to": SLOT_REF, "loop": {"lengthBeats": 4}, "name": "Sketch"},
+            {"to": SLOT_REF, "loop": {"length": 4}, "name": "Sketch"},
             {
                 "to": SLOT_REF,
-                "loop": {"lengthBeats": 4},
+                "loop": {"length": 4},
                 "name": "Sketch",
-                "notes": [{"beat": 0, "pitch": 60, "velocity": 90, "durationBeats": 1}],
+                "notes": [{"beat": 0, "pitch": 60, "velocity": 90, "duration": 1}],
             },
-            {"to": {"track": TRACK_REF, "startBeats": 16}, "lengthBeats": 16, "name": "Verse"},
+            {"to": {"track": TRACK_REF, "start": 16}, "length": 16, "name": "Verse"},
         ),
         requires=PROJECT_READY,
-        summary="Create a named MIDI clip in an empty launcher slot (to: slot ref, loop {lengthBeats}) or on an instrument track's timeline (to {track, startBeats}, lengthBeats), with optional notes (beats on the 1/128 grid, any duration). Returns the new ref. A launcher create selects it. Unobserved: unknown, ack the hold, never retry.",
+        summary="Create a named MIDI clip in an empty launcher slot (to: slot ref, loop {length}) or on an instrument track's timeline (to {track, start}, length), with optional notes (beats on the 1/128 grid, any duration). Returns the new ref. A launcher create selects it. Unobserved: unknown, ack the hold, never retry.",
     ),
     "clips.import": ToolSpec(
         ClipImportArgs,
@@ -594,33 +590,33 @@ SPECS: dict[str, ToolSpec] = {
         CLIPS_SET_DESCRIPTION,
         False,
         examples=(
-            {"target": CLIP_REF, "name": "Verse", "loop": {"lengthBeats": 8}, "color": "#ff8800"},
+            {"target": CLIP_REF, "name": "Verse", "loop": {"length": 8}, "color": "#ff8800"},
             {
                 "target": CLIP_REF,
                 "nextAction": "play_next",
                 "nextActionEnabled": True,
                 "nextActionLinkToLoop": True,
                 "nextActionLoopCount": 1,
-                "nextActionDelayBeats": 0,
+                "nextActionDelay": 0,
             },
             {"target": CLIP_REF, "launchQuantization": "1/4", "useLoopStartAsQuantizationReference": True},
-            {"target": ARRANGER_CLIP_REF, "lengthBeats": 8},
+            {"target": ARRANGER_CLIP_REF, "length": 8},
         ),
-        summary="Set fields of one clip. Launcher: name, color, loop, Next Action, launch fields; arranger: name, lengthBeats. Runs next action, launch, clip fields in order; the first failure stops the rest. Next Action and launch need a stopped transport.",
+        summary="Set fields of one clip. Launcher: name, color, loop, Next Action, launch fields; arranger: name, length. Runs next action, launch, clip fields in order; the first failure stops the rest. Next Action and launch need a stopped transport.",
     ),
     "clips.delete": ToolSpec(ClipDeleteArgs, CLIPS_DELETE_DESCRIPTION, False, examples=({"target": CLIP_REF},)),
     "clips.copy": ToolSpec(
         ClipCopyArgs,
         CLIPS_COPY_DESCRIPTION,
         False,
-        examples=({"from": CLIP_REF, "to": SLOT_REF}, {"from": CLIP_REF, "to": {"track": TRACK_REF, "startBeats": 0}}),
+        examples=({"from": CLIP_REF, "to": SLOT_REF}, {"from": CLIP_REF, "to": {"track": TRACK_REF, "start": 0}}),
         summary="Copy a launcher clip (from) to an empty slot of the same track or onto its arranger timeline (to). Returns the new clip's ref.",
     ),
     "clips.move": ToolSpec(
         ClipMoveArgs,
         CLIPS_MOVE_DESCRIPTION,
         False,
-        examples=({"target": ARRANGER_CLIP_REF, "to": {"startBeats": 32}},),
+        examples=({"target": ARRANGER_CLIP_REF, "to": {"start": 32}},),
     ),
     "clips.launch": ToolSpec(
         ClipTargetArgs,
@@ -655,22 +651,22 @@ SPECS: dict[str, ToolSpec] = {
         annotations=EDIT,
         summary="Apply op (doubleContent: double the loop and repeat its content) to each launcher clip in targets. Every target is checked before any is written; one stale target refuses the batch. Then it writes in order and stops at the first entry that is not applied, already_matched or sent. Selects each clip.",
     ),
-    "notes.read": ToolSpec(
+    "notes.get": ToolSpec(
         NoteWindowArgs,
-        NOTES_READ_DESCRIPTION,
+        NOTES_GET_DESCRIPTION,
         False,
         examples=({"target": CLIP_REF}, NOTE_WINDOW),
         annotations=STEER,
-        summary="Read a clip's notes in a channel, grid and pitch window; selects the clip in the host UI. Omit the window to read the whole loop. Rows {beat, pitch, velocity, durationBeats} are what notes.edit takes. At most 2048 onsets: if completeWindow is false, subdivide.",
+        summary="Read a clip's notes in a channel, grid and pitch window; selects the clip in the host UI. Omit the window to read the whole loop. Rows {beat, pitch, velocity, duration} are what notes.set takes. At most 2048 onsets: if completeWindow is false, subdivide.",
     ),
-    "notes.edit": ToolSpec(
+    "notes.set": ToolSpec(
         NoteEditArgs,
-        NOTES_EDIT_DESCRIPTION,
+        NOTES_SET_DESCRIPTION,
         False,
         examples=(
             {"target": CLIP_REF, "edits": [_EDIT]},
             {**NOTE_WINDOW, "edits": [_EDIT]},
         ),
-        summary="Edit up to 256 onset cells of a clip; selects the clip. set: op, beat, pitch, velocity 1..127, durationBeats (any length); clear: op, beat, pitch. Beats on the 1/128 grid or on stepSizeBeats of an explicit window (omit it to derive). Never retry unknown.",
+        summary="Edit up to 256 onset cells of a clip; selects the clip. set: op, beat, pitch, velocity 1..127, duration (any length); clear: op, beat, pitch. Beats on the 1/128 grid or on stepSize of an explicit window (omit it to derive). Never retry unknown.",
     ),
 }

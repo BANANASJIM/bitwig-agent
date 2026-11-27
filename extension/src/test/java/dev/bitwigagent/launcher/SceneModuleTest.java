@@ -171,7 +171,7 @@ public final class SceneModuleTest {
         f.slots[0].content = true;
         JsonObject out = f.call("scenes.insert", new JsonObject());
         assertEquals("applied", outcome(out));
-        assertEquals("scene_count", out.get("verification").getAsString());
+        assertEquals("api_readback", out.get("verification").getAsString());
         assertEquals(3, out.get("sceneCountBefore").getAsInt());
         assertEquals(4, out.get("sceneCount").getAsInt());
         assertEquals(1, f.sceneAppends);
@@ -218,7 +218,7 @@ public final class SceneModuleTest {
         LauncherFake f = world(2, "Intro", "");
         JsonObject out = f.call("scenes.set", params("target", f.scene(1), "name", "Verse"));
         assertEquals("applied", outcome(out));
-        assertEquals("observer_after_write", out.get("verification").getAsString());
+        assertEquals("api_readback", out.get("verification").getAsString());
         assertEquals("Verse", out.getAsJsonObject("ref").get("name").getAsString());
         assertEquals(f.scene(1), out.getAsJsonObject("ref"));
         assertEquals("Verse", f.sceneNames[1]);
@@ -293,7 +293,7 @@ public final class SceneModuleTest {
         playing.slots[0].content = true;
         out = playing.call("scenes.launch", params("target", playing.scene(0)));
         assertEquals("applied", outcome(out));
-        assertEquals("clips_playing", out.get("verification").getAsString());
+        assertEquals("api_readback", out.get("verification").getAsString());
 
         out = f.call("scenes.launch", params("target", f.scene(1)));
         assertEquals("sent", outcome(out), "a scene without clips is sent, never claimed as playing");
@@ -327,7 +327,7 @@ public final class SceneModuleTest {
         f.slots[1].content = true;
         JsonObject out = f.call("scenes.duplicate", params("target", f.scene(1)));
         assertEquals("applied", outcome(out));
-        assertEquals("scene_count_and_window_names", out.get("verification").getAsString());
+        assertEquals("api_readback", out.get("verification").getAsString());
         assertEquals(3, out.get("sceneCountBefore").getAsInt());
         assertEquals(4, out.get("sceneCount").getAsInt());
         assertEquals(f.scene(2), out.getAsJsonObject("ref"));

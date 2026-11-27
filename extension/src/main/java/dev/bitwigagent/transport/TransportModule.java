@@ -17,6 +17,7 @@ import dev.bitwigagent.core.RpcException;
 import dev.bitwigagent.core.Scheduler;
 import dev.bitwigagent.core.ValueInput;
 import dev.bitwigagent.core.ValueMatch;
+import dev.bitwigagent.core.Verification;
 import dev.bitwigagent.host.EnumOptions;
 import dev.bitwigagent.host.ProjectState;
 import dev.bitwigagent.host.TransportSafety;
@@ -26,13 +27,13 @@ import java.util.*;
 public final class TransportModule implements HostModule {
     static final Set<String> METHODS = Set.of("transport.get", "transport.set");
     private static final String[] ORDER = {
-        "tempoBpm",
+        "tempo",
         "timeSignature",
-        "positionBeats",
+        "position",
         "metronome",
         "metronomeVolume",
-        "loopStartBeats",
-        "loopDurationBeats",
+        "loopStart",
+        "loopLength",
         "loopEnabled",
         "punchInEnabled",
         "punchOutEnabled",
@@ -43,16 +44,10 @@ public final class TransportModule implements HostModule {
     };
 
     private static final ValueMatch BEATS_AND_TEMPO = ValueMatch.raw(1e-6);
+    private static final Set<String> BEATS_AND_TEMPO_KEYS = Set.of("tempo", "position", "loopStart", "loopLength");
     /** Fields every host reports at startup; a newer field that is not (yet) observed reads null instead of blocking the rest. */
     private static final Set<String> BASE = Set.of(
-            "tempoBpm",
-            "timeSignature",
-            "positionBeats",
-            "metronome",
-            "loopStartBeats",
-            "loopDurationBeats",
-            "loopEnabled",
-            "playing");
+            "tempo", "timeSignature", "position", "metronome", "loopStart", "loopLength", "loopEnabled", "playing");
 
     private final Transport transport;
     private final Application application;
@@ -75,17 +70,17 @@ public final class TransportModule implements HostModule {
         this.transportSafety = transportSafety;
         this.projectState = projectState;
         observe("playing", transport.isPlaying());
-        Sample tempo = sample("tempoBpm");
+        Sample tempo = sample("tempo");
         transport.tempo().value().addRawValueObserver((DoubleValueChangedCallback) v -> tempo.number(v));
         Sample signature = sample("timeSignature");
         transport.timeSignature().markInterested();
         transport.timeSignature().addValueObserver((StringValueChangedCallback)
                 v -> signature.set(new JsonPrimitive((String) v)));
-        observe("positionBeats", transport.playPosition());
+        observe("position", transport.playPosition());
         observe("metronome", transport.isMetronomeEnabled());
         observe("loopEnabled", transport.isArrangerLoopEnabled());
-        observe("loopStartBeats", transport.arrangerLoopStart());
-        observe("loopDurationBeats", transport.arrangerLoopDuration());
+        observe("loopStart", transport.arrangerLoopStart());
+        observe("loopLength", transport.arrangerLoopDuration());
         Sample volume = sample("metronomeVolume");
         transport.metronomeVolume().addValueObserver((DoubleValueChangedCallback) volume::number);
         transport.metronomeVolume().displayedValue().markInterested();
@@ -117,13 +112,38 @@ public final class TransportModule implements HostModule {
             throw Errors.notApplied(
                     Reason.INVALID_PARAMS,
                     "timeSignature must be numerator/denominator: numerator 1..32, denominator 1, 2, 4, 8, 16 or 32.");
-        if (p.has("loopDurationBeats") && p.get("loopDurationBeats").getAsDouble() == 0)
-            throw Errors.notApplied(Reason.INVALID_PARAMS, "loopDurationBeats must be positive.");
-        if (p.has("loopStartBeats")
-                && p.has("loopDurationBeats")
-                && !Double.isFinite(p.get("loopStartBeats").getAsDouble()
-                        + p.get("loopDurationBeats").getAsDouble()))
+        if (!p.has("loop")) return;
+        JsonObject loop = p.getAsJsonObject("loop");
+        if (loop.size() == 0) throw Errors.notApplied(Reason.INVALID_PARAMS, "loop needs start or length.");
+        if (loop.has("length") && loop.get("length").getAsDouble() == 0)
+            throw Errors.notApplied(Reason.INVALID_PARAMS, "loop.length must be positive.");
+        if (loop.has("start")
+                && loop.has("length")
+                && !Double.isFinite(
+                        loop.get("start").getAsDouble() + loop.get("length").getAsDouble()))
             throw Errors.notApplied(Reason.INVALID_PARAMS, "Loop end must be finite.");
+    }
+
+    /** The wire nests the arranger loop as loop:{start, length}; the samples keep one key per host value. */
+    private static JsonObject flat(JsonObject params) {
+        JsonObject out = new JsonObject();
+        for (Map.Entry<String, JsonElement> entry : params.entrySet()) {
+            if (!entry.getKey().equals("loop")) {
+                out.add(entry.getKey(), entry.getValue());
+                continue;
+            }
+            JsonObject loop = entry.getValue().getAsJsonObject();
+            if (loop.has("start")) out.add("loopStart", loop.get("start"));
+            if (loop.has("length")) out.add("loopLength", loop.get("length"));
+        }
+        return out;
+    }
+
+    private static void nest(JsonObject result) {
+        JsonObject loop = new JsonObject();
+        if (result.has("loopStart")) loop.add("start", result.remove("loopStart"));
+        if (result.has("loopLength")) loop.add("length", result.remove("loopLength"));
+        if (loop.size() > 0) result.add("loop", loop);
     }
 
     static boolean validSignature(String text) {
@@ -132,12 +152,13 @@ public final class TransportModule implements HostModule {
     }
 
     @Override
-    public void dispatch(HostOperation op, String method, JsonObject p) {
+    public void dispatch(HostOperation op, String method, JsonObject params) {
         scheduler.check(op);
         if (method.equals("transport.get")) {
             op.result.complete(snapshot());
             return;
         }
+        JsonObject p = flat(params);
         if (p.has("metronomeVolume"))
             ValueInput.parse("metronomeVolume", p.get("metronomeVolume")).normalized("metronomeVolume");
         for (String key : BASE) require(key);
@@ -150,12 +171,12 @@ public final class TransportModule implements HostModule {
                         entry.getValue(),
                         p.get(entry.getKey()).getAsString(),
                         observedString(entry.getKey()));
-        double start = p.has("loopStartBeats")
-                ? p.get("loopStartBeats").getAsDouble()
-                : values.get("loopStartBeats").value.getAsDouble();
-        double duration = p.has("loopDurationBeats")
-                ? p.get("loopDurationBeats").getAsDouble()
-                : values.get("loopDurationBeats").value.getAsDouble();
+        double start = p.has("loopStart")
+                ? p.get("loopStart").getAsDouble()
+                : values.get("loopStart").value.getAsDouble();
+        double duration = p.has("loopLength")
+                ? p.get("loopLength").getAsDouble()
+                : values.get("loopLength").value.getAsDouble();
         if (!Double.isFinite(start + duration))
             throw Errors.notApplied(Reason.INVALID_PARAMS, "Loop end must be finite.");
         Request request = new Request(
@@ -235,13 +256,13 @@ public final class TransportModule implements HostModule {
                 if (value.getAsBoolean()) transport.play();
                 else transport.stop();
                 break;
-            case "tempoBpm":
+            case "tempo":
                 transport.tempo().value().setRaw(value.getAsDouble());
                 break;
             case "timeSignature":
                 transport.timeSignature().set(value.getAsString());
                 break;
-            case "positionBeats":
+            case "position":
                 transport.setPosition(value.getAsDouble());
                 break;
             case "metronome":
@@ -265,10 +286,10 @@ public final class TransportModule implements HostModule {
             case "recordQuantizationGrid":
                 enums.get(key).set(value.getAsString());
                 break;
-            case "loopStartBeats":
+            case "loopStart":
                 transport.arrangerLoopStart().set(value.getAsDouble());
                 break;
-            case "loopDurationBeats":
+            case "loopLength":
                 transport.arrangerLoopDuration().set(value.getAsDouble());
                 break;
             default:
@@ -324,12 +345,13 @@ public final class TransportModule implements HostModule {
                 outcome = Outcome.UNKNOWN;
                 why = Reason.READBACK_MISMATCH;
             }
-            fields.add(key, Results.field(p.get(key), actual.value, outcome, why));
+            fields.add(key, Results.field(p.get(key), actual.value, outcome, why, Verification.API_READBACK));
             if (outcome.compareTo(worst) > 0 && why != null) worstReason = why;
             worst = worst.worst(outcome);
         }
-        result.addProperty("outcome", worst.wire());
+        Results.stamp(result, worst, fields.asMap().values());
         if (!worst.succeeded()) result.addProperty("reason", (reason != null ? reason : worstReason).wire());
+        nest(fields);
         result.add("fields", fields);
         if (request.silentEngine)
             Results.addWarning(
@@ -343,7 +365,7 @@ public final class TransportModule implements HostModule {
         JsonObject out = new JsonObject();
         out.addProperty("projectName", application.projectName().get());
         out.add("playing", values.get("playing").value);
-        out.add("tempoBpm", values.get("tempoBpm").value);
+        out.add("tempo", values.get("tempo").value);
         return out;
     }
 
@@ -357,14 +379,14 @@ public final class TransportModule implements HostModule {
             result.add(key, unit(key, entry.getValue().value));
         }
         JsonObject units = new JsonObject();
-        units.addProperty("tempoBpm", "bpm_raw");
+        units.addProperty("tempo", "bpm_raw");
         units.addProperty(
                 "timeSignature",
                 "numerator/denominator as the host reports it; time-signature change markers are not in the public API");
-        units.addProperty("positionBeats", "quarter_note_beats_current_play_position");
+        units.addProperty("position", "quarter_note_beats_current_play_position");
         units.addProperty("metronomeVolume", "normalized_0_1_not_db");
-        units.addProperty("loopStartBeats", "quarter_note_beats");
-        units.addProperty("loopDurationBeats", "quarter_note_beats");
+        units.addProperty("loop", "quarter_note_beats");
+        nest(result);
         result.add("units", units);
         JsonArray outside = new JsonArray();
         for (Map.Entry<String, SettableEnumValue> entry : enums.entrySet())
@@ -420,12 +442,13 @@ public final class TransportModule implements HostModule {
     private void observe(String key, SettableEnumValue source) {
         Sample value = sample(key);
         enums.put(key, source);
-        source.addValueObserver((EnumValueChangedCallback) v -> value.set(new JsonPrimitive((String) v)));
+        source.addValueObserver(
+                (EnumValueChangedCallback) v -> value.set(new JsonPrimitive(EnumOptions.listed(source, (String) v))));
     }
 
-    private static ValueMatch rule(String key) {
+    static ValueMatch rule(String key) {
         if (key.equals("metronomeVolume")) return ValueMatch.NORMALIZED;
-        if (key.equals("tempoBpm") || key.endsWith("Beats")) return BEATS_AND_TEMPO;
+        if (BEATS_AND_TEMPO_KEYS.contains(key)) return BEATS_AND_TEMPO;
         return ValueMatch.EXACT;
     }
 

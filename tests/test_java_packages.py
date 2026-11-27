@@ -8,7 +8,7 @@ import pytest
 JAVA = Path(__file__).resolve().parents[1] / "extension/src/main/java"
 BASE = JAVA / "dev/bitwigagent"
 COMPOSITION = {"BitwigAgentExtension", "BitwigAgentExtensionDefinition", "HostBridge"}
-LOADER_CLASSES = {"BitwigAgent614GridInsertion"}  # the native loader expects this exact unnamed-package name
+HOST = JAVA.parents[1] / "host"
 NATIVE = re.compile(
     r"^import (static )?(java\.lang\.reflect|com\.bitwig\.(flt|base))\.|Class\.forName|\.getDeclared\w*\(|\.getMethod\(|setAccessible|MethodHandles",
     re.M,
@@ -31,15 +31,18 @@ def test_package_declaration_matches_directory(path):
     assert declared.group(1) == ".".join(("dev", "bitwigagent", *path.parent.relative_to(BASE).parts))
 
 
-def test_root_package_is_composition_and_unnamed_package_is_the_loader_class():
+def test_root_package_is_composition_and_each_host_has_only_its_loader_class():
     assert {path.stem for path in BASE.glob("*.java")} == COMPOSITION
-    assert {path.stem for path in JAVA.glob("*.java")} == LOADER_CLASSES
+    assert not list(JAVA.glob("*.java"))
+    for version in HOST.iterdir():
+        loader = "BitwigAgentGridInsertion_" + version.name.replace(".", "_")
+        assert [path.name for path in version.iterdir()] == [loader + ".java"]
 
 
 @pytest.mark.parametrize("path", sources(), ids=lambda p: p.relative_to(BASE).as_posix())
-def test_only_bitwig614_reflects_into_the_host(path):
-    if package(path) != "bitwig614":
-        assert not NATIVE.search(path.read_text()), f"{path.name} binds host internals outside bitwig614"
+def test_only_nativehost_reflects_into_the_host(path):
+    if package(path) != "nativehost":
+        assert not NATIVE.search(path.read_text()), f"{path.name} binds host internals outside nativehost"
 
 
 @pytest.mark.parametrize("path", sorted((BASE / "rpc").glob("*.java")), ids=lambda p: p.name)

@@ -36,11 +36,9 @@ public final class ClipModuleTest {
                 "clips.insert",
                 params(
                         "to", f.slot(33),
-                        "loop", obj("{\"lengthBeats\":4}"),
+                        "loop", obj("{\"length\":4}"),
                         "name", "Hook",
-                        "notes",
-                                JsonParser.parseString(
-                                        "[{\"beat\":0,\"pitch\":60,\"velocity\":90,\"durationBeats\":1}]")));
+                        "notes", JsonParser.parseString("[{\"beat\":0,\"pitch\":60,\"velocity\":90,\"duration\":1}]")));
         assertEquals("applied", inserted.get("outcome").getAsString());
         assertEquals(33, f.selected);
         assertTrue(f.slots[33].content && f.slots[33].name.equals("Hook"), "created in the slot of scene 33");
@@ -49,7 +47,7 @@ public final class ClipModuleTest {
         assertEquals(f.clip(33), inserted.get("ref").getAsJsonObject(), "the result carries the new clip's ref");
 
         JsonObject read = f.call("clips.get", params("target", inserted.get("ref")));
-        assertEquals(4.0, read.getAsJsonObject("loop").get("lengthBeats").getAsDouble());
+        assertEquals(4.0, read.getAsJsonObject("loop").get("length").getAsDouble());
     }
 
     @Test
@@ -100,7 +98,7 @@ public final class ClipModuleTest {
         e.addProperty("beat", beat);
         e.addProperty("pitch", pitch);
         e.addProperty("velocity", velocity);
-        e.addProperty("durationBeats", duration);
+        e.addProperty("duration", duration);
         return e;
     }
 
@@ -118,7 +116,7 @@ public final class ClipModuleTest {
     }
 
     private static JsonObject insertAt(JsonObject slot, int length, String name) {
-        return params("to", slot, "loop", obj("{\"lengthBeats\":" + length + "}"), "name", name);
+        return params("to", slot, "loop", obj("{\"length\":" + length + "}"), "name", name);
     }
 
     private static JsonObject insertParams(LauncherFake f, int scene) {
@@ -168,8 +166,8 @@ public final class ClipModuleTest {
         LauncherFake f = new LauncherFake();
         JsonObject out = f.call("clips.insert", insertAt(f.slot(0), 4, "Melody + chords 鼓"));
         assertEquals("applied", out.get("outcome").getAsString());
-        assertEquals("slot_content_name_length", out.get("verification").getAsString());
-        assertEquals(4.0, out.getAsJsonObject("loop").get("lengthBeats").getAsDouble());
+        assertEquals("api_readback", out.get("verification").getAsString());
+        assertEquals(4.0, out.getAsJsonObject("loop").get("length").getAsDouble());
         assertEquals("Melody + chords 鼓", f.slots[0].name);
         assertEquals(Refs.launcherClip(f.track(), f.scene(0), "Melody + chords 鼓"), out.get("ref"));
         assertFalse(out.has("noteWrite"));
@@ -184,7 +182,7 @@ public final class ClipModuleTest {
             LauncherFake f = new LauncherFake();
             JsonObject out = f.call("clips.insert", insertAt(f.slot(1), length, "Extent"));
             assertEquals("applied", out.get("outcome").getAsString());
-            assertEquals(length, out.get("playStopBeats").getAsDouble(), "not the host default of four beats");
+            assertEquals(length, out.get("playStop").getAsDouble(), "not the host default of four beats");
             assertEquals(1, f.stopWrites, "the play stop is written once");
             assertEquals(4, f.slots[0].playStop, "another slot keeps its play stop");
         }
@@ -194,7 +192,7 @@ public final class ClipModuleTest {
         assertEquals("unknown", out.get("outcome").getAsString());
         assertEquals("readback_mismatch", out.get("reason").getAsString());
         assertTrue(out.get("next").getAsString().contains("ack " + LauncherStructureLock.MUTATION));
-        assertEquals(4, out.get("playStopBeats").getAsDouble(), "the host default is reported as it is");
+        assertEquals(4, out.get("playStop").getAsDouble(), "the host default is reported as it is");
         assertEquals(1, f.services.holds.list().size(), "an unapplied play stop holds the slot");
         expectHeld(f.startAndDrain("clips.insert", insertParams(f, 0)), "clips.insert", 0);
         assertEquals(1, f.stopWrites, "an unobserved write is never retried");
@@ -242,7 +240,7 @@ public final class ClipModuleTest {
         f.scenes = 40;
         JsonObject out = f.call("clips.insert", withNotes(insertAt(f.slot(33), 4, "Hook")));
         assertEquals("applied", out.get("outcome").getAsString());
-        assertEquals("slot_content_name_length", out.get("verification").getAsString());
+        assertEquals("api_readback", out.get("verification").getAsString());
         JsonObject write = out.getAsJsonObject("noteWrite");
         assertEquals("applied", write.get("outcome").getAsString());
         assertEquals(3, write.getAsJsonObject("summary").get("verified").getAsInt());
@@ -285,7 +283,7 @@ public final class ClipModuleTest {
         LauncherFake refused = new LauncherFake();
         refused.failWriteAt = 1;
         JsonObject kept = refused.call("clips.insert", withNotes(insertParams(refused, 0)));
-        assertEquals("slot_content_name_length", kept.get("verification").getAsString());
+        assertFalse(kept.has("verification"), "an unknown result carries none");
         assertTrue(refused.slots[0].content, "an observed create survives a failing note stage");
         assertEquals("unknown", kept.get("outcome").getAsString());
         assertEquals(
@@ -305,8 +303,8 @@ public final class ClipModuleTest {
     void insertOnTheArrangerGoesThroughTheLane() {
         LauncherFake f = new LauncherFake();
         f.base.tracks[0].live("trackType", () -> "Instrument");
-        JsonObject to = params("track", f.track(), "startBeats", 16);
-        JsonObject out = f.call("clips.insert", params("to", to, "lengthBeats", 8, "name", "Verse"));
+        JsonObject to = params("track", f.track(), "start", 16);
+        JsonObject out = f.call("clips.insert", params("to", to, "length", 8, "name", "Verse"));
         assertEquals("applied", out.get("outcome").getAsString());
         assertEquals(1, f.lane.created);
         assertEquals(16.0, f.lane.clips.get(0)[0]);
@@ -318,8 +316,8 @@ public final class ClipModuleTest {
     @Test
     void arrangerInsertValidatesNotesAgainstTheLength() {
         LauncherFake f = new LauncherFake();
-        JsonObject to = params("track", f.track(), "startBeats", 0);
-        JsonObject p = params("to", to, "lengthBeats", 1, "name", "Short");
+        JsonObject to = params("track", f.track(), "start", 0);
+        JsonObject p = params("to", to, "length", 1, "name", "Short");
         JsonArray notes = new JsonArray();
         notes.add(noteSet(0.5, 60, 90, 1));
         p.add("notes", notes);
@@ -340,7 +338,7 @@ public final class ClipModuleTest {
         assertEquals(.45, f.notes.get(LauncherFake.key(0, 0, 0, 60)).duration);
 
         f.base.tracks[0].live("trackType", () -> "Instrument");
-        JsonObject arranger = params("to", params("track", f.track(), "startBeats", 0), "lengthBeats", 4, "name", "A");
+        JsonObject arranger = params("to", params("track", f.track(), "start", 0), "length", 4, "name", "A");
         arranger.add("notes", notes);
         assertEquals("applied", f.call("clips.insert", arranger).get("outcome").getAsString());
         assertEquals(.45, f.lane.notes.get(0)[3], "the arranger writes the requested duration");
@@ -457,7 +455,7 @@ public final class ClipModuleTest {
         f.drain(op);
         JsonObject out = op.result.join();
         assertEquals("applied", out.get("outcome").getAsString());
-        assertEquals("slot_content_transition", out.get("verification").getAsString());
+        assertEquals("api_readback", out.get("verification").getAsString());
         assertFalse(out.get("requestedFileVerified").getAsBoolean());
         assertEquals("Host content", out.getAsJsonObject("slot").get("name").getAsString());
         assertEquals(Refs.launcherClip(f.track(), f.scene(33), "Host content"), out.get("ref"));
@@ -575,7 +573,7 @@ public final class ClipModuleTest {
         f.observeContent(0, true);
         f.drain(importing);
         occupy(f, 0, "Imported");
-        HostOperation reading = f.start("notes.read", params("target", f.clip(0)));
+        HostOperation reading = f.start("notes.get", params("target", f.clip(0)));
         assertRpcError("busy", f.start("clips.import", importParams(f, 1, file)));
         f.drain(reading);
         assertEquals(1, f.imports, "an existing cursor lease also excludes an import");
@@ -720,7 +718,7 @@ public final class ClipModuleTest {
         Path file = file(dir);
         LauncherFake f = new LauncherFake();
         JsonObject bad = insertParams(f, 0);
-        bad.add("loop", obj("{\"lengthBeats\":0}"));
+        bad.add("loop", obj("{\"length\":0}"));
         assertRpcError("invalid_params", f.start("clips.insert", bad));
         assertRpcError("invalid_file", f.start("clips.import", importParams(f, 0, dir.resolve("none"))));
         f.observeContent(0, true);
@@ -797,8 +795,8 @@ public final class ClipModuleTest {
         f.selected = 5;
         JsonObject out = f.call("clips.get", clipParams(f, 33));
         assertEquals(f.clip(33), out.get("ref"));
-        assertEquals(4.0, out.getAsJsonObject("loop").get("lengthBeats").getAsDouble());
-        assertEquals(0.0, out.getAsJsonObject("loop").get("startBeats").getAsDouble());
+        assertEquals(4.0, out.getAsJsonObject("loop").get("length").getAsDouble());
+        assertEquals(0.0, out.getAsJsonObject("loop").get("start").getAsDouble());
         assertEquals(5, f.selected, "clips.get selects nothing");
     }
 
@@ -861,7 +859,7 @@ public final class ClipModuleTest {
         occupy(f, 0, "Riff");
         JsonObject out = f.call("clips.delete", clipParams(f, 0));
         assertEquals("applied", out.get("outcome").getAsString());
-        assertEquals("slot_empty", out.get("verification").getAsString());
+        assertEquals("api_readback", out.get("verification").getAsString());
         assertFalse(f.slots[0].content);
         assertEquals(1, f.deletes);
         assertTrue(f.services.holds.list().isEmpty());
@@ -920,7 +918,7 @@ public final class ClipModuleTest {
         occupy(f, 0, "Riff");
         JsonObject out = f.call("clips.copy", params("from", f.clip(0), "to", f.slot(1)));
         assertEquals("applied", out.get("outcome").getAsString());
-        assertEquals("target_content_and_name", out.get("verification").getAsString());
+        assertEquals("api_readback", out.get("verification").getAsString());
         assertEquals(Refs.launcherClip(f.track(), f.scene(1), "Riff"), out.get("ref"));
         assertTrue(f.slots[1].content && f.slots[0].content);
         assertEquals(1, f.copies);
@@ -993,7 +991,7 @@ public final class ClipModuleTest {
         JsonObject other = Refs.track(OTHER_TRACK, "Other");
         JsonObject slot = Refs.slot(other, f.scene(1));
         assertRpcError("unsupported_scope", f.startAndDrain("clips.copy", params("from", f.clip(0), "to", slot)));
-        JsonObject arranger = params("track", other, "startBeats", 0);
+        JsonObject arranger = params("track", other, "start", 0);
         assertRpcError("target_not_found", f.startAndDrain("clips.copy", params("from", f.clip(0), "to", arranger)));
         assertEquals(0, f.copies + f.lane.copied);
     }
@@ -1002,7 +1000,7 @@ public final class ClipModuleTest {
     void copyToTheArrangerGoesThroughTheLane() {
         LauncherFake f = new LauncherFake();
         occupy(f, 2, "Riff");
-        JsonObject to = params("track", f.track(), "startBeats", 32);
+        JsonObject to = params("track", f.track(), "start", 32);
         JsonObject out = f.call("clips.copy", params("from", f.clip(2), "to", to));
         assertEquals("applied", out.get("outcome").getAsString());
         assertEquals(1, f.lane.copied);

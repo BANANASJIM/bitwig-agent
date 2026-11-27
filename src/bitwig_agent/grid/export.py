@@ -32,9 +32,9 @@ def _same(a: Any, b: Any) -> bool:
     return bool(a == b)
 
 
-def export_params(row: dict[str, Any], mode: str, warnings: list[str], name: str) -> dict[str, Any]:
+def export_params(row: dict[str, Any], mode: str, warnings: list[str], name: str, host: str | None) -> dict[str, Any]:
     """A module's params as a grid.apply `params` map: raw values, enum as {label}, step arrays as {steps}."""
-    info = bundled_schema()["modules"].get(row.get("typeName") or "")
+    info = bundled_schema(host)["modules"].get(row.get("typeName") or "")
     defaults = {p["parameterId"]: p.get("default") for p in info["parameters"]} if info else {}
     out: dict[str, Any] = {}
     for p in row.get("parameters") or []:
@@ -65,7 +65,9 @@ def export_params(row: dict[str, Any], mode: str, warnings: list[str], name: str
     return out
 
 
-def build(rows: list[dict[str, Any]], cables: list[dict[str, Any]], mode: str, namespace: str | None) -> dict[str, Any]:
+def build(
+    rows: list[dict[str, Any]], cables: list[dict[str, Any]], mode: str, namespace: str | None, host: str | None = None
+) -> dict[str, Any]:
     """Named modules, cables and the outside names they reference."""
     names, generated, duplicates = module_names(rows)
     warnings: list[str] = []
@@ -89,7 +91,7 @@ def build(rows: list[dict[str, Any]], cables: list[dict[str, Any]], mode: str, n
             "y": r["y"],
         }
         if mode != "none":
-            params = export_params(r, mode, warnings, m["name"])
+            params = export_params(r, mode, warnings, m["name"], host)
             if params:
                 m["params"] = params
         modules.append(m)
@@ -129,7 +131,8 @@ async def read_voicing(
 async def export(client: Any, args: dict[str, Any], timeout_ms: int = 5000) -> dict[str, Any]:
     mode, namespace, target = args.get("includeParams", "changed"), args.get("namespace"), device_target(args)
     rows, cables = await read_graph(host_call(client, target, timeout_ms), params=mode != "none")
-    built = build(rows, cables, mode, namespace)
+    host = (await client.call("status", {}, timeout_ms))["hostVersion"] if mode == "changed" else None
+    built = build(rows, cables, mode, namespace, host)
     spec: dict[str, Any] = {"target": args["target"], "modules": built["modules"], "connections": built["connections"]}
     if built["external"]:
         spec["external"] = built["external"]

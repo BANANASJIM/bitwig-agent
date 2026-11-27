@@ -15,6 +15,7 @@ from bitwig_agent.errors import BridgeError, bridge_error, unknown_result
 from bitwig_agent.grid import apply as grid_apply
 from bitwig_agent.grid import bundled, display, execute, layout, problems, raw_scales, values
 from bitwig_agent.protocol import TOOLS, validate_call
+from bitwig_agent.protocol.base import leaf_rule_holds
 from bitwig_agent.protocol.grid import DEVICE as EXAMPLE_DEVICE
 from bitwig_agent.protocol.recipes import BASS_MODULES, BASS_SPEC, BASS_TWEAK
 from bitwig_agent.protocol.topics import TOPICS
@@ -25,6 +26,8 @@ def test_fresh_build_then_idempotent_reapply_writes_nothing():
     host.shift = 1  # native reflow: every insert lands one column right, forcing moves
     result = apply_grid(host, SPEC)
     assert result["outcome"] == "applied"
+    assert result["verification"] == "native_readback"
+    assert leaf_rule_holds(result)
     assert result["applied"] == {
         "inserted": 5,
         "renamed": 5,
@@ -51,6 +54,7 @@ def test_fresh_build_then_idempotent_reapply_writes_nothing():
     host.calls.clear()
     again = apply_grid(host, SPEC)
     assert again["outcome"] == "already_matched"
+    assert "verification" not in again
     assert host.writes() == []
     assert again["applied"] == dict.fromkeys(again["applied"], 0)
     assert again["alreadyMatched"] == {"modules": 5, "positions": 5, "params": 5, "connections": 3}
@@ -753,10 +757,18 @@ def test_notes_and_pitch_mod_warning():
     assert len(result["notes"]) < 8
 
 
-def test_notes_file_is_value_free_and_covers_catalog_types():
-    notes = bundled.measured_notes()
-    assert notes["hostVersion"] == "6.1.4"
-    assert set(notes["modules"]) <= set(bundled.bundled_schema()["modules"])
+@pytest.mark.parametrize("version", [host["version"] for host in bundled.shared("host")])
+def test_notes_file_is_value_free_and_covers_catalog_types(version):
+    notes = bundled.measured_notes(version)
+    assert notes["hostVersion"] == version
+    assert set(notes["modules"]) <= set(bundled.bundled_schema(version)["modules"])
+
+
+def test_grid_data_follows_the_connected_host_and_offline_the_newest():
+    newest = bundled.shared("host")[-1]["version"]
+    assert bundled.bundled_schema()["hostVersion"] == newest
+    assert bundled.bundled_schema("0.0.0")["hostVersion"] == newest
+    assert bundled.measured_notes("6.1.4")["hostVersion"] == "6.1.4"
 
 
 # --- seconds display writes ----------------------------------------------------------------------------------

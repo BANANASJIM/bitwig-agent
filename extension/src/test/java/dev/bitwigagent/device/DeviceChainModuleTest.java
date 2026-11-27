@@ -22,17 +22,14 @@ public final class DeviceChainModuleTest {
     private static final String NATIVE = "11111111-2222-4333-8444-555555555555";
 
     private static JsonObject insert(JsonObject parent, String kind, String id) {
-        return params("to", params("parent", parent), "kind", kind, "id", id);
+        return params("to", parent, "insert", params("kind", kind, "id", id));
     }
 
     private static JsonObject insertAt(JsonObject parent, Object position) {
         JsonObject p = insert(parent, "bitwig", NATIVE);
-        p.getAsJsonObject("to")
-                .add(
-                        "position",
-                        position instanceof JsonElement
-                                ? (JsonElement) position
-                                : new JsonPrimitive((String) position));
+        p.add(
+                "position",
+                position instanceof JsonElement ? (JsonElement) position : new JsonPrimitive((String) position));
         return p;
     }
 
@@ -45,7 +42,7 @@ public final class DeviceChainModuleTest {
     }
 
     private static JsonObject file(JsonObject parent, String path) {
-        return params("to", params("parent", parent), "kind", "file", "path", path);
+        return params("to", parent, "insert", params("kind", "file", "path", path));
     }
 
     private static JsonObject delete(JsonObject ref) {
@@ -56,12 +53,8 @@ public final class DeviceChainModuleTest {
         return params(
                 "target",
                 ref,
-                "to",
-                params(
-                        "position",
-                        position instanceof JsonElement
-                                ? (JsonElement) position
-                                : new JsonPrimitive((String) position)));
+                "position",
+                position instanceof JsonElement ? (JsonElement) position : new JsonPrimitive((String) position));
     }
 
     private static JsonObject item(JsonObject result, String array, int index) {
@@ -97,11 +90,12 @@ public final class DeviceChainModuleTest {
         for (String path : List.of("relative.bwpreset", "/tmp/../bad.bwpreset", "/tmp/bad\nfile.bwpreset"))
             bad.add(file(f.trackRef, path));
         JsonObject both = file(f.trackRef, TestPaths.absolute("/tmp/device.bwpreset"));
-        both.addProperty("id", NATIVE);
+        both.getAsJsonObject("insert").addProperty("id", NATIVE);
         bad.add(both);
         bad.add(insert(f.twin(0), "bitwig", NATIVE));
         bad.add(insertAt(f.trackRef, "sideways"));
         bad.add(insertAt(f.trackRef, new JsonObject()));
+        bad.add(insertAt(f.trackRef, new JsonPrimitive(2)));
         JsonObject twoAnchors = before(f.twin(0));
         twoAnchors.add("after", f.twin(1));
         bad.add(insertAt(f.trackRef, twoAnchors));
@@ -113,7 +107,7 @@ public final class DeviceChainModuleTest {
         assertRpcError("invalid_params", f.submit(module, "devices.move", params("target", f.twin(0))));
         assertRpcError("invalid_params", f.submit(module, "chains.list", params("target", f.trackRef)));
         assertTrue(f.host.tasks.isEmpty() && f.top.insertions == 0 && f.top.deletions == 0, "nothing was scheduled");
-        assertInvalidParams(() -> DeviceChainModule.validateInsertion(insert(f.trackRef, "shell", "echo hi")));
+        assertInvalidParams(() -> DeviceChainModule.validateInsertion(params("kind", "shell", "id", "echo hi")));
         assertInvalidParams(() -> DeviceChainModule.validateInsertion(params("kind", "bitwig")));
         assertInvalidParams(
                 () -> DeviceChainModule.validateInsertion(params("kind", "file", "path", "/a/b", "id", NATIVE)));
@@ -133,9 +127,7 @@ public final class DeviceChainModuleTest {
         assertEquals(2, result.getAsJsonObject("inserted").get("deviceIndex").getAsInt(), "the new final slot");
         assertEquals(f.device(2, "Inserted"), result.getAsJsonObject("ref"));
         HostFixture.REF_SCHEMA.apply(result.getAsJsonObject("ref"));
-        assertEquals(
-                "observed_count_increment_and_unchanged_prefix",
-                result.get("verification").getAsString());
+        assertEquals("api_readback", result.get("verification").getAsString());
         assertEquals(2, result.getAsJsonArray("before").size());
         assertEquals(3, result.getAsJsonArray("after").size());
         assertFalse(result.get("requestedIdentifierVerified").getAsBoolean(), "name and type are not proof of the id");
@@ -213,9 +205,7 @@ public final class DeviceChainModuleTest {
         assertEquals(List.of("A", "Inserted", "B", "C"), f.top.names());
         assertEquals(1, result.getAsJsonObject("inserted").get("deviceIndex").getAsInt());
         assertEquals(f.device(1, "Inserted"), result.getAsJsonObject("ref"));
-        assertEquals(
-                "observed_count_increment_shifted_suffix",
-                result.get("verification").getAsString());
+        assertEquals("api_readback", result.get("verification").getAsString());
         assertEquals("applied", result.get("outcome").getAsString());
         assertEquals(4, result.getAsJsonArray("after").size(), "the whole shifted chain is reported");
 
@@ -230,9 +220,7 @@ public final class DeviceChainModuleTest {
 
         DeviceFixture end = DeviceFixture.chain("A", "B");
         JsonObject explicit = end.call(end.chains(), "devices.insert", insertAt(end.trackRef, "end"));
-        assertEquals(
-                "observed_count_increment_and_unchanged_prefix",
-                explicit.get("verification").getAsString());
+        assertEquals("api_readback", explicit.get("verification").getAsString());
         assertEquals(1, end.top.insertions);
         assertTrue(end.top.points.isEmpty(), "an explicit end is the end-of-chain insertion point");
 
@@ -263,9 +251,7 @@ public final class DeviceChainModuleTest {
         assertEquals(1, f.top.deletions);
         assertEquals(List.of("A", "C"), f.top.names(), "the delete removes exactly the named device");
         assertEquals("applied", result.get("outcome").getAsString());
-        assertEquals(
-                "observed_count_decrement_and_shifted_suffix",
-                result.get("verification").getAsString());
+        assertEquals("api_readback", result.get("verification").getAsString());
         assertEquals(3, result.get("beforeCount").getAsInt());
         assertEquals(2, result.get("afterCount").getAsInt());
         assertEquals("B", result.getAsJsonObject("deleted").get("name").getAsString());
@@ -318,7 +304,7 @@ public final class DeviceChainModuleTest {
         JsonObject result = f.call(f.chains(), "devices.move", move(f.device(0, "A"), after(f.device(2, "C"))));
         assertEquals(List.of("after:2:moveDevices"), f.top.points, "moving later lands after the anchor");
         assertEquals(List.of("B", "C", "A", "D"), f.top.names());
-        assertEquals("observed_expected_arrangement", result.get("verification").getAsString());
+        assertEquals("api_readback", result.get("verification").getAsString());
         assertEquals(2, result.getAsJsonObject("moved").get("toIndex").getAsInt());
         assertEquals(0, result.getAsJsonObject("moved").get("deviceIndex").getAsInt());
         assertEquals(4, result.get("beforeCount").getAsInt());
@@ -386,10 +372,10 @@ public final class DeviceChainModuleTest {
 
         DeviceFixture f = abc();
         JsonObject elsewhere = move(f.device(0, "A"), "end");
-        elsewhere.getAsJsonObject("to").add("parent", Refs.track(HostFixture.B, "Track 1"));
+        elsewhere.add("to", Refs.track(HostFixture.B, "Track 1"));
         assertRpcError("unsupported_scope", f.run(f.chains(), "devices.move", elsewhere));
         JsonObject own = move(f.device(0, "A"), "end");
-        own.getAsJsonObject("to").add("parent", f.trackRef);
+        own.add("to", f.trackRef);
         assertEquals(
                 "applied",
                 f.call(f.chains(), "devices.move", own).get("outcome").getAsString());
@@ -422,7 +408,8 @@ public final class DeviceChainModuleTest {
         assertEquals(1, lone.getAsJsonObject("inserted").get("deviceIndex").getAsInt());
         assertEquals(Refs.device(rack.chainRef(1), 1, "Inserted"), lone.getAsJsonObject("ref"));
         HostFixture.REF_SCHEMA.apply(lone.getAsJsonObject("ref"));
-        assertEquals(NativeChainEdits.VERIFICATION, lone.get("verification").getAsString());
+        assertEquals("native_readback", lone.get("verification").getAsString());
+        assertEquals("simulated", lone.get("nativeVersion").getAsString());
         assertEquals(2, lone.get("afterCount").getAsInt());
         assertFalse(lone.get("requestedIdentifierVerified").getAsBoolean());
         assertEquals(List.of("Chorus", "Inserted"), rack.names(1));
@@ -443,11 +430,11 @@ public final class DeviceChainModuleTest {
                 "devices.insert",
                 params(
                         "to",
-                        params("parent", rack.chainRef(0), "position", after(rack.deviceRef(0, 1))),
-                        "kind",
-                        "file",
-                        "path",
-                        TestPaths.absolute("/presets/Wide Delay.bwpreset")));
+                        rack.chainRef(0),
+                        "position",
+                        after(rack.deviceRef(0, 1)),
+                        "insert",
+                        params("kind", "file", "path", TestPaths.absolute("/presets/Wide Delay.bwpreset"))));
         assertEquals(Refs.device(rack.chainRef(0), 2, "Wide Delay"), file.getAsJsonObject("ref"));
     }
 
@@ -459,7 +446,7 @@ public final class DeviceChainModuleTest {
         JsonObject moved =
                 finish(f, f.chains(), "devices.move", move(rack.deviceRef(0, 1), before(rack.deviceRef(0, 0))));
         assertEquals(List.of("Reverb", "Delay"), rack.names(0));
-        assertEquals(NativeChainEdits.VERIFICATION, moved.get("verification").getAsString());
+        assertEquals("native_readback", moved.get("verification").getAsString());
         assertEquals(Refs.device(rack.chainRef(0), 0, "Reverb"), moved.getAsJsonObject("ref"));
         assertEquals(1, moved.getAsJsonObject("moved").get("deviceIndex").getAsInt());
         assertEquals(0, moved.getAsJsonObject("moved").get("toIndex").getAsInt());
@@ -477,17 +464,15 @@ public final class DeviceChainModuleTest {
                                 "target",
                                 Refs.device(rack.chainRef(0), 0, "Reverb"),
                                 "to",
-                                params("parent", f.trackRef, "position", "end"))));
+                                f.trackRef,
+                                "position",
+                                "end")));
         assertRpcError(
                 "unsupported_scope",
                 f.run(
                         f.chains(),
                         "devices.move",
-                        params(
-                                "target",
-                                f.device(0, "Comp"),
-                                "to",
-                                params("parent", rack.chainRef(0), "position", "end"))));
+                        params("target", f.device(0, "Comp"), "to", rack.chainRef(0), "position", "end")));
 
         JsonObject deleted =
                 finish(f, f.chains(), "devices.delete", delete(Refs.device(rack.chainRef(0), 0, "Reverb")));
@@ -495,7 +480,7 @@ public final class DeviceChainModuleTest {
         assertEquals("Reverb", deleted.getAsJsonObject("deleted").get("name").getAsString());
         assertEquals(1, deleted.get("afterCount").getAsInt());
         assertEquals(List.of("Delay"), rack.names(0));
-        assertEquals(NativeChainEdits.VERIFICATION, deleted.get("verification").getAsString());
+        assertEquals("native_readback", deleted.get("verification").getAsString());
     }
 
     @Test

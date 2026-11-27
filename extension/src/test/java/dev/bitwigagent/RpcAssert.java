@@ -55,6 +55,16 @@ public final class RpcAssert {
         assertTrue(operation.result.isDone(), "the future must already be settled");
         JsonObject result = operation.result.join();
         assertEquals(outcome, result.get("outcome").getAsString(), "outcome: " + result);
+        assertVerified(result);
+        return result;
+    }
+
+    /** The protocol rule: a result whose outcome is applied says how it was confirmed (ack observes nothing). */
+    public static JsonObject assertVerified(JsonObject result) {
+        if (result.has("outcome")
+                && result.get("outcome").getAsString().equals(Outcome.APPLIED.wire())
+                && !result.has("released"))
+            assertTrue(result.has("verification"), "an applied result carries verification: " + result);
         return result;
     }
 

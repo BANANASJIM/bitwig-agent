@@ -17,6 +17,7 @@ import dev.bitwigagent.core.Outcome;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Refs;
 import dev.bitwigagent.core.Results;
+import dev.bitwigagent.core.Verification;
 import dev.bitwigagent.host.ProjectState;
 import java.util.*;
 import java.util.function.Consumer;
@@ -593,13 +594,14 @@ public final class LauncherFake {
                                 requested,
                                 data.nextAction.get(key),
                                 already ? Outcome.ALREADY_MATCHED : Outcome.APPLIED,
-                                null));
+                                null,
+                                Verification.NATIVE_READBACK));
             }
             JsonObject out = data.nextAction.deepCopy();
-            out.addProperty("loopLengthBeats", data.length);
-            out.addProperty("loopStartBeats", loopStart);
-            out.addProperty("playStartBeats", 0.0);
-            out.addProperty("playStopBeats", data.playStop);
+            out.addProperty("loopLength", data.length);
+            out.addProperty("loopStart", loopStart);
+            out.addProperty("playStart", 0.0);
+            out.addProperty("playStop", data.playStop);
             out.addProperty("loopEnabled", true);
             out.addProperty("name", data.name);
             out.add("fields", fields);
@@ -684,7 +686,7 @@ public final class LauncherFake {
                 NativeNotes.Cell cell = cells.get(i);
                 if (!write[i] || drop) continue;
                 int step = (int) storageStep(cell, storage(cell));
-                if (cell.set) put(scene, cell.channel, step, cell.pitch, cell.velocity, cell.durationBeats);
+                if (cell.set) put(scene, cell.channel, step, cell.pitch, cell.velocity, cell.duration);
                 else notes.remove(key(scene, cell.channel, step, cell.pitch));
             }
             return write;
@@ -695,7 +697,7 @@ public final class LauncherFake {
                 Object slot,
                 String trackId,
                 String name,
-                int lengthBeats,
+                int clipLength,
                 List<NativeNotes.Cell> cells,
                 Runnable check,
                 Runnable beforeWrite) {
@@ -708,8 +710,8 @@ public final class LauncherFake {
             transactions++;
             if (failAfterDispatch) throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "fixture native call failed");
             SlotData data = slots[scene];
-            data.length = lengthBeats;
-            data.playStop = lengthBeats;
+            data.length = clipLength;
+            data.playStop = clipLength;
             if (applyName) data.name = name;
             for (NativeNotes.Cell cell : cells)
                 if (!drop)
@@ -719,7 +721,7 @@ public final class LauncherFake {
                             (int) storageStep(cell, storage(cell)),
                             cell.pitch,
                             cell.velocity,
-                            cell.durationBeats);
+                            cell.duration);
             if (emitCreateContent) observeContent(scene, true);
         }
     }
@@ -739,14 +741,14 @@ public final class LauncherFake {
         private JsonObject row(int index) {
             JsonObject row = new JsonObject();
             row.addProperty("clipIndex", index);
-            row.addProperty("startBeats", clips.get(index)[0]);
-            row.addProperty("lengthBeats", clips.get(index)[1]);
+            row.addProperty("start", clips.get(index)[0]);
+            row.addProperty("length", clips.get(index)[1]);
             row.addProperty("name", names.get(index));
             return row;
         }
 
         private JsonObject result(Outcome outcome, Integer clip) {
-            JsonObject out = Results.outcome(outcome);
+            JsonObject out = Results.outcome(outcome, Verification.NATIVE_READBACK);
             JsonArray rows = new JsonArray();
             for (int i = 0; i < clips.size(); i++) rows.add(row(i));
             out.add("clips", rows);
@@ -763,8 +765,8 @@ public final class LauncherFake {
         public JsonObject create(
                 Object trackProxy,
                 String trackId,
-                double startBeats,
-                double lengthBeats,
+                double clipStart,
+                double clipLength,
                 String name,
                 List<double[]> noteList,
                 int channel,
@@ -773,7 +775,7 @@ public final class LauncherFake {
             beforeWrite.run();
             created++;
             notes = noteList;
-            clips.add(new double[] {startBeats, lengthBeats});
+            clips.add(new double[] {clipStart, clipLength});
             names.add(name);
             return result(Outcome.APPLIED, clips.size() - 1);
         }
@@ -784,12 +786,12 @@ public final class LauncherFake {
                 Object slotProxy,
                 String trackId,
                 String expectedClipName,
-                double startBeats,
+                double clipStart,
                 Runnable check,
                 Runnable beforeWrite) {
             beforeWrite.run();
             copied++;
-            clips.add(new double[] {startBeats, 4});
+            clips.add(new double[] {clipStart, 4});
             names.add(expectedClipName);
             return result(Outcome.APPLIED, clips.size() - 1);
         }
@@ -797,7 +799,7 @@ public final class LauncherFake {
         @Override
         public JsonObject edit(
                 Object trackProxy, JsonObject ref, String op, JsonObject args, Runnable check, Runnable beforeWrite) {
-            double at = ref.get("startBeats").getAsDouble();
+            double at = ref.get("start").getAsDouble();
             String name = ref.get("name").getAsString();
             for (int i = 0; i < clips.size(); i++) {
                 if (clips.get(i)[0] != at) continue;
@@ -808,10 +810,10 @@ public final class LauncherFake {
                 edited++;
                 switch (op) {
                     case "move":
-                        clips.get(i)[0] = args.get("startBeats").getAsDouble();
+                        clips.get(i)[0] = args.get("start").getAsDouble();
                         break;
                     case "resize":
-                        clips.get(i)[1] = args.get("lengthBeats").getAsDouble();
+                        clips.get(i)[1] = args.get("length").getAsDouble();
                         break;
                     case "rename":
                         names.set(i, args.get("name").getAsString());

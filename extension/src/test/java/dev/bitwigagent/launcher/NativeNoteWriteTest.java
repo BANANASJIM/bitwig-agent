@@ -17,7 +17,7 @@ public final class NativeNoteWriteTest {
 
     private static JsonObject set(double beat, int pitch, int velocity, double duration) {
         return obj("{\"op\":\"set\",\"beat\":" + beat + ",\"pitch\":" + pitch + ",\"velocity\":" + velocity
-                + ",\"durationBeats\":" + duration + "}");
+                + ",\"duration\":" + duration + "}");
     }
 
     private static JsonObject clear(double beat, int pitch) {
@@ -54,15 +54,16 @@ public final class NativeNoteWriteTest {
     @Test
     void severalEditsAreOneNativeTransactionReadBackThroughTheGrid() {
         LauncherFake f = riff(16);
-        JsonObject out = f.call("notes.edit", eight(f));
+        JsonObject out = f.call("notes.set", eight(f));
         assertEquals("applied", out.get("outcome").getAsString());
+        assertEquals("api_readback", out.get("verification").getAsString());
         assertEquals("one_step", out.get("undo").getAsString());
         assertEquals(8, out.getAsJsonObject("summary").get("verified").getAsInt());
         assertEquals(1, f.nativeNotes.transactions, "one transaction for every note");
         assertEquals(0, f.writes, "no public per-note setter");
         assertEquals(.225, f.notes.get(LauncherFake.key(0, 0, 24, 65)).duration);
         assertFalse(f.services.selection.held(), "the cursor lease ends with the call");
-        JsonObject again = f.call("notes.edit", eight(f));
+        JsonObject again = f.call("notes.set", eight(f));
         assertEquals("already_matched", again.get("outcome").getAsString());
         assertEquals("none", again.get("undo").getAsString(), "a no-op opens no transaction");
         assertEquals(1, f.nativeNotes.transactions);
@@ -74,7 +75,7 @@ public final class NativeNoteWriteTest {
         f.noteStorageStepSize = 1.0;
         f.put(0, 0, 0, 48, 100, 1);
         f.put(0, 0, 2, 50, 90, 1);
-        JsonObject out = f.call("notes.edit", edit(f, clear(0, 48), set(2, 50, 40, 1), set(3, 52, 100, .5)));
+        JsonObject out = f.call("notes.set", edit(f, clear(0, 48), set(2, 50, 40, 1), set(3, 52, 100, .5)));
         assertEquals("applied", out.get("outcome").getAsString());
         assertEquals(1, f.nativeNotes.transactions);
         assertFalse(f.notes.containsKey(LauncherFake.key(0, 0, 0, 48)));
@@ -88,7 +89,7 @@ public final class NativeNoteWriteTest {
         f.noteStorageStepSize = .25;
         f.put(0, 0, 0, 60, 100, 4); // sustains over beat 1
         int selected = f.selected;
-        HostOperation op = f.startAndDrain("notes.edit", edit(f, set(2, 61, 90, 1), set(1, 60, 90, .5)));
+        HostOperation op = f.startAndDrain("notes.set", edit(f, set(2, 61, 90, 1), set(1, 60, 90, .5)));
         RpcException error = assertRpcError("overlap", op);
         assertTrue(error.getMessage().contains("sustained"), error.getMessage());
         assertFalse(op.dispatched(), "an error means nothing changed");
@@ -96,15 +97,15 @@ public final class NativeNoteWriteTest {
         assertEquals(selected, f.selected, "nothing selected");
         assertFalse(f.notes.containsKey(LauncherFake.key(0, 0, 2, 61)), "all or nothing");
         f.put(0, 0, 12, 62, 100, 1); // an onset at beat 3, inside a 2-beat note from beat 2
-        assertRpcError("overlap", f.startAndDrain("notes.edit", edit(f, set(2, 62, 90, 2))));
-        assertRpcError("invalid_params", f.startAndDrain("notes.edit", edit(f, set(15, 63, 90, 2))));
+        assertRpcError("overlap", f.startAndDrain("notes.set", edit(f, set(2, 62, 90, 2))));
+        assertRpcError("invalid_params", f.startAndDrain("notes.set", edit(f, set(15, 63, 90, 2))));
     }
 
     @Test
     void aWriteThatFailsInsideTheTransactionIsUnknown() {
         LauncherFake f = riff(16);
         f.nativeNotes.failAfterDispatch = true;
-        HostOperation op = f.startAndDrain("notes.edit", eight(f));
+        HostOperation op = f.startAndDrain("notes.set", eight(f));
         assertTrue(op.dispatched());
         assertEquals("unknown", op.result.join().get("outcome").getAsString());
     }
@@ -113,7 +114,7 @@ public final class NativeNoteWriteTest {
     void aWriteThatDoesNotReadBackIsUnknown() {
         LauncherFake f = riff(16);
         f.nativeNotes.drop = true;
-        JsonObject out = f.call("notes.edit", eight(f));
+        JsonObject out = f.call("notes.set", eight(f));
         assertEquals("unknown", out.get("outcome").getAsString());
         assertEquals("readback_mismatch", out.get("reason").getAsString());
         assertEquals(8, out.getAsJsonObject("summary").get("unverified").getAsInt());
@@ -123,7 +124,7 @@ public final class NativeNoteWriteTest {
     void aMovedTargetIsRefusedBeforeTheWrite() {
         LauncherFake f = riff(16);
         f.nativeNotes.rename = "Other";
-        HostOperation op = f.startAndDrain("notes.edit", eight(f));
+        HostOperation op = f.startAndDrain("notes.set", eight(f));
         assertRpcError("target_changed", op);
         assertFalse(op.dispatched());
     }
@@ -141,8 +142,9 @@ public final class NativeNoteWriteTest {
         JsonObject p = sixteenBars(f);
         assertEquals(
                 2, NoteGrid.plan(p, p.getAsJsonArray("edits"), "edits", null).size());
-        JsonObject out = f.call("notes.edit", p);
+        JsonObject out = f.call("notes.set", p);
         assertEquals("applied", out.get("outcome").getAsString());
+        assertEquals("api_readback", out.get("verification").getAsString(), "windowed results are verified too");
         assertEquals("one_step", out.get("undo").getAsString());
         assertEquals(1, f.nativeNotes.transactions);
         JsonArray windows = out.getAsJsonArray("windows");
@@ -155,7 +157,7 @@ public final class NativeNoteWriteTest {
     void everyWrittenWindowIsReadBackEvenAfterOneFails() {
         LauncherFake f = riff(64);
         f.nativeNotes.drop = true;
-        JsonObject out = f.call("notes.edit", sixteenBars(f));
+        JsonObject out = f.call("notes.set", sixteenBars(f));
         assertEquals("unknown", out.get("outcome").getAsString());
         JsonArray windows = out.getAsJsonArray("windows");
         assertEquals("unknown", windows.get(0).getAsJsonObject().get("outcome").getAsString());
@@ -167,7 +169,7 @@ public final class NativeNoteWriteTest {
     @Test
     void windowsLeftUnreadAtTheDeadlineAreUnknownNotUnreached() {
         LauncherFake f = riff(64);
-        HostOperation op = f.start(new HostOperation(f.tasks.after(500)), "notes.edit", sixteenBars(f));
+        HostOperation op = f.start(new HostOperation(f.tasks.after(500)), "notes.set", sixteenBars(f));
         f.drain(op);
         JsonObject out = op.result.join();
         JsonObject second = out.getAsJsonArray("windows").get(1).getAsJsonObject();
@@ -181,7 +183,7 @@ public final class NativeNoteWriteTest {
     void aWindowLostAfterTheWriteIsCountedAsWritten() {
         LauncherFake f = riff(64);
         f.onSelect = () -> f.trackId = "22222222-2222-2222-2222-222222222222";
-        JsonObject out = f.call("notes.edit", sixteenBars(f));
+        JsonObject out = f.call("notes.set", sixteenBars(f));
         assertEquals("unknown", out.get("outcome").getAsString());
         assertEquals(1, f.nativeNotes.transactions);
         JsonObject first = out.getAsJsonArray("windows").get(0).getAsJsonObject();
@@ -193,7 +195,7 @@ public final class NativeNoteWriteTest {
     void aTargetLostBeforeTheReadbackIsUnknown() {
         LauncherFake f = riff(16);
         f.onSelect = () -> f.trackId = "22222222-2222-2222-2222-222222222222";
-        HostOperation op = f.startAndDrain("notes.edit", eight(f));
+        HostOperation op = f.startAndDrain("notes.set", eight(f));
         assertTrue(op.dispatched());
         assertEquals("unknown", op.result.join().get("outcome").getAsString());
         assertEquals(1, f.nativeNotes.transactions);
@@ -203,11 +205,10 @@ public final class NativeNoteWriteTest {
     void aClipInsertWithNotesIsOneNativeStep() {
         LauncherFake f = LauncherFake.withNativeNotes();
         JsonArray notes = new JsonArray();
-        notes.add(obj("{\"beat\":0,\"pitch\":60,\"velocity\":100,\"durationBeats\":0.5}"));
-        notes.add(obj("{\"beat\":1,\"pitch\":64,\"velocity\":90,\"durationBeats\":0.5}"));
+        notes.add(obj("{\"beat\":0,\"pitch\":60,\"velocity\":100,\"duration\":0.5}"));
+        notes.add(obj("{\"beat\":1,\"pitch\":64,\"velocity\":90,\"duration\":0.5}"));
         JsonObject out = f.call(
-                "clips.insert",
-                params("to", f.slot(0), "loop", obj("{\"lengthBeats\":8}"), "name", "Lead", "notes", notes));
+                "clips.insert", params("to", f.slot(0), "loop", obj("{\"length\":8}"), "name", "Lead", "notes", notes));
         assertEquals("applied", out.get("outcome").getAsString());
         assertEquals("one_step", out.get("undo").getAsString());
         assertEquals("one_step", out.getAsJsonObject("noteWrite").get("undo").getAsString());
@@ -221,8 +222,8 @@ public final class NativeNoteWriteTest {
     void aClipInsertRefusedNativelyIsAnError() {
         LauncherFake f = LauncherFake.withNativeNotes();
         f.nativeNotes.occupied = true;
-        HostOperation op = f.startAndDrain(
-                "clips.insert", params("to", f.slot(0), "loop", obj("{\"lengthBeats\":4}"), "name", "Lead"));
+        HostOperation op =
+                f.startAndDrain("clips.insert", params("to", f.slot(0), "loop", obj("{\"length\":4}"), "name", "Lead"));
         assertRpcError("target_exists", op);
         assertFalse(op.dispatched());
     }
@@ -232,10 +233,9 @@ public final class NativeNoteWriteTest {
         LauncherFake f = LauncherFake.withNativeNotes();
         f.emitCreateContent = false;
         JsonArray notes = new JsonArray();
-        notes.add(obj("{\"beat\":0,\"pitch\":60,\"velocity\":100,\"durationBeats\":0.5}"));
+        notes.add(obj("{\"beat\":0,\"pitch\":60,\"velocity\":100,\"duration\":0.5}"));
         JsonObject out = f.call(
-                "clips.insert",
-                params("to", f.slot(0), "loop", obj("{\"lengthBeats\":4}"), "name", "Lead", "notes", notes));
+                "clips.insert", params("to", f.slot(0), "loop", obj("{\"length\":4}"), "name", "Lead", "notes", notes));
         assertEquals("unknown", out.get("outcome").getAsString());
         assertEquals("not_read_back", out.get("noteWrite").getAsString());
         assertEquals("one_step", out.get("undo").getAsString());
@@ -246,10 +246,9 @@ public final class NativeNoteWriteTest {
         LauncherFake f = LauncherFake.withNativeNotes();
         f.applyName = false;
         JsonArray notes = new JsonArray();
-        notes.add(obj("{\"beat\":0,\"pitch\":60,\"velocity\":100,\"durationBeats\":0.5}"));
+        notes.add(obj("{\"beat\":0,\"pitch\":60,\"velocity\":100,\"duration\":0.5}"));
         HostOperation op = f.startAndDrain(
-                "clips.insert",
-                params("to", f.slot(0), "loop", obj("{\"lengthBeats\":4}"), "name", "Lead", "notes", notes));
+                "clips.insert", params("to", f.slot(0), "loop", obj("{\"length\":4}"), "name", "Lead", "notes", notes));
         assertTrue(op.dispatched());
         JsonObject out = op.result.join();
         assertEquals("unknown", out.get("outcome").getAsString());

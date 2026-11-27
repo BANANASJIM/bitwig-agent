@@ -9,6 +9,7 @@ import dev.bitwigagent.core.Outcome;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.Scheduler;
+import dev.bitwigagent.core.Verification;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -20,7 +21,7 @@ import java.util.Set;
  * grid.
  */
 public final class NoteModule implements HostModule {
-    static final Set<String> METHODS = Set.of("notes.read", "notes.edit");
+    static final Set<String> METHODS = Set.of("notes.get", "notes.set");
     private static final int NOTE_LIMIT = 2048;
 
     private final LauncherState state;
@@ -40,14 +41,14 @@ public final class NoteModule implements HostModule {
 
     @Override
     public void validate(String method, JsonObject p) {
-        if (method.equals("notes.edit")) NoteGrid.plan(p, p.getAsJsonArray("edits"), "edits", null);
+        if (method.equals("notes.set")) NoteGrid.plan(p, p.getAsJsonArray("edits"), "edits", null);
         else NoteGrid.readWindow(p);
     }
 
     @Override
     public void dispatch(HostOperation op, String method, JsonObject p) {
         scheduler.check(op);
-        boolean edit = method.equals("notes.edit");
+        boolean edit = method.equals("notes.set");
         List<NoteGrid.Part> parts = edit ? NoteGrid.plan(p, p.getAsJsonArray("edits"), "edits", null) : null;
         NoteGrid.Window explicit = edit ? null : NoteGrid.readWindow(p);
         int channel = p.has("channel") ? p.get("channel").getAsInt() : 0;
@@ -219,7 +220,7 @@ public final class NoteModule implements HostModule {
                     finish();
                     return;
                 }
-                JsonObject entry = Results.outcome(Outcome.NOT_APPLIED);
+                JsonObject entry = Results.notApplied();
                 entry.addProperty("reason", Reason.DEADLINE.wire());
                 entry.addProperty("message", "Too little time left for another window; send its notes again.");
                 record(index, entry);
@@ -237,11 +238,8 @@ public final class NoteModule implements HostModule {
                         return;
                     }
                     JsonObject entry = error == null ? result : Errors.entryResult(error);
-                    if (written != null && !entry.has("summary")) {
-                        Outcome outcome = Results.outcomeOf(entry);
-                        entry = merged(entry, unread(written.get(index), null));
-                        if (outcome != Outcome.UNKNOWN) entry.addProperty("outcome", Outcome.UNKNOWN.wire());
-                    }
+                    if (written != null && !entry.has("summary"))
+                        entry = Results.unknown(merged(entry, unread(written.get(index), null)));
                     record(index, entry);
                     boolean next = written != null || Results.outcomeOf(entry).succeeded();
                     if (next && index + 1 < parts.size()) run(index + 1);
@@ -284,7 +282,7 @@ public final class NoteModule implements HostModule {
                 JsonObject entry;
                 if (i < entries.size()) entry = entries.get(i).getAsJsonObject();
                 else {
-                    entry = Results.outcome(Outcome.NOT_APPLIED);
+                    entry = Results.notApplied();
                     entry.addProperty("reason", Reason.NOT_REACHED.wire());
                     entry.add("window", part.window.json());
                 }
@@ -307,7 +305,7 @@ public final class NoteModule implements HostModule {
                 }
                 windows.add(entry);
             }
-            out.addProperty("outcome", worst.wire());
+            Results.stamp(out, worst, windows);
             if (reason != null) out.addProperty("reason", reason);
             JsonObject summary = new JsonObject();
             summary.addProperty("requested", requested);
@@ -326,7 +324,7 @@ public final class NoteModule implements HostModule {
 
     /** A natively written window that was not read back: every edit unknown, counted as dispatched or matched. */
     private static JsonObject unread(List<NoteGrid.Edit> changes, String message) {
-        JsonObject entry = Results.outcome(Outcome.UNKNOWN);
+        JsonObject entry = Results.unknown();
         entry.addProperty("reason", Reason.NOT_OBSERVED.wire());
         if (message != null) entry.addProperty("message", message);
         int matched = 0;
@@ -349,7 +347,7 @@ public final class NoteModule implements HostModule {
 
     /** Keys of a window's result the combined result already carries once. */
     private static final Set<String> WINDOW_DROPPED =
-            Set.of("ref", "window", "loop", "playStartBeats", "playStopBeats", "loopEnabled", "undo");
+            Set.of("ref", "window", "loop", "playStart", "playStop", "loopEnabled", "undo");
 
     private void editNotes(HostOperation op, LauncherState.Target target, NoteGrid.Part part, boolean full) {
         NoteGrid.Window w = part.window;
@@ -434,12 +432,12 @@ public final class NoteModule implements HostModule {
             if (full) item.addProperty("step", w.start + e.x);
             else item.addProperty("beat", (w.start + e.x) * w.size);
             item.addProperty("pitch", e.pitch);
-            item.addProperty("outcome", outcome.wire());
+            Results.stamp(item, outcome, Verification.API_READBACK);
             if (reason != null) item.addProperty("reason", reason.wire());
             item.add("observed", NoteGrid.observedJson(state.clip.getStep(w.channel, e.x, e.pitch), w, e.x, e.pitch));
             results.add(item);
         }
-        out.addProperty("outcome", worst.wire());
+        Results.stamp(out, worst, Verification.API_READBACK);
         if (firstReason != null) out.addProperty("reason", firstReason.wire());
         JsonObject summary = new JsonObject();
         summary.addProperty("requested", changes.size());
@@ -500,7 +498,7 @@ public final class NoteModule implements HostModule {
             if (!coversLoop)
                 continuation = (continuation == null ? "" : continuation + ". ")
                         + "The clip loop continues past this window and a coarser grid would drop below 1/16 note: read the rest with an explicit window, startStep="
-                        + (w.start + w.steps) + " stepSizeBeats="
+                        + (w.start + w.steps) + " stepSize="
                         + w.exact.stripTrailingZeros().toPlainString() + " steps=128 pitchStart=0 pitchCount=128";
         }
         if (continuation != null) out.addProperty("continuation", continuation);

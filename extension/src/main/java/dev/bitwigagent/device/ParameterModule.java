@@ -16,12 +16,14 @@ import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.Scheduler;
 import dev.bitwigagent.core.ValueInput;
 import dev.bitwigagent.core.ValueMatch;
+import dev.bitwigagent.core.Verification;
 import dev.bitwigagent.host.DeviceSources;
 import dev.bitwigagent.host.RequestSnapshot;
 import dev.bitwigagent.host.TrackRefs;
 import dev.bitwigagent.host.TrackWindow;
 import dev.bitwigagent.host.TransportSafety;
 import java.util.*;
+import java.util.function.Consumer;
 
 /**
  * parameters.list and parameters.set: one parameter of a device by its ref. Direct parameters of a root device are
@@ -241,7 +243,8 @@ public final class ParameterModule implements HostModule, ParameterResolver.Dire
         double applied = step(requested);
         JsonElement asked = input.bare;
         if (Math.abs(parameter.value - applied) <= TOLERANCE) {
-            op.result.complete(result(ref, asked, parameter.value, null, Outcome.ALREADY_MATCHED, null));
+            op.result.complete(result(
+                    ref, asked, parameter.value, null, Outcome.ALREADY_MATCHED, null, Verification.API_READBACK));
             return;
         }
         long before = parameter.sequence;
@@ -260,13 +263,15 @@ public final class ParameterModule implements HostModule, ParameterResolver.Dire
                 observed -> {
                     snapshot.require(op);
                     Double seen = observedAfter(parameter, before);
-                    op.result.complete(result(
+                    JsonObject result = result(
                             ref,
                             asked,
                             seen,
                             null,
                             observed ? Outcome.APPLIED : Outcome.UNKNOWN,
-                            observed ? null : seen != null ? Reason.READBACK_MISMATCH : Reason.NOT_OBSERVED));
+                            observed ? null : seen != null ? Reason.READBACK_MISMATCH : Reason.NOT_OBSERVED,
+                            Verification.API_READBACK);
+                    op.result.complete(result);
                 });
     }
 
@@ -359,7 +364,15 @@ public final class ParameterModule implements HostModule, ParameterResolver.Dire
                                     op,
                                     port,
                                     wanted,
-                                    outcome -> finishSolve(op, ref, text, wanted, parameter, outcome))
+                                    outcome -> finishSolve(
+                                            op,
+                                            ref,
+                                            text,
+                                            wanted,
+                                            parameter,
+                                            outcome,
+                                            Verification.API_READBACK,
+                                            result -> {}))
                             .start();
                 });
     }
@@ -375,14 +388,17 @@ public final class ParameterModule implements HostModule, ParameterResolver.Dire
             String text,
             DisplayScale.Quantity wanted,
             ParameterState parameter,
-            DisplaySolver.Result solved) {
+            DisplaySolver.Result solved,
+            Verification how,
+            Consumer<JsonObject> provenance) {
         JsonElement asked = new JsonObject();
         ((JsonObject) asked).addProperty("display", text);
         Outcome outcome = solved.ok
                 ? solved.dispatched ? Outcome.APPLIED : Outcome.ALREADY_MATCHED
                 : !solved.dispatched || solved.restored ? Outcome.NOT_APPLIED : Outcome.UNKNOWN;
-        JsonObject result =
-                result(ref, asked, parameter.value, solved.observedDisplay, outcome, solved.ok ? null : solved.reason);
+        JsonObject result = result(
+                ref, asked, parameter.value, solved.observedDisplay, outcome, solved.ok ? null : solved.reason, how);
+        if (outcome == Outcome.APPLIED) provenance.accept(result);
         result.add("displayWrite", solved.json(text, wanted.value));
         op.result.complete(result);
     }
@@ -439,20 +455,30 @@ public final class ParameterModule implements HostModule, ParameterResolver.Dire
             double before = walk.a.value(parameter);
             requireExpected(expect, before);
             if (Math.abs(before - applied) <= TOLERANCE)
-                return result(ref, asked, before, walk.a.display(parameter), Outcome.ALREADY_MATCHED, null);
+                return result(
+                        ref,
+                        asked,
+                        before,
+                        walk.a.display(parameter),
+                        Outcome.ALREADY_MATCHED,
+                        null,
+                        Verification.NATIVE_READBACK);
             if (!walk.a.writable(parameter))
                 throw Errors.notApplied(Reason.INVALID_TARGET, "The host does not let this parameter be written now.");
             walk.dispatch();
             walk.a.write(parameter, applied);
             double seen = walk.a.value(parameter);
             boolean ok = Math.abs(seen - applied) <= TOLERANCE;
-            return result(
+            JsonObject result = result(
                     ref,
                     asked,
                     seen,
                     walk.a.display(parameter),
                     ok ? Outcome.APPLIED : Outcome.UNKNOWN,
-                    ok ? null : Reason.READBACK_MISMATCH);
+                    ok ? null : Reason.READBACK_MISMATCH,
+                    Verification.NATIVE_READBACK);
+            if (ok) walk.a.provenance(result);
+            return result;
         });
     }
 
@@ -484,7 +510,15 @@ public final class ParameterModule implements HostModule, ParameterResolver.Dire
                                             op,
                                             port,
                                             wanted,
-                                            outcome -> finishSolve(op, ref, text, wanted, port.observed(), outcome))
+                                            outcome -> finishSolve(
+                                                    op,
+                                                    ref,
+                                                    text,
+                                                    wanted,
+                                                    port.observed(),
+                                                    outcome,
+                                                    Verification.NATIVE_READBACK,
+                                                    port.a::provenance))
                                     .start(),
                             0);
                 },
@@ -497,6 +531,7 @@ public final class ParameterModule implements HostModule, ParameterResolver.Dire
         private final JsonObject ref;
         private final Runnable safety;
         volatile Object parameter;
+        private volatile NativeChains.Access a;
         private volatile Double value;
         private volatile String display;
         private volatile long valueSeq, displaySeq;
@@ -509,6 +544,7 @@ public final class ParameterModule implements HostModule, ParameterResolver.Dire
         }
 
         void read(NativeChains.Walk walk) {
+            a = walk.a;
             value = finite(walk.a.value(parameter));
             display = walk.a.display(parameter);
             valueSeq++;
@@ -573,13 +609,20 @@ public final class ParameterModule implements HostModule, ParameterResolver.Dire
 
     /** {outcome, ref, fields:{value}}: what was asked, and what the host shows when that differs. */
     private static JsonObject result(
-            JsonObject ref, JsonElement requested, Double observed, String display, Outcome outcome, Reason reason) {
-        JsonObject result = Results.outcome(outcome);
+            JsonObject ref,
+            JsonElement requested,
+            Double observed,
+            String display,
+            Outcome outcome,
+            Reason reason,
+            Verification how) {
+        JsonObject result = Results.outcome(outcome, how);
         if (reason != null) result.addProperty("reason", reason.wire());
         result.add("ref", ref);
         JsonObject fields = new JsonObject();
         fields.add(
-                "value", Results.field(requested, observed == null ? null : unit(observed, display), outcome, reason));
+                "value",
+                Results.field(requested, observed == null ? null : unit(observed, display), outcome, reason, how));
         result.add("fields", fields);
         return result;
     }

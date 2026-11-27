@@ -13,6 +13,7 @@ import dev.bitwigagent.core.Outcome;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Refs;
 import dev.bitwigagent.core.Results;
+import dev.bitwigagent.core.Verification;
 import dev.bitwigagent.launcher.ClipModule;
 import dev.bitwigagent.launcher.LauncherFake;
 import java.util.*;
@@ -22,7 +23,7 @@ import org.junit.jupiter.api.Test;
 public final class ArrangerModuleTest {
 
     private static JsonObject note(double beat, int pitch, int velocity, double duration) {
-        return params("beat", beat, "pitch", pitch, "velocity", velocity, "durationBeats", duration);
+        return params("beat", beat, "pitch", pitch, "velocity", velocity, "duration", duration);
     }
 
     private static JsonArray notes(JsonObject... notes) {
@@ -66,8 +67,7 @@ public final class ArrangerModuleTest {
         }
 
         JsonObject insert(double start, double length) {
-            return params(
-                    "to", params("track", f.track(), "startBeats", start), "lengthBeats", length, "name", "Verse");
+            return params("to", params("track", f.track(), "start", start), "length", length, "name", "Verse");
         }
 
         HostOperation start(String method, JsonObject p) {
@@ -106,12 +106,12 @@ public final class ArrangerModuleTest {
             }
 
             private JsonObject row(double start, double length, String name) {
-                JsonObject row = params("clipIndex", 0, "startBeats", start, "lengthBeats", length, "name", name);
+                JsonObject row = params("clipIndex", 0, "start", start, "length", length, "name", name);
                 return row;
             }
 
             private JsonObject result(JsonObject clip) {
-                JsonObject out = Results.outcome(Outcome.APPLIED);
+                JsonObject out = Results.outcome(Outcome.APPLIED, Verification.NATIVE_READBACK);
                 out.addProperty("trackId", f.trackId);
                 out.addProperty("lane", "main");
                 JsonArray rows = new JsonArray();
@@ -186,7 +186,7 @@ public final class ArrangerModuleTest {
                 JsonObject out = write(
                         op.equals("delete") ? null : row(8, 4, ref.get("name").getAsString()), check, before);
                 if (!op.equals("delete"))
-                    out.add("previous", row(ref.get("startBeats").getAsDouble(), 4, "Verse"));
+                    out.add("previous", row(ref.get("start").getAsDouble(), 4, "Verse"));
                 return out;
             }
         }
@@ -202,7 +202,7 @@ public final class ArrangerModuleTest {
         JsonObject row = result.getAsJsonArray("clips").get(0).getAsJsonObject();
         assertEquals(arrangerClip(x.f.track(), 8, "Verse"), row.get("ref"));
         assertFalse(row.has("clipIndex"), "an index is no identity");
-        assertEquals(4.0, row.get("lengthBeats").getAsDouble());
+        assertEquals(4.0, row.get("length").getAsDouble());
     }
 
     @Test
@@ -390,9 +390,9 @@ public final class ArrangerModuleTest {
     void anEditPassesOnlyItsPayloadAndShapesPreviousAndRef() {
         Fixture x = new Fixture("Instrument");
         JsonObject ref = arrangerClip(x.f.track(), 8, "Verse");
-        JsonObject moved = x.call("clips.move", params("target", ref, "to", params("startBeats", 16)));
+        JsonObject moved = x.call("clips.move", params("target", ref, "to", params("start", 16)));
         assertEquals("move", x.lane.lastOp);
-        assertEquals(Set.of("startBeats"), x.lane.lastArgs.keySet());
+        assertEquals(Set.of("start"), x.lane.lastArgs.keySet());
         assertEquals(ref, x.lane.lastRef, "the native side locates the clip by the ref");
         assertEquals(arrangerClip(x.f.track(), 8, "Verse"), moved.get("ref"));
         assertEquals(
@@ -405,9 +405,9 @@ public final class ArrangerModuleTest {
     void aResizeAndRenameForwardOneEditEach() {
         Fixture x = new Fixture("Instrument");
         JsonObject ref = arrangerClip(x.f.track(), 8, "Verse");
-        JsonObject set = x.call("clips.set", params("target", ref, "lengthBeats", 12, "name", "Chorus"));
+        JsonObject set = x.call("clips.set", params("target", ref, "length", 12, "name", "Chorus"));
         assertEquals(List.of("resize", "rename"), x.lane.ops);
-        assertEquals(Set.of("lengthBeats"), x.lane.argsSeen.get(0).keySet());
+        assertEquals(Set.of("length"), x.lane.argsSeen.get(0).keySet());
         assertEquals(Set.of("name"), x.lane.argsSeen.get(1).keySet());
         assertEquals("applied", set.get("outcome").getAsString());
     }
@@ -437,7 +437,7 @@ public final class ArrangerModuleTest {
         x.f.sceneNames[33] = "Drop";
         x.occupy(33, "Hook");
         JsonObject result =
-                x.call("clips.copy", params("from", x.f.clip(33), "to", params("track", x.f.track(), "startBeats", 8)));
+                x.call("clips.copy", params("from", x.f.clip(33), "to", params("track", x.f.track(), "start", 8)));
         assertEquals("applied", result.get("outcome").getAsString());
         assertNotNull(x.lane.lastSlot, "the slot proxy reaches the adapter");
         assertEquals("Hook", x.lane.lastName);
@@ -450,8 +450,8 @@ public final class ArrangerModuleTest {
         Fixture x = new Fixture("Audio");
         x.f.sceneNames[33] = "Drop";
         x.occupy(33, "Hook");
-        HostOperation op = x.start(
-                "clips.copy", params("from", x.f.clip(33), "to", params("track", x.f.track(), "startBeats", 8)));
+        HostOperation op =
+                x.start("clips.copy", params("from", x.f.clip(33), "to", params("track", x.f.track(), "start", 8)));
         x.lane.beforeRun = () -> x.f.scroll(0);
         x.drain(op);
         assertRpcError("target_changed", op);
@@ -466,9 +466,7 @@ public final class ArrangerModuleTest {
         x.play(true);
         assertRpcError(
                 "unsafe_state",
-                x.start(
-                        "clips.copy",
-                        params("from", x.f.clip(3), "to", params("track", x.f.track(), "startBeats", 8))));
+                x.start("clips.copy", params("from", x.f.clip(3), "to", params("track", x.f.track(), "start", 8))));
         assertEquals(0, x.lane.calls);
     }
 }

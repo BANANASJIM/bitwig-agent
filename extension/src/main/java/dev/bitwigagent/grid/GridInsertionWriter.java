@@ -3,7 +3,6 @@ package dev.bitwigagent.grid;
 import static dev.bitwigagent.grid.GridSnapshotReader.Field.*;
 
 import com.google.gson.*;
-import dev.bitwigagent.bitwig614.Bitwig614Runtime;
 import dev.bitwigagent.core.Batch;
 import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.Outcome;
@@ -11,7 +10,9 @@ import dev.bitwigagent.core.Params;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.RpcException;
+import dev.bitwigagent.core.Verification;
 import dev.bitwigagent.host.DeviceSources;
+import dev.bitwigagent.nativehost.NativeHost;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
@@ -361,7 +362,7 @@ public final class GridInsertionWriter {
                         one -> {
                             if (done) return;
                             try {
-                                item.add("outcome", one.get("outcome"));
+                                Results.copyOutcome(item, one);
                                 item.add("moduleId", one.get("moduleId"));
                                 item.add("actualPosition", one.get("actualPosition"));
                                 lastGraph = one.getAsJsonObject("graph");
@@ -422,14 +423,13 @@ public final class GridInsertionWriter {
             done = true;
             try {
                 if (lastGraph != null && !stale) refreshPositions();
-                JsonObject result = Results.outcome(Results.worst(items));
+                JsonObject result = Results.ofEntries(items);
                 result.addProperty("written", written);
                 result.addProperty("slowestEntryMs", slowest / 1_000_000L);
                 result.add("modules", items);
                 result.addProperty("mutationDispatched", written > 0 || stale);
                 result.addProperty("nativeMutation", written > 0 || stale);
                 result.addProperty("nativeUndo", written > 0 || stale);
-                result.addProperty("verification", "later_document_event_bounded_native_graph_observation_per_entry");
                 // After an unknown entry the last observed graph is not the current one: no diff is offered.
                 if (lastGraph != null && !stale) {
                     result.add("graph", lastGraph);
@@ -559,7 +559,7 @@ public final class GridInsertionWriter {
                                     ? (Exception) error
                                     : new Exception("Insertion preplacement gate failed", error));
                     normalHandling = true; // Record normal delivered cleanup BEFORE any outward notification.
-                    if (!(error instanceof RpcException) || Bitwig614Runtime.isInvocationFailure(error))
+                    if (!(error instanceof RpcException) || NativeHost.isInvocationFailure(error))
                         adapterFailure(error);
                     return true;
                 } catch (Throwable cleanupError) {
@@ -698,7 +698,7 @@ public final class GridInsertionWriter {
                 snapshots.guardTarget(target);
                 contexts.capture(target.target, target.graph, after.modules, context, check);
                 Row actual = after.find(incoming.id);
-                JsonObject result = Results.outcome(Outcome.APPLIED);
+                JsonObject result = Results.outcome(Outcome.APPLIED, Verification.NATIVE_READBACK);
                 result.addProperty("operation", "insert");
                 result.addProperty("moduleId", actual.id.toString());
                 result.addProperty("typeId", actual.typeId.toString());
@@ -712,7 +712,6 @@ public final class GridInsertionWriter {
                 result.addProperty("undoGroupingVerified", false);
                 result.addProperty("engineAcknowledgement", false);
                 result.addProperty("nativeLifetimeSettled", true);
-                result.addProperty("verification", "later_document_event_bounded_native_graph_observation");
                 result.addProperty("nativeUndoScope", "native_operation_not_verified_grouping_or_commit");
                 result.addProperty(
                         "contextScope",
@@ -744,7 +743,7 @@ public final class GridInsertionWriter {
 
     static boolean settlementMismatch(Throwable error) {
         return error instanceof RpcException
-                && !Bitwig614Runtime.isInvocationFailure(error)
+                && !NativeHost.isInvocationFailure(error)
                 && MISMATCH_CODES.stream().anyMatch(((RpcException) error)::is);
     }
 
@@ -813,7 +812,7 @@ public final class GridInsertionWriter {
         check.run();
         if (!quarantine.ack(device, detail))
             throw Errors.notApplied(Reason.UNKNOWN_HOLD, "The hold changed while it was checked; it stays as it is.");
-        JsonObject result = Results.outcome(Outcome.APPLIED);
+        JsonObject result = Results.outcome(Outcome.APPLIED, Verification.NATIVE_READBACK);
         if (recorded != null) result.add("recorded", recorded);
         result.add("found", found);
         result.addProperty("next", "Topology writes on this device are admitted again; read with grid.export first.");

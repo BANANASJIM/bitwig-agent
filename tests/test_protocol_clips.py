@@ -8,12 +8,12 @@ from bitwig_agent.protocol.clips import MAX_TRANSFORM_TARGETS, NOTE_WINDOW
 from bitwig_agent.protocol.launcher import ARRANGER_CLIP_REF, CLIP_REF, SCENE_REF, SLOT_REF, TRACK_REF
 
 SLOT = SLOT_REF
-START = {"track": TRACK_REF, "startBeats": 16}
-NOTE = {"beat": 0, "pitch": 60, "velocity": 90, "durationBeats": 1}
+START = {"track": TRACK_REF, "start": 16}
+NOTE = {"beat": 0, "pitch": 60, "velocity": 90, "duration": 1}
 
 
 def note(**changes):
-    return {"op": "set", "beat": 0, "pitch": 60, "velocity": 90, "durationBeats": 1, **changes}
+    return {"op": "set", "beat": 0, "pitch": 60, "velocity": 90, "duration": 1, **changes}
 
 
 def reason(method, args):
@@ -26,30 +26,30 @@ def reason(method, args):
 
 
 def test_insert_into_a_slot_takes_a_loop_and_into_the_arranger_takes_a_length():
-    launcher = {"to": SLOT, "loop": {"lengthBeats": 4}, "name": "Sketch"}
+    launcher = {"to": SLOT, "loop": {"length": 4}, "name": "Sketch"}
     assert validate_call("clips.insert", launcher)[0] == launcher
-    arranger = {"to": START, "lengthBeats": 16, "name": "Verse"}
+    arranger = {"to": START, "length": 16, "name": "Verse"}
     assert validate_call("clips.insert", arranger)[0] == arranger
-    assert validate_call("clips.insert", {**arranger, "lengthBeats": 1 / 128})[0]["lengthBeats"] == 1 / 128
+    assert validate_call("clips.insert", {**arranger, "length": 1 / 128})[0]["length"] == 1 / 128
 
 
 @pytest.mark.parametrize(
     "args",
     [
         {"to": SLOT, "name": "x"},
-        {"to": SLOT, "name": "x", "lengthBeats": 4},
-        {"to": SLOT, "name": "x", "loop": {"lengthBeats": 4}, "lengthBeats": 4},
-        {"to": SLOT, "name": "x", "loop": {"lengthBeats": 0}},
-        {"to": SLOT, "name": "x", "loop": {"lengthBeats": 4097}},
-        {"to": SLOT, "name": "x", "loop": {"lengthBeats": 1.5}},
-        {"to": START, "name": "x", "loop": {"lengthBeats": 4}},
+        {"to": SLOT, "name": "x", "length": 4},
+        {"to": SLOT, "name": "x", "loop": {"length": 4}, "length": 4},
+        {"to": SLOT, "name": "x", "loop": {"length": 0}},
+        {"to": SLOT, "name": "x", "loop": {"length": 4097}},
+        {"to": SLOT, "name": "x", "loop": {"length": 1.5}},
+        {"to": START, "name": "x", "loop": {"length": 4}},
         {"to": START, "name": "x"},
-        {"to": START, "name": "x", "lengthBeats": 0},
-        {"to": START, "name": "x", "lengthBeats": 65537},
-        {"to": SCENE_REF, "name": "x", "loop": {"lengthBeats": 4}},
-        {"to": SLOT, "name": "", "loop": {"lengthBeats": 4}},
-        {"to": {"track": TRACK_REF, "startBeats": -1}, "name": "x", "lengthBeats": 4},
-        {"trackId": TRACK_REF["id"], "slotIndex": 0, "lengthBeats": 4, "name": "x"},
+        {"to": START, "name": "x", "length": 0},
+        {"to": START, "name": "x", "length": 65537},
+        {"to": SCENE_REF, "name": "x", "loop": {"length": 4}},
+        {"to": SLOT, "name": "", "loop": {"length": 4}},
+        {"to": {"track": TRACK_REF, "start": -1}, "name": "x", "length": 4},
+        {"trackId": TRACK_REF["id"], "slotIndex": 0, "length": 4, "name": "x"},
     ],
 )
 def test_insert_rejects_a_missing_wrong_or_mixed_length(args):
@@ -58,7 +58,7 @@ def test_insert_rejects_a_missing_wrong_or_mixed_length(args):
 
 
 def test_insert_notes_fail_before_dispatch_when_invalid():
-    base = {"to": SLOT, "loop": {"lengthBeats": 4}, "name": "Sketch"}
+    base = {"to": SLOT, "loop": {"length": 4}, "name": "Sketch"}
     params, _ = validate_call("clips.insert", {**base, "notes": [NOTE, {**NOTE, "beat": 1}], "channel": 2})
     assert params["notes"][0] == NOTE
     assert params["channel"] == 2
@@ -74,7 +74,7 @@ def test_insert_notes_fail_before_dispatch_when_invalid():
     ):
         with pytest.raises(ValidationError):
             validate_call("clips.insert", {**base, **bad})
-    arranger = {"to": START, "lengthBeats": 4, "name": "Verse"}
+    arranger = {"to": START, "length": 4, "name": "Verse"}
     assert validate_call("clips.insert", {**arranger, "notes": [NOTE], "channel": 1})[0]["channel"] == 1
     for bad in ({"channel": 1}, {"notes": [{**NOTE, "beat": 3.5}]}, {"notes": [NOTE], "detail": "full"}):
         with pytest.raises(ValidationError):
@@ -82,7 +82,7 @@ def test_insert_notes_fail_before_dispatch_when_invalid():
 
 
 def test_unicode_length_matches_java_utf16_bounds():
-    args = {"to": SLOT, "loop": {"lengthBeats": 4}, "name": "𝄞" * 64}
+    args = {"to": SLOT, "loop": {"length": 4}, "name": "𝄞" * 64}
     assert validate_call("clips.insert", args)[0]["name"] == args["name"]
     with pytest.raises(ValidationError):
         validate_call("clips.insert", {**args, "name": "𝄞" * 65})
@@ -145,7 +145,7 @@ NEXT_ACTION = {
     "nextActionEnabled": True,
     "nextActionLinkToLoop": True,
     "nextActionLoopCount": 1,
-    "nextActionDelayBeats": 0,
+    "nextActionDelay": 0,
 }
 
 
@@ -154,33 +154,33 @@ def test_set_takes_launcher_fields_in_one_call_without_splitting_the_paths():
         "target": CLIP_REF,
         "name": "Verse",
         "color": "#ff8800",
-        "loop": {"lengthBeats": 8},
+        "loop": {"length": 8},
         **NEXT_ACTION,
         "launchQuantization": "1/4",
         "launchMode": "trigger",
         "useLoopStartAsQuantizationReference": True,
-        "expect": {"name": "Hook", "loop": {"lengthBeats": 4}, "nextAction": "stop"},
+        "expect": {"name": "Hook", "loop": {"length": 4}, "nextAction": "stop"},
     }
     params, _ = validate_call("clips.set", mixed)
-    assert params["loop"] == {"lengthBeats": 8.0}
+    assert params["loop"] == {"length": 8.0}
     assert {k: v for k, v in params.items() if k != "loop"} == {k: v for k, v in mixed.items() if k != "loop"}
 
 
 def test_set_arranger_clip_takes_name_and_length_only():
-    args = {"target": ARRANGER_CLIP_REF, "name": "Chorus", "lengthBeats": 8, "expect": {"lengthBeats": 4}}
-    assert validate_call("clips.set", args)[0]["lengthBeats"] == 8
+    args = {"target": ARRANGER_CLIP_REF, "name": "Chorus", "length": 8, "expect": {"length": 4}}
+    assert validate_call("clips.set", args)[0]["length"] == 8
     assert reason("clips.set", {"target": ARRANGER_CLIP_REF, "color": "#ff8800"}) == "unsupported_scope"
-    assert reason("clips.set", {"target": ARRANGER_CLIP_REF, "loop": {"lengthBeats": 8}}) == "unsupported_scope"
+    assert reason("clips.set", {"target": ARRANGER_CLIP_REF, "loop": {"length": 8}}) == "unsupported_scope"
     assert reason("clips.set", {"target": ARRANGER_CLIP_REF, "nextAction": "stop"}) == "unsupported_scope"
-    assert reason("clips.set", {"target": CLIP_REF, "lengthBeats": 8}) == "unsupported_scope"
+    assert reason("clips.set", {"target": CLIP_REF, "length": 8}) == "unsupported_scope"
 
 
 def test_set_refuses_expect_keys_the_clip_kind_cannot_have():
     arranger = {"target": ARRANGER_CLIP_REF, "name": "x"}
-    assert validate_call("clips.set", {**arranger, "expect": {"lengthBeats": 4}})
+    assert validate_call("clips.set", {**arranger, "expect": {"length": 4}})
     assert reason("clips.set", {**arranger, "expect": {"nextAction": "stop"}}) == "unsupported_scope"
-    assert reason("clips.set", {**arranger, "expect": {"loop": {"lengthBeats": 4}}}) == "unsupported_scope"
-    assert reason("clips.set", {"target": CLIP_REF, "name": "x", "expect": {"lengthBeats": 4}}) == "unsupported_scope"
+    assert reason("clips.set", {**arranger, "expect": {"loop": {"length": 4}}}) == "unsupported_scope"
+    assert reason("clips.set", {"target": CLIP_REF, "name": "x", "expect": {"length": 4}}) == "unsupported_scope"
 
 
 @pytest.mark.parametrize(
@@ -194,22 +194,22 @@ def test_set_refuses_expect_keys_the_clip_kind_cannot_have():
         {"color": "#ff00"},
         {"color": "#gg0000"},
         {"color": "#ff0000\n"},
-        {"loop": {"lengthBeats": 0}},
-        {"loop": {"lengthBeats": 4097}},
-        {"loop": {"lengthBeats": 1 / 256}},
+        {"loop": {"length": 0}},
+        {"loop": {"length": 4097}},
+        {"loop": {"length": 1 / 256}},
         {"loop": {}},
         {"nextAction": "random"},
         {"nextActionEnabled": 1},
         {"nextActionLoopCount": 0},
         {"nextActionLoopCount": 65},
         {"nextActionLoopCount": 1.0},
-        {"nextActionDelayBeats": None},
+        {"nextActionDelay": None},
         {"launchQuantization": ""},
         {"launchQuantization": 4},
         {"launchMode": None},
         {"useLoopStartAsQuantizationReference": "yes"},
-        {"loopLengthBeats": 16},
-        {"playStopBeats": 16},
+        {"loopLength": 16},
+        {"playStop": 16},
         {"expect": {}},
         {"name": "x", "expect": {"color": "#ff0000"}},
         {"name": "x", "expect": {"launchMode": "gate"}},
@@ -244,10 +244,10 @@ def test_copy_goes_from_a_launcher_clip_to_a_slot_or_the_arranger():
 
 
 def test_move_takes_an_arranger_clip_and_a_start():
-    args = {"target": ARRANGER_CLIP_REF, "to": {"startBeats": 32}}
+    args = {"target": ARRANGER_CLIP_REF, "to": {"start": 32}}
     assert validate_call("clips.move", args)[0] == args
-    assert reason("clips.move", {"target": CLIP_REF, "to": {"startBeats": 32}}) == "unsupported_scope"
-    for bad in ({"target": ARRANGER_CLIP_REF, "to": {"startBeats": -1}}, {"target": ARRANGER_CLIP_REF, "to": {}}):
+    assert reason("clips.move", {"target": CLIP_REF, "to": {"start": 32}}) == "unsupported_scope"
+    for bad in ({"target": ARRANGER_CLIP_REF, "to": {"start": -1}}, {"target": ARRANGER_CLIP_REF, "to": {}}):
         with pytest.raises(ValidationError):
             validate_call("clips.move", bad)
 
@@ -297,14 +297,14 @@ def test_clips_edit_is_gone_and_its_ops_are_methods():
 
 
 def test_notes_take_a_clip_ref_and_the_window_is_optional_but_all_or_none():
-    params, _ = validate_call("notes.edit", {"target": CLIP_REF, "edits": [note(), note(beat=1, pitch=64)]})
+    params, _ = validate_call("notes.set", {"target": CLIP_REF, "edits": [note(), note(beat=1, pitch=64)]})
     assert set(params) == {"target", "edits"}
-    params, _ = validate_call("notes.read", {"target": CLIP_REF})
+    params, _ = validate_call("notes.get", {"target": CLIP_REF})
     assert set(params) == {"target"}
-    for method, extra in (("notes.read", {}), ("notes.edit", {"edits": [note()]})):
+    for method, extra in (("notes.get", {}), ("notes.set", {"edits": [note()]})):
         with pytest.raises(ValidationError):
             validate_call(method, {"target": CLIP_REF, "steps": 8, **extra})
-    for method in ("notes.read", "notes.edit"):
+    for method in ("notes.get", "notes.set"):
         with pytest.raises(ValidationError):
             validate_call(
                 method, {"target": ARRANGER_CLIP_REF, **({"edits": [note()]} if method.endswith("edit") else {})}
@@ -318,18 +318,18 @@ def test_notes_take_a_clip_ref_and_the_window_is_optional_but_all_or_none():
         [note(), note(beat=0.5)],
         [note(beat=3.5)],
         [note(beat=0.1)],
-        [note(beat=3.75, durationBeats=0.5)],
+        [note(beat=3.75, duration=0.5)],
         [note(pitch=True)],
         [note(velocity=0)],
         [note(velocity=128)],
         [note(extra=1)],
-        [{"op": "clear", "beat": 0, "pitch": 60, "durationBeats": 1}],
+        [{"op": "clear", "beat": 0, "pitch": 60, "duration": 1}],
         [{"op": "clear", "beat": 0, "pitch": 60, "velocity": None}],
     ],
 )
 def test_rejects_ambiguous_or_out_of_window_note_edits(edits):
     with pytest.raises(ValidationError):
-        validate_call("notes.edit", {**NOTE_WINDOW, "edits": edits})
+        validate_call("notes.set", {**NOTE_WINDOW, "edits": edits})
 
 
 @pytest.mark.parametrize(
@@ -338,12 +338,12 @@ def test_rejects_ambiguous_or_out_of_window_note_edits(edits):
         [note(), note()],
         [note(), note(beat=0.5)],
         [note(beat=0.001)],
-        [note(durationBeats=0.001)],
+        [note(duration=0.001)],
     ],
 )
 def test_derived_window_still_rejects_cell_and_overlap_errors(edits):
     with pytest.raises(ValidationError):
-        validate_call("notes.edit", {"target": CLIP_REF, "edits": edits})
+        validate_call("notes.set", {"target": CLIP_REF, "edits": edits})
 
 
 def message(method, args):
@@ -353,33 +353,33 @@ def message(method, args):
 
 
 def test_durations_need_no_grid_and_overlap_is_judged_as_stored():
-    insert = {"to": SLOT, "loop": {"lengthBeats": 8}, "name": "Bass"}
-    eighths = [{**NOTE, "beat": b / 2, "durationBeats": 0.45} for b in range(16)]
+    insert = {"to": SLOT, "loop": {"length": 8}, "name": "Bass"}
+    eighths = [{**NOTE, "beat": b / 2, "duration": 0.45} for b in range(16)]
     params, _ = validate_call("clips.insert", {**insert, "notes": eighths})
-    assert params["notes"][0]["durationBeats"] == 0.45
+    assert params["notes"][0]["duration"] == 0.45
     # 0.5000001 is stored as 0.5 (1/1048576-beat steps): it ends where the next same-pitch note starts
-    validate_call("notes.edit", {"target": CLIP_REF, "edits": [note(durationBeats=0.5000001), note(beat=0.5)]})
-    text = message("notes.edit", {"target": CLIP_REF, "edits": [note(durationBeats=0.5000006), note(beat=0.5)]})
+    validate_call("notes.set", {"target": CLIP_REF, "edits": [note(duration=0.5000001), note(beat=0.5)]})
+    text = message("notes.set", {"target": CLIP_REF, "edits": [note(duration=0.5000006), note(beat=0.5)]})
     assert "edits[1] starts at beat 0.5 before edits[0] on pitch 60 ends at beat 0.5000006" in text
 
 
 def test_every_broken_rule_is_reported_at_once_with_its_index_and_fix():
-    insert = {"to": SLOT, "loop": {"lengthBeats": 4}, "name": "Bass"}
+    insert = {"to": SLOT, "loop": {"length": 4}, "name": "Bass"}
     notes = [
-        {**NOTE, "pitch": 33, "durationBeats": 0.75},
-        {**NOTE, "pitch": 33, "beat": 0.5, "durationBeats": 0.25},
-        {**NOTE, "pitch": 40, "beat": 1.3, "durationBeats": 0.25},
+        {**NOTE, "pitch": 33, "duration": 0.75},
+        {**NOTE, "pitch": 33, "beat": 0.5, "duration": 0.25},
+        {**NOTE, "pitch": 40, "beat": 1.3, "duration": 0.25},
         {**NOTE, "pitch": 41, "beat": 3.5},
-        {**NOTE, "pitch": 40, "beat": 1.3, "durationBeats": 0.25},
+        {**NOTE, "pitch": 40, "beat": 1.3, "duration": 0.25},
     ]
     text = message("clips.insert", {**insert, "notes": notes})
     assert "notes: 5 problems, nothing was written: " in text
     assert (
-        "notes[1] starts at beat 0.5 before notes[0] on pitch 33 ends at beat 0.75: shorten notes[0] to durationBeats <= 0.5"
+        "notes[1] starts at beat 0.5 before notes[0] on pitch 33 ends at beat 0.75: shorten notes[0] to duration <= 0.5"
         in text
     )
     assert "notes[2] beat 1.3 is not on the 1/128-beat grid: use 1.296875 or 1.3046875" in text
-    assert "notes[3] ends at beat 4.5, past the clip length 4: shorten it to durationBeats <= 0.5" in text
+    assert "notes[3] ends at beat 4.5, past the clip length 4: shorten it to duration <= 0.5" in text
     assert "notes[4] repeats the beat and pitch of notes[2]: remove one" in text
     assert text.index("notes[1]") < text.index("notes[2]") < text.index("notes[3]") < text.index("notes[4]")
     late = message("clips.insert", {**insert, "notes": [{**NOTE, "beat": 4}]})
@@ -388,40 +388,40 @@ def test_every_broken_rule_is_reported_at_once_with_its_index_and_fix():
 
 def test_an_explicit_window_reports_alignment_range_and_end():
     text = message(
-        "notes.edit",
-        {**NOTE_WINDOW, "edits": [note(beat=0.1), note(beat=5), note(beat=3.75, durationBeats=0.5)]},
+        "notes.set",
+        {**NOTE_WINDOW, "edits": [note(beat=0.1), note(beat=5), note(beat=3.75, duration=0.5)]},
     )
     assert "edits: 3 problems" in text
-    assert "edits[0] beat 0.1 does not align with stepSizeBeats 0.25: use a multiple of it" in text
+    assert "edits[0] beat 0.1 does not align with stepSize 0.25: use a multiple of it" in text
     assert "edits[1] (beat 5, pitch 60) is outside the window: beats 0 to 4, pitches 0 to 127" in text
-    assert "edits[2] ends at beat 4.25, past the window end 4: shorten it to durationBeats <= 0.25" in text
+    assert "edits[2] ends at beat 4.25, past the window end 4: shorten it to duration <= 0.25" in text
 
 
 def test_decimal_grid_alignment_is_exact_not_float_rounding():
-    args = {**NOTE_WINDOW, "stepSizeBeats": 0.1, "edits": [note(beat=0.3, durationBeats=0.2)]}
-    params, _ = validate_call("notes.edit", args)
+    args = {**NOTE_WINDOW, "stepSize": 0.1, "edits": [note(beat=0.3, duration=0.2)]}
+    params, _ = validate_call("notes.set", args)
     assert params["edits"][0]["beat"] == 0.3
     with pytest.raises(ValidationError):
-        validate_call("notes.edit", {**args, "edits": [note(beat=0.30000000000000004, durationBeats=0.2)]})
+        validate_call("notes.set", {**args, "edits": [note(beat=0.30000000000000004, duration=0.2)]})
 
 
 def test_chords_adjacent_notes_and_absolute_window_offsets_are_valid():
     edits = [note(beat=4), note(beat=4, pitch=64), note(beat=5)]
-    params, _ = validate_call("notes.edit", {**NOTE_WINDOW, "startStep": 16, "edits": edits})
+    params, _ = validate_call("notes.set", {**NOTE_WINDOW, "startStep": 16, "edits": edits})
     assert params["edits"] == edits
     with pytest.raises(ValidationError):
-        validate_call("notes.edit", {**NOTE_WINDOW, "startStep": 16, "edits": [note(beat=0)]})
+        validate_call("notes.set", {**NOTE_WINDOW, "startStep": 16, "edits": [note(beat=0)]})
 
 
 def test_detail_is_edit_and_insert_only_and_enumerated():
-    params, _ = validate_call("notes.edit", {"target": CLIP_REF, "edits": [note()], "detail": "full"})
+    params, _ = validate_call("notes.set", {"target": CLIP_REF, "edits": [note()], "detail": "full"})
     assert params["detail"] == "full"
-    insert = {"to": SLOT, "loop": {"lengthBeats": 4}, "name": "x"}
+    insert = {"to": SLOT, "loop": {"length": 4}, "name": "x"}
     params, _ = validate_call("clips.insert", {**insert, "notes": [NOTE], "detail": "full"})
     assert params["detail"] == "full"
     for method, args in (
-        ("notes.edit", {"target": CLIP_REF, "edits": [note()], "detail": "verbose"}),
-        ("notes.read", {"target": CLIP_REF, "detail": "full"}),
+        ("notes.set", {"target": CLIP_REF, "edits": [note()], "detail": "verbose"}),
+        ("notes.get", {"target": CLIP_REF, "detail": "full"}),
         ("clips.insert", {**insert, "detail": "full"}),
     ):
         with pytest.raises(ValidationError):

@@ -14,6 +14,7 @@ import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.RpcException;
 import dev.bitwigagent.core.SafetyObservation;
 import dev.bitwigagent.core.Scheduler;
+import dev.bitwigagent.core.Verification;
 import dev.bitwigagent.host.LauncherStructureLock;
 import dev.bitwigagent.host.TrackWindow;
 import dev.bitwigagent.host.TransportSafety;
@@ -163,18 +164,16 @@ public final class SceneModule implements HostModule {
 
     // ---- writes ----
 
-    /** A write result; {@code verification} says how an applied write was observed. */
-    private JsonObject result(Outcome outcome, Reason reason, String verification) {
-        JsonObject out = Results.outcome(outcome);
+    private JsonObject result(Outcome outcome, Reason reason) {
+        JsonObject out = Results.outcome(outcome, Verification.API_READBACK);
         if (reason != null) out.addProperty("reason", reason.wire());
         out.addProperty("scope", "scene_bank");
-        if (verification != null) out.addProperty("verification", verification);
         out.addProperty("sceneCount", window.sceneCount());
         return out;
     }
 
-    private JsonObject result(boolean done, String verification) {
-        return done ? result(Outcome.APPLIED, null, verification) : result(Outcome.UNKNOWN, Reason.NOT_OBSERVED, null);
+    private JsonObject result(boolean done) {
+        return done ? result(Outcome.APPLIED, null) : result(Outcome.UNKNOWN, Reason.NOT_OBSERVED);
     }
 
     private void insert(HostOperation op, int count) {
@@ -193,8 +192,7 @@ public final class SceneModule implements HostModule {
                     return window.sceneCount() == before + count;
                 },
                 () -> {
-                    JsonObject out = Results.outcome(Outcome.APPLIED);
-                    out.addProperty("verification", "scene_count");
+                    JsonObject out = Results.outcome(Outcome.APPLIED, Verification.API_READBACK);
                     out.addProperty("sceneCountBefore", before);
                     out.addProperty("sceneCount", before + count);
                     JsonArray refs = new JsonArray();
@@ -226,7 +224,7 @@ public final class SceneModule implements HostModule {
         int position = at.position();
         Scene scene = window.scene(position);
         if (name.equals(LauncherTargets.sceneName(at.scene, scene.name().get()))) {
-            JsonObject out = result(Outcome.ALREADY_MATCHED, null, null);
+            JsonObject out = result(Outcome.ALREADY_MATCHED, null);
             out.add("ref", at.sceneRef);
             op.result.complete(out);
             return;
@@ -240,7 +238,7 @@ public final class SceneModule implements HostModule {
                 scheduler.observeUntil(op),
                 () -> shown(at) && nameSequence[position] > before && name.equals(observedNames[position]),
                 done -> {
-                    JsonObject out = result(done, "observer_after_write");
+                    JsonObject out = result(done);
                     out.add("ref", targets.sceneRef(at.scene, at.offset));
                     op.result.complete(out);
                 });
@@ -267,9 +265,7 @@ public final class SceneModule implements HostModule {
                     boolean playing = !clips.isEmpty();
                     for (ClipLauncherSlot slot : clips)
                         playing &= slot.isPlaying().get();
-                    JsonObject out = clips.isEmpty() || done && !playing
-                            ? result(Outcome.SENT, null, null)
-                            : result(done, "clips_playing");
+                    JsonObject out = clips.isEmpty() || done && !playing ? result(Outcome.SENT, null) : result(done);
                     out.add("ref", at.sceneRef);
                     out.addProperty("clipCount", clips.size());
                     op.result.complete(out);
@@ -300,7 +296,7 @@ public final class SceneModule implements HostModule {
                 scheduler.observeUntil(op),
                 () -> shown(at) && duplicated(offset, index, count, before, clips),
                 done -> {
-                    JsonObject out = result(done, "scene_count_and_window_names");
+                    JsonObject out = result(done);
                     out.addProperty("sceneCountBefore", count);
                     if (done) completeWithScene(op, out, index + 1);
                     else op.result.complete(out);
@@ -361,7 +357,7 @@ public final class SceneModule implements HostModule {
         window.scene(at.position()).deleteObject();
         scheduler.poll(
                 op, scheduler.observeUntil(op), () -> shown(at) && deleted(offset, index, count, before), done -> {
-                    JsonObject out = result(done, "scene_count_and_window_names");
+                    JsonObject out = result(done);
                     out.addProperty("sceneCountBefore", count);
                     out.addProperty("deletedName", before.get(index - offset));
                     out.addProperty("clipsDeleted", clips.size());

@@ -46,7 +46,7 @@ public final class LauncherModuleTest {
         JsonObject p = new JsonObject();
         p.add("to", f.slot(scene));
         JsonObject loop = new JsonObject();
-        loop.addProperty("lengthBeats", 4);
+        loop.addProperty("length", 4);
         p.add("loop", loop);
         p.addProperty("name", "Fixture");
         return p;
@@ -270,6 +270,7 @@ public final class LauncherModuleTest {
         f.launchPlaying = true;
         JsonObject launched = f.call("clips.launch", clipParams(f, 0));
         assertEquals("applied", launched.get("outcome").getAsString());
+        assertEquals("api_readback", launched.get("verification").getAsString());
         JsonObject out = f.call("launcher.stop", stopParams(f));
         assertEquals("stopped", out.get("playbackState").getAsString());
         assertEquals("applied", out.get("outcome").getAsString());

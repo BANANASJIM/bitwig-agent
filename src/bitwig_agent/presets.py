@@ -2,7 +2,7 @@
 
 Reads file names, folders and, where a .bwpreset header is plain, its meta block. Package presets are
 encrypted, so for them only the path (creator, package, folders, name) is known. Nothing here talks to
-the host: the result's `path` goes into devices.insert kind=file.
+the host: each hit's `insert` goes into devices.insert unchanged.
 """
 
 from __future__ import annotations
@@ -13,6 +13,8 @@ import struct
 import sys
 from pathlib import Path
 from typing import Any
+
+from bitwig_agent.protocol.base import Verification
 
 DEVICE_TYPES = {"note_to_audio": "instrument", "audio_to_audio": "audio-effect", "note_to_note": "note-effect"}
 HEADER_BYTES = 65536
@@ -185,7 +187,7 @@ def search(args: dict[str, Any], roots: list[tuple[str, Path]] | None = None) ->
     page = [h[4] for h in hits[offset : offset + limit]]
     return {
         "scope": "offline_preset_files",
-        "verification": "file_names_and_plain_headers_not_insertion_or_audio_proof",
+        "verification": Verification.FILE_READBACK,
         "roots": searched,
         "scanned": {
             "presets": len(entries),

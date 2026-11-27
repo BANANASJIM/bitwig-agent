@@ -55,6 +55,6 @@ def bundle_limits() -> dict[str, int | float]:
         "defaultPort": DEFAULT_PORT,
         "beatGrid": BEAT_GRID,
         "durationResolution": DURATION_RESOLUTION,
-        "maxClipBeats": MAX_CLIP_BEATS,
+        "maxClipLength": MAX_CLIP_BEATS,
         "responseGraceMs": RESPONSE_GRACE_MS,
     }
