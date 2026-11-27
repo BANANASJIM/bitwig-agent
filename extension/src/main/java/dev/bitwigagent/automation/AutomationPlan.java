@@ -8,6 +8,7 @@ import dev.bitwigagent.core.DisplayScale;
 import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.RangeEdit;
 import dev.bitwigagent.core.Reason;
+import java.math.BigDecimal;
 import java.util.*;
 import java.util.function.Function;
 
@@ -23,8 +24,15 @@ public final class AutomationPlan implements Function<Observed, AutomationPlan.W
         final Double value, curve;
         final String display;
         final Boolean linear;
+        /** The request's place among the listed points at its beat. */
+        final int ordinal;
 
         Request(double beat, Double value, String display, Boolean linear, Double curve) {
+            this(beat, value, display, linear, curve, 0);
+        }
+
+        Request(double beat, Double value, String display, Boolean linear, Double curve, int ordinal) {
+            this.ordinal = ordinal;
             this.beat = Point.beat(beat);
             this.value = value;
             this.display = display;
@@ -53,7 +61,9 @@ public final class AutomationPlan implements Function<Observed, AutomationPlan.W
                     range == null ? null : p -> AutomationLane.inRange(p.beat, range),
                     AutomationLane.KIND);
             desired = RangeEdit.apply(current, change);
-            desired.sort(Comparator.comparingDouble(point -> point.beat));
+            // RangeEdit.apply appends the written points after the kept ones: order the lane by beat, then place.
+            desired.sort(
+                    Comparator.<Point>comparingDouble(point -> point.beat).thenComparingInt(point -> point.ordinal));
             for (Point point : change.remove) delete.add(point.handle);
             for (RangeEdit.Update<Point> update : change.update) delete.add(update.before.handle);
             for (int i = 0; i < desired.size(); i++) {
@@ -98,21 +108,46 @@ public final class AutomationPlan implements Function<Observed, AutomationPlan.W
     @Override
     public Write apply(Observed lane) {
         requireExpected(lane.points, expectedHash);
-        Map<Double, Point> byBeat = new HashMap<>();
-        for (Point point : lane.points) byBeat.putIfAbsent(point.beat, point);
+        Map<Object, Point> byKey = new HashMap<>();
+        Map<Double, Integer> onLane = new HashMap<>(), asked = new HashMap<>();
+        for (Point point : lane.points) {
+            byKey.put(AutomationLane.KIND.key(point), point);
+            onLane.merge(point.beat, 1, Integer::sum);
+        }
+        for (Request request : requests) asked.merge(request.beat, 1, Integer::sum);
+        if (range == null) requireEveryPointAtEachBeat(onLane, asked);
         List<Point> listed = new ArrayList<>();
-        for (Request request : requests) listed.add(written(byBeat.get(request.beat), request, value(lane, request)));
+        for (Request request : requests)
+            listed.add(written(byKey.get(List.of(request.beat, request.ordinal)), request, value(lane, request)));
         return new Write(lane.points, listed, range);
     }
 
     /**
-     * The point a request writes: it keeps what it omits (interpolation, curve) from the point at its beat; a new point
-     * is linear with curve 0.
+     * Without a range nothing is deleted, so the listed points at a beat must cover the lane's: they update its points
+     * in order and the rest are inserted after them. Fewer would leave no way to tell which point is meant.
+     */
+    private static void requireEveryPointAtEachBeat(Map<Double, Integer> onLane, Map<Double, Integer> asked) {
+        for (Map.Entry<Double, Integer> beat : asked.entrySet()) {
+            int held = onLane.getOrDefault(beat.getKey(), 0);
+            if (beat.getValue() < held)
+                throw Errors.notApplied(
+                        Reason.INVALID_TARGET,
+                        "beat "
+                                + new BigDecimal(beat.getKey())
+                                        .stripTrailingZeros()
+                                        .toPlainString() + " holds " + held
+                                + " points (a step); list all of them in order, or give a range");
+        }
+    }
+
+    /**
+     * The point a request writes: it keeps what it omits (interpolation, curve) from the point in its place (beat and
+     * place at that beat); a new point is linear with curve 0.
      */
     static Point written(Point observed, Request listed, double value) {
         boolean linear = listed.linear != null ? listed.linear : observed == null || observed.linear;
         double curve = listed.curve != null ? listed.curve : observed == null ? 0 : observed.curve;
-        return new Point(listed.beat, value, linear, curve);
+        return new Point(listed.beat, value, linear, curve, null, listed.ordinal);
     }
 
     /**

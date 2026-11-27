@@ -71,12 +71,26 @@ public final class AutomationModuleTest {
                 1.0,
                 AutomationModule.points(snapped).get(0).beat,
                 "a beat inside range snaps inside the snapped range");
-        bad("automation.points.set", set(points(point(1, 0.5, "hold"), point(1.0000003, 0.5, "hold"))));
+        JsonObject snappedStep = set(points(point(1, 0.5, "hold"), point(1.0000003, 0.7, "hold")));
+        accepted("automation.points.set", snappedStep);
+        List<AutomationPlan.Request> step = AutomationModule.points(snappedStep);
+        assertTrue(
+                step.get(0).beat == step.get(1).beat && step.get(0).ordinal == 0 && step.get(1).ordinal == 1,
+                "two beats that snap together are a step, in array order");
+        List<AutomationPlan.Request> three = AutomationModule.points(
+                set(points(point(2, 0.1, "hold"), point(2, 0.2, "hold"), point(2, 0.3, "hold"))));
+        assertEquals(2, three.get(2).ordinal, "a beat holds any number of points, in array order");
+        assertEquals(
+                0,
+                AutomationModule.points(set(points(point(1, 0.5, "hold"), point(2, 0.5, "hold"))))
+                        .get(1)
+                        .ordinal,
+                "a new beat starts again");
         JsonObject allGet = get("pan");
         allGet.addProperty("range", "all");
         bad("automation.points.get", allGet);
         bad("automation.points.set", set(points(point(4, 0.25, "linear"), point(0, 1, "hold"))));
-        bad("automation.points.set", set(points(point(0, 0.25, "linear"), point(0, 1, "hold"))));
+        accepted("automation.points.set", set(points(point(0, 0.25, "linear"), point(0, 1, "hold"))));
         bad("automation.points.set", set(points(point(0, 1.5, "linear"))));
         bad("automation.points.set", set(points(point(0, 0.5, "bezier"))));
         JsonObject curve = point(0, 0.5, "hold");

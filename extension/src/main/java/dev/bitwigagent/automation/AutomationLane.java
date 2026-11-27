@@ -2,9 +2,11 @@ package dev.bitwigagent.automation;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import dev.bitwigagent.core.HostLimits;
 import dev.bitwigagent.core.RangeEdit;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -20,26 +22,38 @@ public final class AutomationLane {
     public static final double[] ALL = {Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY};
 
     /**
-     * One canonical automation point: beat on a 2^-20 grid, value and curve on a 1e-9 grid, so a point read back and
-     * written again is equal by construction. {@code handle} is the adapter's own object for the point (null for a
-     * point not on the lane); it identifies the point and takes no part in equality.
+     * One canonical automation point: beat on the bundle's point grid, value and curve on a 1e-9 grid, so a point read
+     * back and written again is equal by construction. A step is two points at one beat; {@code ordinal} is the
+     * point's 0-based place among the points at its beat (lane order on a lane, array order in a request), and with
+     * the beat it identifies the point. {@code handle} is the adapter's own object for the point (null for a point not
+     * on the lane). Neither takes part in equality.
      */
     public static final class Point {
-        static final double BEAT_GRID = 1 << 20, VALUE_GRID = 1e9;
+        static final double BEAT_GRID = HostLimits.LIMITS.pointBeatDivisor, VALUE_GRID = 1e9;
         public final double beat, value, curve;
         public final boolean linear;
         public final Object handle;
+        final int ordinal;
 
         public Point(double beat, double value, boolean linear, double curve) {
             this(beat, value, linear, curve, null);
         }
 
         public Point(double beat, double value, boolean linear, double curve, Object handle) {
+            this(beat, value, linear, curve, handle, 0);
+        }
+
+        Point(double beat, double value, boolean linear, double curve, Object handle, int ordinal) {
             this.beat = beat(beat);
             this.value = Math.rint(value * VALUE_GRID) / VALUE_GRID;
             this.linear = linear;
             this.curve = Math.rint(curve * VALUE_GRID) / VALUE_GRID;
             this.handle = handle;
+            this.ordinal = ordinal;
+        }
+
+        Point at(int ordinal) {
+            return new Point(beat, value, linear, curve, handle, ordinal);
         }
 
         static double beat(double beat) {
@@ -78,10 +92,10 @@ public final class AutomationLane {
         }
     }
 
-    /** Points are identified by beat and compared canonically. */
+    /** Points are identified by beat and their place at that beat, and compared canonically. */
     static final RangeEdit.Kind<Point> KIND = new RangeEdit.Kind<>() {
         public Object key(Point point) {
-            return point.beat;
+            return List.of(point.beat, point.ordinal);
         }
 
         public boolean same(Point a, Point b) {
@@ -134,11 +148,21 @@ public final class AutomationLane {
                 DoubleFunction<String> display,
                 JsonObject provenance) {
             this.exists = exists;
-            this.points = Collections.unmodifiableList(points);
+            this.points = Collections.unmodifiableList(ordered(points));
             this.parsed = Collections.unmodifiableMap(parsed);
             this.display = display;
             this.provenance = provenance;
         }
+    }
+
+    /** The lane's points with their place among the points at each beat, in lane order. */
+    private static List<Point> ordered(List<Point> lane) {
+        List<Point> out = new ArrayList<>(lane.size());
+        for (Point point : lane) {
+            Point before = out.isEmpty() ? null : out.get(out.size() - 1);
+            out.add(point.at(before != null && before.beat == point.beat ? before.ordinal + 1 : 0));
+        }
+        return out;
     }
 
     public static boolean inRange(double beat, double[] range) {
