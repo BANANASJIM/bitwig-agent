@@ -15,8 +15,9 @@ import shutil
 import subprocess
 from typing import Any, NamedTuple
 
-from bitwig_agent.errors import bridge_error
+from bitwig_agent.errors import bridge_error, unknown_result
 from bitwig_agent.grid.read import GridCall, device_target, host_call, read_graph, read_params
+from bitwig_agent.protocol.base import Verification
 
 CELL = 46  # svg units per grid cell
 MAX_SPAN = 2000  # cells per axis; refuse to draw anything larger
@@ -375,6 +376,22 @@ def _write(path: str, data: bytes, overwrite: bool) -> None:
         raise bridge_error("job_failed", f"Cannot write {path}: {exc}") from exc
 
 
+HEADERS = {"svg": b"<svg", "png": b"\x89PNG\r\n\x1a\n"}
+
+
+def _written(path: str, fmt: str, data: bytes) -> dict[str, Any]:
+    """Read the file back: the outcome is applied only when it holds as many bytes as were written, under the format's header."""
+    try:
+        with open(path, "rb") as handle:
+            head = handle.read(len(HEADERS[fmt]))
+        size = os.path.getsize(path)
+    except OSError:
+        size, head = -1, b""
+    if size == len(data) and head == HEADERS[fmt]:
+        return {"outcome": "applied", "verification": Verification.FILE_READBACK}
+    return unknown_result("readback_mismatch", f"{path} does not read back as the {fmt} file just written")
+
+
 async def render(client: Any, args: dict[str, Any], timeout_ms: int = 5000) -> dict[str, Any]:
     path, fmt, overwrite = args["outPath"], args.get("fileType", "svg"), args.get("overwrite", False)
     if not overwrite and os.path.exists(path):
@@ -409,7 +426,7 @@ async def render(client: Any, args: dict[str, Any], timeout_ms: int = 5000) -> d
         data = done.stdout
     _write(path, data, overwrite)
     return {
-        "outcome": "applied",
+        **_written(path, fmt, data),
         "outPath": path,
         "fileType": fmt,
         "bytes": len(data),

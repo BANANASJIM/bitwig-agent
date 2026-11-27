@@ -178,7 +178,8 @@ public final class GridRemotePageWriter {
                     error.reason, error.getMessage() + " Inspect devices.remote.get before another write.");
         }
         check.run();
-        JsonObject result = Results.outcome(dispatched ? Outcome.APPLIED : Outcome.ALREADY_MATCHED);
+        JsonObject result =
+                Results.outcome(dispatched ? Outcome.APPLIED : Outcome.ALREADY_MATCHED, Verification.NATIVE_READBACK);
         result.add("page", pageJson(host, page));
         int shown = nativeAccess.visiblePages(host.host).indexOf(page);
         if (shown >= 0) result.add("ref", Refs.remotePage(source.ref(), shown, request.pageName));
@@ -232,7 +233,7 @@ public final class GridRemotePageWriter {
             throw unknown;
         }
         check.run();
-        JsonObject result = Results.outcome(Outcome.APPLIED);
+        JsonObject result = Results.outcome(Outcome.APPLIED, Verification.NATIVE_READBACK);
         result.addProperty("deletedPage", pageName);
         result.add("pages", visibleNames(host));
         return finish(result, true);
@@ -452,7 +453,6 @@ public final class GridRemotePageWriter {
 
     private static JsonObject finish(JsonObject result, boolean dispatched) {
         result.addProperty("mutationDispatched", dispatched);
-        Verification.NATIVE_READBACK.put(result);
         result.addProperty("nativeMutation", dispatched);
         result.addProperty("nativeUndo", dispatched);
         result.addProperty(

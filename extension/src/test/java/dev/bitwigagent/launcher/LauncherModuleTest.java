@@ -270,6 +270,7 @@ public final class LauncherModuleTest {
         f.launchPlaying = true;
         JsonObject launched = f.call("clips.launch", clipParams(f, 0));
         assertEquals("applied", launched.get("outcome").getAsString());
+        assertEquals("api_readback", launched.get("verification").getAsString());
         JsonObject out = f.call("launcher.stop", stopParams(f));
         assertEquals("stopped", out.get("playbackState").getAsString());
         assertEquals("applied", out.get("outcome").getAsString());

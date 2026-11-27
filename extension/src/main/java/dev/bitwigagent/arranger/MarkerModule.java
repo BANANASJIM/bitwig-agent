@@ -12,6 +12,7 @@ import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Refs;
 import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.Scheduler;
+import dev.bitwigagent.core.Verification;
 import dev.bitwigagent.host.TransportSafety;
 import java.util.*;
 
@@ -207,7 +208,7 @@ public final class MarkerModule implements HostModule {
             Marker created = gained(now, before);
             if (created == null) {
                 JsonObject result = describe(now);
-                result.addProperty("outcome", Outcome.UNKNOWN.wire());
+                Results.unknown(result);
                 result.addProperty("reason", Reason.NOT_OBSERVED.wire());
                 result.addProperty("message", "The inserted marker was not observed as a single new entry.");
                 result.addProperty("next", INSPECT_THEN_ACK);
@@ -267,7 +268,7 @@ public final class MarkerModule implements HostModule {
         if (outcome.succeeded()) holds.release(UNRESOLVED);
         Snapshot now = read();
         JsonObject result = describe(now);
-        result.addProperty("outcome", outcome.wire());
+        Results.stamp(result, outcome, Verification.API_READBACK);
         if (outcome.succeeded() && !method.equals("markers.delete")) {
             String key = new Marker(0, name, beat).key();
             for (int i = 0; i < now.markers.size(); i++)

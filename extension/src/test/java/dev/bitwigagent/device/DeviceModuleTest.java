@@ -223,6 +223,7 @@ public final class DeviceModuleTest {
         FakeChains.Node reverb = rack.chains.get(0).devices.get(1);
         JsonObject result = f.finish(f.submit(module, "devices.set", enable(rack.deviceRef(0, 1), false)));
         assertEquals("applied", result.get("outcome").getAsString());
+        assertEquals("native_readback", result.get("verification").getAsString());
         assertEquals(rack.deviceRef(0, 1), result.getAsJsonObject("ref"));
         assertEquals(0, reverb.enabled.value);
         assertEquals(1, reverb.enabled.writes);
@@ -261,7 +262,8 @@ public final class DeviceModuleTest {
         assertFalse(op.result.isDone(), "other source cannot verify target bypass");
         f.devices[1].child("isEnabled").emit(false);
         f.host.next();
-        assertOutcome("applied", op);
+        assertEquals(
+                "api_readback", assertOutcome("applied", op).get("verification").getAsString());
         int writes = f.devices[1].child("isEnabled").writes;
         HostOperation again = f.submit(module, "devices.set", enable(f.twin(1), false));
         f.host.next();

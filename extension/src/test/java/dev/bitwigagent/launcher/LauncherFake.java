@@ -17,6 +17,7 @@ import dev.bitwigagent.core.Outcome;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Refs;
 import dev.bitwigagent.core.Results;
+import dev.bitwigagent.core.Verification;
 import dev.bitwigagent.host.ProjectState;
 import java.util.*;
 import java.util.function.Consumer;
@@ -593,7 +594,8 @@ public final class LauncherFake {
                                 requested,
                                 data.nextAction.get(key),
                                 already ? Outcome.ALREADY_MATCHED : Outcome.APPLIED,
-                                null));
+                                null,
+                                Verification.NATIVE_READBACK));
             }
             JsonObject out = data.nextAction.deepCopy();
             out.addProperty("loopLength", data.length);
@@ -746,7 +748,7 @@ public final class LauncherFake {
         }
 
         private JsonObject result(Outcome outcome, Integer clip) {
-            JsonObject out = Results.outcome(outcome);
+            JsonObject out = Results.outcome(outcome, Verification.NATIVE_READBACK);
             JsonArray rows = new JsonArray();
             for (int i = 0; i < clips.size(); i++) rows.add(row(i));
             out.add("clips", rows);

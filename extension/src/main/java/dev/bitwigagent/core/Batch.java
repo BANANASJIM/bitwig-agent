@@ -48,7 +48,7 @@ public final class Batch {
     public JsonArray entries() {
         JsonArray out = entries.deepCopy();
         while (out.size() < size) {
-            JsonObject skipped = Results.outcome(Outcome.NOT_APPLIED);
+            JsonObject skipped = Results.notApplied();
             skipped.addProperty("reason", Reason.NOT_REACHED.wire());
             out.add(skipped);
         }

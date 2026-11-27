@@ -22,7 +22,7 @@ An old MCP configuration now starts the CLI instead of the server and the client
 | an `unknown` result without a pointer to what to look at | `next` names the read method of the write that was called (`transport.set` → `transport.get`), unless the result names one itself |
 | `unresolved_mutation` and `extension.restart` to clear it | `pending` / `unresolved` with `next`; release with `ack <id>` after inspecting |
 | `grid_verification_failed`, `grid_bounds_exceeded` | `readback_mismatch`, `out_of_bounds` |
-| free-form `verification` strings | `verification` is `native_readback`, `api_readback` or `file_readback` |
+| free-form `verification` strings | `verification` is `native_readback`, `api_readback`, `file_readback` or `system_readback` |
 | requests without a protocol field | every request carries `"protocol":"0.5"` |
 
 ## Methods
@@ -99,5 +99,5 @@ Clients written against an earlier 0.5 build must change these; there are no ali
 | `devices.catalog` rows `{kind: "file", path}` | rows carry `insert: {kind: "file", path}` |
 | an integer or malformed `position` answered with every union branch | one sentence: "position is start\|end\|{before: deviceRef}\|{after: deviceRef}; indexes are not accepted" |
 | routing and sidechain entries `{kind, trackId}`, with `trackName` / `sourceTrackName` beside them | `{kind, track: <track ref>}`; the ref carries the public name, and reads return what writes and `expect` accept |
-| about 30 free-form `verification` strings | `native_readback`, `api_readback`, `file_readback`; native results all carry `nativeVersion` and `nativeJarSha256` |
+| about 30 free-form `verification` strings | `native_readback`, `api_readback`, `file_readback`, `system_readback`; native results all carry `nativeVersion` and `nativeJarSha256` |
 | `devices.sidechain.set` refused while the transport plays | allowed while playing (recording and automation write still refused); pending native verification on 6.1.7 |
