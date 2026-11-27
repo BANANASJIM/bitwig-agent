@@ -823,6 +823,28 @@ def test_a_cut_that_cannot_run_pw_link_still_kills(tmp_path, desktop, monkeypatc
     assert not bitwig.session_alive(102)
 
 
+def test_an_abort_without_a_window_records_no_window(tmp_path, desktop, monkeypatch):
+    cfg = prepared(tmp_path, desktop, monkeypatch)
+    monkeypatch.setattr(audio, "ports_ready", lambda: False)
+    monkeypatch.setattr(harness, "PORTS_SECONDS", 0)
+    monkeypatch.setattr(harness, "capture", lambda display, run: None)
+    with pytest.raises(SystemExit, match="sandbox stopped"):
+        harness.up(cfg, "6.1.7", "")
+    assert evidence.read_run(Path((lock.owner() or {})["run"]))["abortShot"] == "no window"
+
+
+def test_capture_times_out_its_tools(tmp_path, monkeypatch):
+    timeouts = []
+
+    def run(command, **kwargs):
+        timeouts.append(kwargs["timeout"])
+        return completed(command, 0, "4194305\n")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    assert harness.capture(":9", tmp_path) == tmp_path / "shot-01.png"
+    assert timeouts == [harness.SHOT_SECONDS, harness.SHOT_SECONDS]
+
+
 def test_a_failed_screenshot_still_kills(tmp_path, desktop, monkeypatch):
     cfg = prepared(tmp_path, desktop, monkeypatch)
     monkeypatch.setattr(audio, "ports_ready", lambda: False)

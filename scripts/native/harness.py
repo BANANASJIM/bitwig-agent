@@ -26,6 +26,7 @@ STATUS_SECONDS = 180
 LOCK_SECONDS = 30
 MONITOR_SECONDS = 10
 KILL_SECONDS = 10
+SHOT_SECONDS = 10
 TOKEN = "BWA_NATIVE_RUN"  # the run id native-up prints; down, reset, cli and shot require it
 REFUSED_CLI = ("allowAudible", "restore")  # audible captures and route restores never go through the harness
 
@@ -98,7 +99,7 @@ def stop_sandbox(run: Path, session: int, reason: str, display: str) -> bool:
     except Exception as exc:  # noqa: BLE001 - whatever the cut raised is recorded; the kill below must run
         evidence.update_run(run, cutFailed=f"{type(exc).__name__}: {exc}")
     try:
-        evidence.update_run(run, abortShot=str(capture(display, run)))  # the GUI state before the kill
+        evidence.update_run(run, abortShot=str(capture(display, run) or "no window"))  # the GUI state before the kill
     except Exception as exc:  # noqa: BLE001 - a missing screenshot tool must not skip the kill
         evidence.update_run(run, abortShot=f"{type(exc).__name__}: {exc}")
     for sig in (signal.SIGTERM, signal.SIGKILL):
@@ -289,11 +290,14 @@ def capture(display: str, run: Path) -> Path | None:
     """
     env = {**os.environ, "DISPLAY": display}
     search = ["xdotool", "search", "--onlyvisible", "--name", bitwig.WINDOW]
-    windows = subprocess.run(search, env=env, capture_output=True, text=True, check=False).stdout.split()
+    windows = subprocess.run(
+        search, env=env, capture_output=True, text=True, check=False, timeout=SHOT_SECONDS
+    ).stdout.split()
     if not windows:
         return None
     path = run / f"shot-{len(list(run.glob('shot-*.png'))) + 1:02d}.png"
-    done = subprocess.run(["magick", "import", "-window", windows[0], str(path)], env=env, check=False)
+    command = ["magick", "import", "-window", windows[0], str(path)]
+    done = subprocess.run(command, env=env, check=False, timeout=SHOT_SECONDS)
     return path if done.returncode == 0 else None
 
 
