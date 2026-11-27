@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from bitwig_agent.grid.channel import Channel
 from bitwig_agent.grid.plan import Plan
-from bitwig_agent.grid.safety import blocking
+from bitwig_agent.grid.safety import RECORDING_FLAGS, blocking
 from bitwig_agent.grid.spec import Spec
 from bitwig_agent.grid.wiring import WiringPlan
 
@@ -19,11 +19,14 @@ async def _transport_blocks(channel: Channel, structural: bool) -> list[Refusal]
     busy = blocking(state, structural)
     if not busy:
         return []
-    fix = "stop playback and turn them off" if "playing" in busy else "turn them off"
+    # transport.set can stop playback; the recording and automation-write flags are read-only there.
+    fixes = ["stop playback (transport.set playing=false)"] if "playing" in busy else []
+    if any(flag in busy for flag in RECORDING_FLAGS):
+        fixes.append("turn recording and automation write off in Bitwig")
     return [
         {
             "reason": "unsafe_state",
-            "message": f"{', '.join(busy)} blocks this write; {fix} with transport.set, then retry",
+            "message": f"{', '.join(busy)} blocks this write; {' and '.join(fixes)}, then retry",
         }
     ]
 

@@ -22,7 +22,7 @@ public final class SafetyObservation {
             throw Errors.notApplied(
                     Reason.UNSAFE_STATE,
                     "Recording or automation write is enabled, so this write is blocked. Turn off recording and"
-                            + " automation write (transport.set), then retry.");
+                            + " automation write in Bitwig (transport.set cannot change them), then retry.");
     }
 
     public void requireNotPlaying() {
@@ -41,6 +41,7 @@ public final class SafetyObservation {
                     "This write needs a stopped transport with recording and automation write off (playing="
                             + playing + ", recording=" + recording + ", arrangerAutomation=" + arrangerAutomation
                             + ", launcherAutomation=" + launcherAutomation
-                            + "). Stop playback and turn them off with transport.set, then retry.");
+                            + "). Stop playback (transport.set playing=false) and turn recording and automation write off in"
+                            + " Bitwig (transport.set cannot change them), then retry.");
     }
 }

@@ -54,9 +54,11 @@ public final class MarkerModuleTest {
                 });
             }
             node.child("scrollPosition").data = 0;
+            // Like the host, the add does nothing where a marker already sits at the playhead.
             f.addMarker = () -> {
-                model.add(new Mk(
-                        "Marker " + (++created), ((Number) f.transport.child("playPosition").data).doubleValue()));
+                double playhead = ((Number) f.transport.child("playPosition").data).doubleValue();
+                if (model.stream().anyMatch(mk -> mk.beat == playhead)) return;
+                model.add(new Mk("Marker " + (++created), playhead));
                 refresh();
             };
             refresh();
@@ -190,9 +192,9 @@ public final class MarkerModuleTest {
                 bank.view().equals(List.of("Intro@0.0", "Verse@8.0", "Outro@64.0")),
                 "marker named and moved to the beat: " + bank.view());
         assertTrue(
-                f.transport.actions == 1
+                f.transport.calls("addCueMarkerAtPlaybackPosition") == 1
                         && f.transport.child("playPosition").data.equals(16.0),
-                "one native add; playhead untouched");
+                "one native add; playhead put back");
         assertTrue(
                 r.getAsJsonObject("ref").get("name").getAsString().equals("Verse")
                         && r.getAsJsonObject("ref").get("index").getAsInt() == 1
@@ -200,6 +202,19 @@ public final class MarkerModuleTest {
                 "result carries the new marker's ref");
         assertTrue(r.getAsJsonArray("markers").size() == 3, "result carries the observed list");
         assertTrue(f.services.holds.list().isEmpty(), "observed insert leaves nothing unresolved");
+    }
+
+    @Test
+    void insertBesideAMarkerAtThePlayhead() {
+        HostFixture f = new HostFixture();
+        Bank bank = new Bank(f);
+        MarkerModule m = module(f);
+        call(f, m, "markers.insert", "{\"beat\":0,\"name\":\"a\"}");
+        JsonObject r = call(f, m, "markers.insert", "{\"beat\":16,\"name\":\"b\"}");
+        assertTrue(r.get("outcome").getAsString().equals("applied"), "insert observed: " + r);
+        assertTrue(bank.view().equals(List.of("a@0.0", "b@16.0")), "both markers present: " + bank.view());
+        assertTrue(f.transport.child("playPosition").data.equals(0.0), "playhead put back");
+        assertTrue(f.services.holds.list().isEmpty(), "nothing left unresolved");
     }
 
     @Test
@@ -329,7 +344,56 @@ public final class MarkerModuleTest {
         assertTrue(
                 assertRpcError("unresolved", next).next.contains("ack markers.unresolved"),
                 "the refusal names the hold to ack");
-        assertTrue(f.transport.actions == 1, "no automatic retry and no second add");
+        assertTrue(
+                f.transport.calls("addCueMarkerAtPlaybackPosition") == 1
+                        && f.transport.child("playPosition").data.equals(0.0),
+                "no automatic retry and no second add; playhead put back");
+    }
+
+    @Test
+    void playheadNeverAtTheBeatAddsNothing() {
+        HostFixture f = new HostFixture();
+        Bank bank = new Bank(f);
+        f.transport.on("setPosition", args -> null); // the host never reports the moved playhead
+        MarkerModule m = module(f);
+        HostOperation op = f.submit(m, "markers.insert", json("{\"beat\":4}"), f.tasks.after(300));
+        while (!op.result.isDone()) f.next();
+        JsonObject r = op.result.join();
+        assertTrue(
+                r.get("outcome").getAsString().equals("unknown")
+                        && r.get("reason").getAsString().equals("not_observed")
+                        && f.services.holds.list().size() == 1,
+                "unobserved playhead move is unknown and held: " + r);
+        assertTrue(
+                f.transport.calls("addCueMarkerAtPlaybackPosition") == 0
+                        && f.transport.calls("setPosition") == 2
+                        && bank.view().isEmpty(),
+                "no add without the playhead at the beat; the playhead is put back");
+    }
+
+    @Test
+    void playbackStartingMidInsertStopsBeforeTheAdd() {
+        HostFixture f = new HostFixture();
+        Bank bank = new Bank(f);
+        f.transport.child("playPosition").data = 2.0;
+        List<Object> seeks = new ArrayList<>();
+        // Playback starts right after the seek, before the moved playhead is reported.
+        f.transport.on("setPosition", args -> {
+            seeks.add(args[0]);
+            if (seeks.size() == 1) f.transport.child("isPlaying").emit(true);
+            return null;
+        });
+        MarkerModule m = module(f);
+        JsonObject r = call(f, m, "markers.insert", "{\"beat\":8}");
+        assertTrue(
+                r.get("outcome").getAsString().equals("unknown")
+                        && r.get("reason").getAsString().equals("unsafe_state"),
+                "playback mid-insert is reported, not ignored: " + r);
+        assertTrue(
+                f.transport.calls("addCueMarkerAtPlaybackPosition") == 0
+                        && bank.view().isEmpty()
+                        && seeks.equals(List.of(8.0, 2.0)),
+                "no add; the playhead is sent back: " + seeks);
     }
 
     @Test
