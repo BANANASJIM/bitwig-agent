@@ -15,7 +15,7 @@ import sys
 from tooling import ROOT, dependency
 
 THRESHOLD = 90
-EXCLUDE = ("**/Bitwig614*.java", "**/BitwigAgent614GridInsertion.java", "tests/**", "extension/src/test/**")
+EXCLUDE = ("**/nativehost/Native*.java", "extension/src/host/**", "tests/**", "extension/src/test/**")
 BUILD = ROOT / "build"
 OUT = BUILD / "coverage"
 

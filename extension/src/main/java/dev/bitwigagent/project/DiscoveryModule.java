@@ -144,8 +144,8 @@ public final class DiscoveryModule implements HostModule {
         units.addProperty("clipLength", "quarter_note_beats");
         units.addProperty("noteDuration", "quarter_note_beats");
         units.addProperty("noteOnset", "absolute_quarter_note_beats_on_explicit_step_grid");
-        units.addProperty("noteWindowPosition", "steps_at_explicit_stepSizeBeats");
-        units.addProperty("noteVelocity", "midi_1_to_127_integer_same_unit_as_notes.edit");
+        units.addProperty("noteWindowPosition", "steps_at_explicit_stepSize");
+        units.addProperty("noteVelocity", "midi_1_to_127_integer_same_unit_as_notes.set");
         units.addProperty("notePitch", "midi_0_to_127");
         result.add("units", units);
         result.addProperty("parameterIdentityScope", "observed_bank_proxy_context_not_persistent_device_identity");

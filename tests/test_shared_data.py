@@ -78,12 +78,18 @@ def test_docs_and_spec_resolve_types_by_the_shared_rule():
     assert catalog.resolve({"name": "m", "type": "lowpass"}) == ("d", "Low-pass")
 
 
-def test_host_target_is_one_fact():
-    host = shared("host")
-    assert re.fullmatch(r"[0-9a-f]{64}", host["jarSha256"])
-    assert host_version() == host["version"]
-    assert bundled_schema()["hostVersion"] == host["version"]
-    assert measured_notes()["hostVersion"] == host["version"]
+def test_each_host_target_is_one_fact():
+    hosts = shared("host")
+    assert host_version() == hosts[-1]["version"]
+    assert bundled_schema()["hostVersion"] == host_version()
+    assert measured_notes()["hostVersion"] == host_version()
     api = tomllib.loads((ROOT / "extension/deps.toml").read_text())["extension-api"]
-    assert api["file"] == f"extension-api-{host['apiVersion']}.jar"
-    assert f"/{host['apiVersion']}/" in api["url"]
+    for host in hosts:
+        assert set(host) == {"version", "apiVersion", "jarSha256", "names"}
+        assert re.fullmatch(r"[0-9a-f]{64}", host["jarSha256"])
+        assert host["names"] == f"names_{host['version'].replace('.', '_')}"
+        names = shared(host["names"])
+        assert set(names) == {"classes", "members"}
+        assert all(member["owner"] in names["classes"] for member in names["members"].values())
+        assert api["file"] == f"extension-api-{host['apiVersion']}.jar"
+        assert f"/{host['apiVersion']}/" in api["url"]

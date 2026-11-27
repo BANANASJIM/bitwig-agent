@@ -21,7 +21,7 @@ OUTCOMES = (
 
 RECOVERY = (
     "After outcome unknown the write may have happened, so never repeat it. Read the state it touched "
-    "(for a Grid device, grid.export; for a clip, notes.read; for a job, jobs.get). status.holds "
+    "(for a Grid device, grid.export; for a clip, notes.get; for a job, jobs.get). status.holds "
     "lists every unresolved hold and the next of a refusal names the one in the way. Once you have looked, "
     "ack the hold by its id: ack changes nothing, it only lets writes in that domain proceed. A long job "
     "(export.audio, tracks.bounce, project.saveAs) that outlives its request returns unknown with "
@@ -38,7 +38,7 @@ REFS = (
     "(locate) and the ones the host re-checks against what it finds there (compared). A ref nests its ancestors "
     "(a device holds its track or chain, a parameter its owner) and each ancestor is compared on identity: "
     "a scene, device, remotePage, send or marker by its position and name (a marker also by beat), a clip by where "
-    "it sits (slot, or lane and startBeats) and its name, a slot by its track and scene, tracks, chains, modulators "
+    "it sits (slot, or lane and start) and its name, a slot by its track and scene, tracks, chains, modulators "
     "and Grid modules by id. The name of a track, chain, modulator, Grid module or parameter is compared only when "
     "that object is itself the target, so renaming a track does not invalidate the refs of its devices. Errors: stale with target_not_found when nothing "
     "is at the location (next names the read to repeat); stale with target_changed when another object now sits "

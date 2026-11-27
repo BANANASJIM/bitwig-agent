@@ -67,11 +67,14 @@ public enum Reason {
 
     /** At startup, before any request: the Java vocabulary must equal the bundle's, or the extension fails to load. */
     public static void check(MethodSpecs.Vocabulary vocabulary) {
-        List<String> outcomes = new ArrayList<>(), codes = new ArrayList<>();
+        List<String> outcomes = new ArrayList<>(), codes = new ArrayList<>(), verifications = new ArrayList<>();
         for (Outcome outcome : Outcome.values()) outcomes.add(outcome.wire());
         for (ErrorCode code : ErrorCode.values()) codes.add(code.wire());
-        if (!outcomes.equals(vocabulary.outcomes) || !codes.equals(vocabulary.errorCodes))
-            throw new IllegalStateException("Outcome or ErrorCode differs from the protocol bundle");
+        for (Verification verification : Verification.values()) verifications.add(verification.wire());
+        if (!outcomes.equals(vocabulary.outcomes)
+                || !codes.equals(vocabulary.errorCodes)
+                || !verifications.equals(vocabulary.verifications))
+            throw new IllegalStateException("Outcome, ErrorCode or Verification differs from the protocol bundle");
         if (vocabulary.reasons.size() != values().length)
             throw new IllegalStateException("Reason differs from the protocol bundle");
         for (Reason reason : values())

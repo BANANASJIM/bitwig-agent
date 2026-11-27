@@ -9,6 +9,7 @@ import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Refs;
 import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.RpcException;
+import dev.bitwigagent.core.Verification;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -18,7 +19,6 @@ import java.util.List;
  * are told apart and no window limits the chain.
  */
 final class NativeChainEdits {
-    static final String VERIFICATION = "native_object_sequence";
     private final NativeChains chains;
 
     NativeChainEdits(NativeChains chains) {
@@ -61,14 +61,14 @@ final class NativeChainEdits {
     // ---------------------------------------------------------------- insert
 
     void insert(HostOperation op, JsonObject p) {
-        JsonObject to = DeviceChainModule.insertion(p);
-        JsonObject parent = to.getAsJsonObject("parent");
-        String kind = p.get("kind").getAsString();
-        String value = p.get(kind.equals("file") ? "path" : "id").getAsString();
+        JsonObject parent = p.getAsJsonObject("to");
+        JsonObject insert = p.getAsJsonObject("insert");
+        String kind = insert.get("kind").getAsString();
+        String value = insert.get(kind.equals("file") ? "path" : "id").getAsString();
         chains.edit(op, parent, walk -> {
             NativeChains.Chain chain = walk.chain(parent, false);
             List<Object> before = chain.devices;
-            int index = Positions.index(to.get("position"), before.size(), anchor -> anchorIn(walk, chain, anchor));
+            int index = Positions.index(p.get("position"), before.size(), anchor -> anchorIn(walk, chain, anchor));
             Object insertion = walk.a.insertion(kind, value);
             if (insertion == null)
                 throw Errors.notApplied(
@@ -151,16 +151,17 @@ final class NativeChainEdits {
 
     // ---------------------------------------------------------------- move
 
-    void move(HostOperation op, JsonObject target, JsonObject to, Runnable safety) {
+    void move(HostOperation op, JsonObject p, Runnable safety) {
+        JsonObject target = p.getAsJsonObject("target");
         chains.edit(op, target, walk -> {
             NativeChains.Device device = walk.device(target, true);
             NativeChains.Chain chain = device.chain;
-            if (to.has("parent") && !Refs.matches(to.getAsJsonObject("parent"), chain.ref, false))
+            if (p.has("to") && !Refs.matches(p.getAsJsonObject("to"), chain.ref, false))
                 throw Errors.notApplied(
                         Reason.UNSUPPORTED_SCOPE, "Moving a device to another chain or track is not supported yet.");
             List<Object> before = chain.devices;
             int from = device.index;
-            int insertion = Positions.index(to.get("position"), before.size(), anchor -> anchorIn(walk, chain, anchor));
+            int insertion = Positions.index(p.get("position"), before.size(), anchor -> anchorIn(walk, chain, anchor));
             int dest = insertion > from ? insertion - 1 : insertion;
             if (dest == from) {
                 JsonObject result = Results.outcome(Outcome.ALREADY_MATCHED);
@@ -237,7 +238,10 @@ final class NativeChainEdits {
             NativeChains.Walk walk, Outcome ok, boolean changed, JsonArray before, List<Object> after) {
         JsonObject result = Results.outcome(ok != null ? ok : Outcome.UNKNOWN);
         if (ok == null) result.addProperty("reason", (changed ? Reason.READBACK_MISMATCH : Reason.NOT_OBSERVED).wire());
-        else result.addProperty("verification", VERIFICATION);
+        else {
+            Verification.NATIVE_READBACK.put(result);
+            walk.a.provenance(result);
+        }
         result.addProperty("beforeCount", before.size());
         result.addProperty("afterCount", after.size());
         result.add("before", before);

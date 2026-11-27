@@ -10,12 +10,12 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import com.google.gson.*;
 import dev.bitwigagent.HostFixture;
-import dev.bitwigagent.bitwig614.Bitwig614ModulatorAdapter;
-import dev.bitwigagent.bitwig614.Bitwig614Runtime;
 import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.host.DeviceSources;
 import dev.bitwigagent.host.NativeReadContext;
+import dev.bitwigagent.nativehost.NativeHost;
+import dev.bitwigagent.nativehost.NativeModulatorAdapter;
 import java.util.*;
 import java.util.function.BiConsumer;
 import org.junit.jupiter.api.Test;
@@ -410,8 +410,8 @@ public final class ModulatorSnapshotReaderTest {
 
     @Test
     void aWrongRuntimeVersionStaysClosedForReads() {
-        Bitwig614ModulatorAdapter adapter =
-                new Bitwig614ModulatorAdapter(new Bitwig614Runtime(new Object(), "6.1.2", () -> {}).access());
+        NativeModulatorAdapter adapter =
+                new NativeModulatorAdapter(new NativeHost(new Object(), "6.1.2", () -> {}).access());
         assertRpcError("host_mismatch", () -> adapter.list(HostFixture.rootSource(TRACK), 0, 64, () -> {}));
     }
 

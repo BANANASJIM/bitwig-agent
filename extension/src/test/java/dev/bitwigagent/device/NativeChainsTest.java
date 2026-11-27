@@ -114,11 +114,11 @@ public final class NativeChainsTest {
                         "devices.insert",
                         params(
                                 "to",
-                                params("parent", x.rack.chainRef(0), "position", params("before", elsewhere)),
-                                "kind",
-                                "bitwig",
-                                "id",
-                                "11111111-2222-4333-8444-555555555555"))));
+                                x.rack.chainRef(0),
+                                "position",
+                                params("before", elsewhere),
+                                "insert",
+                                params("kind", "bitwig", "id", "11111111-2222-4333-8444-555555555555")))));
     }
 
     @Test
@@ -129,17 +129,15 @@ public final class NativeChainsTest {
         assertEquals("unknown", deleted.get("outcome").getAsString());
         assertEquals("readback_mismatch", deleted.get("reason").getAsString());
         assertEquals("Delay", deleted.getAsJsonObject("deleted").get("name").getAsString());
-        JsonObject moved = x.call(
-                x.f.chains(),
-                "devices.move",
-                params("target", x.rack.deviceRef(0, 0), "to", params("position", "end")));
+        JsonObject moved =
+                x.call(x.f.chains(), "devices.move", params("target", x.rack.deviceRef(0, 0), "position", "end"));
         assertEquals("readback_mismatch", moved.get("reason").getAsString());
         assertFalse(moved.has("ref"));
         x.f.natives.onEdit = () -> x.rack.chains.get(1).devices.add(0, FakeChains.device("Intruder"));
         JsonObject inserted = x.call(
                 x.f.chains(),
                 "devices.insert",
-                params("to", params("parent", x.rack.chainRef(1)), "kind", "clap", "id", "org.example.fx"));
+                params("to", x.rack.chainRef(1), "insert", params("kind", "clap", "id", "org.example.fx")));
         assertEquals("unknown", inserted.get("outcome").getAsString());
         assertEquals("readback_mismatch", inserted.get("reason").getAsString());
         assertTrue(inserted.get("inserted").isJsonNull());
@@ -157,7 +155,7 @@ public final class NativeChainsTest {
         HostOperation move = x.f.submit(
                 x.f.chains(),
                 "devices.move",
-                params("target", x.rack.deviceRef(0, 0), "to", params("position", "end")),
+                params("target", x.rack.deviceRef(0, 0), "position", "end"),
                 x.f.host.tasks.after(5000));
         JsonObject moved = x.f.finish(move);
         assertEquals("not_observed", moved.get("reason").getAsString());

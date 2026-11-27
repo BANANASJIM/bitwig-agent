@@ -4,6 +4,7 @@ import com.google.gson.*;
 import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.Outcome;
 import dev.bitwigagent.core.Reason;
+import dev.bitwigagent.core.Verification;
 
 /**
  * One step-array prefix CAS: same admission, context guards and exact readback as the string panel. The write replaces
@@ -71,7 +72,7 @@ public final class GridStepArrayWriter {
         result.add("previousValues", request.expectedValues);
         result.add("requestedValues", request.values);
         result.addProperty("mutationDispatched", changed);
-        result.addProperty("verification", "exact_native_step_array_readback");
+        Verification.NATIVE_READBACK.put(result);
         result.addProperty("nativeMutation", changed);
         result.addProperty("nativeUndo", changed);
         result.addProperty(

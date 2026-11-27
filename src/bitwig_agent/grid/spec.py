@@ -95,6 +95,7 @@ class Spec:
     has_steps: bool
     live_schema: bool
     dry_run: bool
+    host: str | None  # the connected host version, whose measured notes apply
 
     def position(self, name: str) -> tuple[int, int]:
         return self.by_spec[name]["x"], self.by_spec[name]["y"]
@@ -195,7 +196,7 @@ def _resolve_edges(
     return edges
 
 
-def parse_spec(args: dict[str, Any], catalog: TypeCatalog) -> Spec:
+def parse_spec(args: dict[str, Any], catalog: TypeCatalog, host: str | None = None) -> Spec:
     """Resolve every module type, parameter write and connection endpoint; raise SpecError with all problems."""
     modules: list[dict[str, Any]] = args.get("modules", [])
     external: list[str] = args.get("external") or []
@@ -227,4 +228,5 @@ def parse_spec(args: dict[str, Any], catalog: TypeCatalog) -> Spec:
         has_steps=any(is_steps(v) for m in modules for v in (m.get("params") or {}).values()),
         live_schema=catalog.is_live,
         dry_run=bool(args.get("dryRun")),
+        host=host,
     )

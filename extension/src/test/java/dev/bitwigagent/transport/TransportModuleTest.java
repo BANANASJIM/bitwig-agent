@@ -10,6 +10,7 @@ import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.HostOperation;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Scheduler;
+import dev.bitwigagent.core.ValueMatch;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
@@ -21,9 +22,9 @@ public final class TransportModuleTest {
         HostFixture f = new HostFixture();
         TransportModule module = f.services.transportModule();
         JsonObject read = f.call(module, "transport.get", new JsonObject());
-        assertTrue(read.get("tempoBpm").getAsDouble() == 120, "tempo is raw BPM, not normalized");
-        assertTrue(read.get("positionBeats").getAsDouble() == 0, "current playback position read");
-        assertTrue(read.getAsJsonObject("units").get("tempoBpm").getAsString().equals("bpm_raw"), "BPM unit explicit");
+        assertTrue(read.get("tempo").getAsDouble() == 120, "tempo is raw BPM, not normalized");
+        assertTrue(read.get("position").getAsDouble() == 0, "current playback position read");
+        assertTrue(read.getAsJsonObject("units").get("tempo").getAsString().equals("bpm_raw"), "BPM unit explicit");
         assertTrue(
                 read.has("arrangerRecordEnabled")
                         && read.has("arrangerAutomationWriteEnabled")
@@ -39,28 +40,29 @@ public final class TransportModuleTest {
         TransportModule module = f.services.transportModule();
         for (String text : List.of(
                 "{}",
-                "{\"tempoBpm\":19.99}",
-                "{\"tempoBpm\":666.01}",
-                "{\"tempoBpm\":\"120\"}",
+                "{\"tempo\":19.99}",
+                "{\"tempo\":666.01}",
+                "{\"tempo\":\"120\"}",
                 "{\"playing\":1}",
-                "{\"positionBeats\":-1}",
-                "{\"loopDurationBeats\":0}",
+                "{\"position\":-1}",
+                "{\"loop\":{\"length\":0}}",
+                "{\"loop\":{}}",
                 "{\"loopEnabled\":null}",
                 "{\"recording\":true}",
-                "{\"loopStartBeats\":1e308,\"loopDurationBeats\":1e308}")) {
+                "{\"loop\":{\"start\":1e308,\"length\":1e308}}")) {
             assertRpcError("invalid_params", f.submit(module, "transport.set", HostFixture.json(text)));
             assertTrue(f.tasks.isEmpty(), "invalid request must not schedule host work: " + text);
         }
         for (double invalid : new double[] {Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY}) {
             JsonObject p = new JsonObject();
-            p.addProperty("tempoBpm", invalid);
+            p.addProperty("tempo", invalid);
             assertRpcError("invalid_params", f.submit(module, "transport.set", p));
             assertTrue(f.tasks.isEmpty(), "nonfinite BPM must not schedule");
         }
         assertRpcError("invalid_params", f.submit(module, "transport.get", HostFixture.json("{\"playing\":false}")));
         assertTrue(f.tasks.isEmpty(), "reads reject extra fields");
-        TransportModule.validateParams("transport.set", HostFixture.json("{\"tempoBpm\":20}"));
-        TransportModule.validateParams("transport.set", HostFixture.json("{\"tempoBpm\":666}"));
+        TransportModule.validateParams("transport.set", HostFixture.json("{\"tempo\":20}"));
+        TransportModule.validateParams("transport.set", HostFixture.json("{\"tempo\":666}"));
     }
 
     @Test
@@ -99,7 +101,7 @@ public final class TransportModuleTest {
             HostOperation start = f.submit(module, "transport.set", HostFixture.json("{\"playing\":true}"));
             f.next();
             assertTrue(!assertRpcError("unsafe_state", start).unknown, "unsafe start not applied");
-            HostOperation seek = f.submit(module, "transport.set", HostFixture.json("{\"positionBeats\":8}"));
+            HostOperation seek = f.submit(module, "transport.set", HostFixture.json("{\"position\":8}"));
             f.next();
             assertRpcError("unsafe_state", seek);
             assertTrue(f.transport.actions == 0, "unsafe start/seek never dispatched");
@@ -118,7 +120,7 @@ public final class TransportModuleTest {
         TransportModule module = f.services.transportModule();
         FakeHost tempo = f.transport.child("tempo").child("value");
         tempo.notifyWrites = false;
-        HostOperation op = f.submit(module, "transport.set", HostFixture.json("{\"tempoBpm\":130}"));
+        HostOperation op = f.submit(module, "transport.set", HostFixture.json("{\"tempo\":130}"));
         f.next();
         assertTrue(tempo.writes == 1 && !op.result.isDone(), "setter dispatch alone cannot verify tempo");
         f.transport.child("isMetronomeEnabled").emit(true);
@@ -129,11 +131,12 @@ public final class TransportModuleTest {
         assertTrue(!op.result.isDone(), "mismatched callback does not verify");
         tempo.emit(130.0);
         f.next();
+        assertEquals("api_readback", op.result.join().get("verification").getAsString());
         assertTrue(
                 op.result
                         .join()
                         .getAsJsonObject("fields")
-                        .getAsJsonObject("tempoBpm")
+                        .getAsJsonObject("tempo")
                         .get("outcome")
                         .getAsString()
                         .equals("applied"),
@@ -174,8 +177,7 @@ public final class TransportModuleTest {
         HostFixture f = new HostFixture();
         TransportModule module = f.services.transportModule();
         deferStop(f);
-        HostOperation op =
-                f.submit(module, "transport.set", HostFixture.json("{\"playing\":false,\"positionBeats\":0}"));
+        HostOperation op = f.submit(module, "transport.set", HostFixture.json("{\"playing\":false,\"position\":0}"));
         f.next();
         assertTrue(
                 f.transport.child("playPosition").data.equals(12.0),
@@ -188,8 +190,7 @@ public final class TransportModuleTest {
                 result.get("outcome").getAsString().matches("applied|already_matched"),
                 "stop and subsequent seek both observed");
         assertTrue(
-                !result.get("playing").getAsBoolean()
-                        && result.get("positionBeats").getAsDouble() == 0,
+                !result.get("playing").getAsBoolean() && result.get("position").getAsDouble() == 0,
                 "combined request leaves the transport stopped at the requested position");
         assertTrue(f.transport.actions == 2, "one stop and one seek, without mutation retries");
     }
@@ -199,8 +200,7 @@ public final class TransportModuleTest {
         HostFixture f = new HostFixture();
         TransportModule module = f.services.transportModule();
         deferStop(f);
-        HostOperation op =
-                f.submit(module, "transport.set", HostFixture.json("{\"playing\":false,\"positionBeats\":0}"));
+        HostOperation op = f.submit(module, "transport.set", HostFixture.json("{\"playing\":false,\"position\":0}"));
         f.next();
         f.tasks.advance(Scheduler.OBSERVE_WINDOW_NANOS); // the fixture's hard deadline remains open
         f.next();
@@ -211,7 +211,7 @@ public final class TransportModuleTest {
                 "a late observed stop cannot turn the incomplete request into success");
         assertTrue(
                 result.getAsJsonObject("fields")
-                        .getAsJsonObject("positionBeats")
+                        .getAsJsonObject("position")
                         .get("reason")
                         .getAsString()
                         .equals("not_reached"),
@@ -227,7 +227,7 @@ public final class TransportModuleTest {
         TransportModule module = f.services.transportModule();
         f.transport.child("tempo").child("value").notifyWrites = false;
         long deadline = f.tasks.after(300);
-        HostOperation op = f.submit(module, "transport.set", HostFixture.json("{\"tempoBpm\":130}"), deadline);
+        HostOperation op = f.submit(module, "transport.set", HostFixture.json("{\"tempo\":130}"), deadline);
         f.next();
         assertTrue(!op.result.isDone(), "unobserved write keeps polling");
         long lateInsideMargin =
@@ -246,8 +246,7 @@ public final class TransportModuleTest {
         HostFixture f = new HostFixture();
         TransportModule module = f.services.transportModule();
         deferStop(f);
-        HostOperation op =
-                f.submit(module, "transport.set", HostFixture.json("{\"playing\":false,\"positionBeats\":0}"));
+        HostOperation op = f.submit(module, "transport.set", HostFixture.json("{\"playing\":false,\"position\":0}"));
         f.next();
         op.result.cancel(false);
         f.next();
@@ -263,8 +262,7 @@ public final class TransportModuleTest {
         HostFixture f = new HostFixture();
         TransportModule module = f.services.transportModule();
         deferStop(f);
-        HostOperation op =
-                f.submit(module, "transport.set", HostFixture.json("{\"playing\":false,\"positionBeats\":0}"));
+        HostOperation op = f.submit(module, "transport.set", HostFixture.json("{\"playing\":false,\"position\":0}"));
         f.next();
         f.next();
         f.transport.child("isArrangerAutomationWriteEnabled").emit(true);
@@ -276,7 +274,7 @@ public final class TransportModuleTest {
                 "a changed safety condition preserves the partial outcome");
         assertTrue(
                 result.getAsJsonObject("fields")
-                        .getAsJsonObject("positionBeats")
+                        .getAsJsonObject("position")
                         .get("reason")
                         .getAsString()
                         .equals("not_reached"),
@@ -292,7 +290,7 @@ public final class TransportModuleTest {
         TransportModule module = f.services.transportModule();
         f.transport.child("tempo").child("value").afterWrite =
                 () -> f.transport.child("isArrangerRecordEnabled").emit(true);
-        JsonObject result = f.call(module, "transport.set", HostFixture.json("{\"tempoBpm\":130,\"playing\":true}"));
+        JsonObject result = f.call(module, "transport.set", HostFixture.json("{\"tempo\":130,\"playing\":true}"));
         assertTrue(result.get("outcome").getAsString().equals("not_applied"), "partial write is not full success");
         assertTrue(
                 result.getAsJsonObject("fields")
@@ -306,7 +304,7 @@ public final class TransportModuleTest {
         TransportModule second = closed.services.transportModule();
         closed.transport.child("tempo").child("value").afterWrite = closed.services.scheduler::close;
         JsonObject partial =
-                closed.call(second, "transport.set", HostFixture.json("{\"tempoBpm\":130,\"metronome\":true}"));
+                closed.call(second, "transport.set", HostFixture.json("{\"tempo\":130,\"metronome\":true}"));
         assertTrue(partial.get("reason").getAsString().equals("not_ready"), "close during write reported honestly");
         assertTrue(
                 closed.transport.child("isMetronomeEnabled").writes == 0, "no late second-field write after closure");
@@ -519,24 +517,22 @@ public final class TransportModuleTest {
     }
 
     @Test
-    void observedValueWinsWhenGetDisagrees() {
-        // Bitwig 6.1.4: the observer reported a stored project value ('bar') while EnumValue.get() returned a listed
+    void aReportedIdOutsideTheOptionsReadsAsTheListedId() {
+        // Bitwig 6.1.4: the observer reported a stored project id ('bar') while EnumValue.get() returned the listed
         // one.
         HostFixture f = new HostFixture();
         TransportModule module = f.services.transportModule();
         FakeHost node = f.transport.child("defaultLaunchQuantization");
-        node.emit("bar");
         node.on("get", args -> "1");
+        node.emit("bar");
         JsonObject read = f.call(module, "transport.get", new JsonObject());
+        JsonObject unit = read.getAsJsonObject("defaultLaunchQuantization");
         assertTrue(
-                value(read, "defaultLaunchQuantization").equals("bar")
-                        && read.getAsJsonArray("observedOutsideOptions")
-                                .get(0)
-                                .getAsString()
-                                .equals("defaultLaunchQuantization"),
-                "flag follows the reported (observed) value, not get()");
-        JsonObject result =
-                f.call(module, "transport.set", HostFixture.json("{\"defaultLaunchQuantization\":\"bar\"}"));
+                unit.get("value").getAsString().equals("1")
+                        && unit.getAsJsonArray("options").contains(unit.get("value"))
+                        && read.getAsJsonArray("observedOutsideOptions").size() == 0,
+                "the read value is one of its own options");
+        JsonObject result = f.call(module, "transport.set", HostFixture.json("{\"defaultLaunchQuantization\":\"1\"}"));
         assertTrue(
                 result.getAsJsonObject("fields")
                                 .getAsJsonObject("defaultLaunchQuantization")
@@ -544,7 +540,7 @@ public final class TransportModuleTest {
                                 .getAsString()
                                 .equals("already_matched")
                         && node.writes == 0,
-                "the reported value can be written back even when get() disagrees");
+                "the read value writes back as already_matched");
     }
 
     @Test
@@ -583,6 +579,17 @@ public final class TransportModuleTest {
     }
 
     @Test
+    void beatAndTempoFieldsReadBackWithinOneMillionth() {
+        for (String key : List.of("tempo", "position", "loopStart", "loopLength")) {
+            ValueMatch rule = TransportModule.rule(key);
+            assertTrue(rule.matches(new JsonPrimitive(120.0), new JsonPrimitive(120.0 + 5e-7)), key + " within 1e-6");
+            assertFalse(rule.matches(new JsonPrimitive(120.0), new JsonPrimitive(120.0 + 1e-5)), key + " beyond 1e-6");
+        }
+        assertSame(ValueMatch.NORMALIZED, TransportModule.rule("metronomeVolume"));
+        assertSame(ValueMatch.EXACT, TransportModule.rule("timeSignature"));
+    }
+
+    @Test
     void unknownMethodAndUnobservedFieldsAreRefused() {
         assertRpcError("unknown_method", () -> TransportModule.validateParams("transport.bogus", new JsonObject()));
         HostFixture f = new HostFixture();
@@ -599,7 +606,7 @@ public final class TransportModuleTest {
         TransportModule module = f.services.transportModule();
         f.transport.child("arrangerLoopDuration").emit(Double.MAX_VALUE);
         HostOperation op =
-                f.submit(module, "transport.set", HostFixture.json("{\"loopStartBeats\":" + Double.MAX_VALUE + "}"));
+                f.submit(module, "transport.set", HostFixture.json("{\"loop\":{\"start\":" + Double.MAX_VALUE + "}}"));
         f.next();
         assertRpcError("invalid_params", op);
     }
@@ -623,16 +630,28 @@ public final class TransportModuleTest {
         TransportModule module = f.services.transportModule();
         FakeHost tempo = f.transport.child("tempo").child("value");
         tempo.afterWrite = () -> tempo.emit(100.0);
-        HostOperation op =
-                f.submit(module, "transport.set", HostFixture.json("{\"tempoBpm\":130}"), f.tasks.after(300));
+        HostOperation op = f.submit(module, "transport.set", HostFixture.json("{\"tempo\":130}"), f.tasks.after(300));
         while (!op.result.isDone() && !f.tasks.isEmpty()) f.next();
         JsonObject result = assertUnknown("readback_mismatch", op);
         assertTrue(
                 result.getAsJsonObject("fields")
-                        .getAsJsonObject("tempoBpm")
+                        .getAsJsonObject("tempo")
                         .get("reason")
                         .getAsString()
                         .equals("readback_mismatch"),
                 "the field names the mismatch");
+    }
+
+    @Test
+    void theLoopIsNestedAndWritesOnlyTheSuppliedPart() {
+        HostFixture f = new HostFixture();
+        TransportModule module = f.services.transportModule();
+        JsonObject result = f.call(module, "transport.set", HostFixture.json("{\"loop\":{\"start\":8}}"));
+        assertTrue(f.transport.child("arrangerLoopStart").writes == 1, "loop.start written");
+        assertTrue(f.transport.child("arrangerLoopDuration").writes == 0, "omitted loop.length left alone");
+        assertTrue(result.getAsJsonObject("fields").getAsJsonObject("loop").has("start"), "per-field result nested");
+        assertTrue(!result.getAsJsonObject("fields").getAsJsonObject("loop").has("length"), "only the supplied part");
+        JsonObject loop = f.call(module, "transport.get", new JsonObject()).getAsJsonObject("loop");
+        assertTrue(loop.has("start") && loop.has("length") && !loop.has("loopStart"), "read nests the loop");
     }
 }

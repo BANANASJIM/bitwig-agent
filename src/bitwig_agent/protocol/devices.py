@@ -10,11 +10,12 @@ from bitwig_agent.protocol.base import (
     TRACK,
     Nonempty,
     StatusArgs,
+    StrictModel,
     ToolSpec,
     omitted,
     validate_local_path,
 )
-from bitwig_agent.protocol.positions import DeviceDestination, DeviceInsertion, DeviceParent
+from bitwig_agent.protocol.positions import DeviceParent, DevicePosition
 from bitwig_agent.protocol.refs import DeviceRef
 
 REMOTE_PAGE_INDEX_MAX = 4095
@@ -63,8 +64,9 @@ def validate_insertion(model: Any) -> None:
             raise ValueError("clap id must be 1..256 printable non-whitespace ASCII characters")
 
 
-class DeviceInsertArgs(StatusArgs):
-    to: DeviceInsertion = Field(description="The container and where in it: {parent: track or chain ref, position?}.")
+class Insert(StrictModel):
+    """What to insert, exactly as presets.search and devices.catalog report it in insert."""
+
     kind: Literal["bitwig", "vst2", "vst3", "clap", "file"]
     id: Nonempty = omitted()
     path: Nonempty = omitted()
@@ -75,8 +77,18 @@ class DeviceInsertArgs(StatusArgs):
         return self
 
 
+POSITION = '"start", "end" (default) or {before: deviceRef} / {after: deviceRef} of a device in the destination.'
+
+
+class DeviceInsertArgs(StatusArgs):
+    to: DeviceParent = Field(description="The track or chain to insert into.")
+    position: DevicePosition = omitted(description=POSITION)
+    insert: Insert = Field(description="The insert object of a presets.search or devices.catalog row, unchanged.")
+
+
 class DeviceMoveArgs(DeviceTargetArgs):
-    to: DeviceDestination = Field(description="Where the device ends up; parent is omitted to stay in its chain.")
+    to: DeviceParent = omitted(description="The device's own track or chain; omitted keeps it there.")
+    position: DevicePosition = Field(description=POSITION.replace(" (default)", ""))
 
 
 class RemoteGetArgs(DeviceTargetArgs):
@@ -107,10 +119,10 @@ DEVICES_SET_DESCRIPTION = "Enable or bypass one device: target is a device ref, 
 DEVICES_SELECT_DESCRIPTION = (
     "Select this device in the host UI. Unlike reads, this intentionally changes selection. Result outcome sent."
 )
-DEVICES_CATALOG_DESCRIPTION = "List installed Bitwig factory device files (about 150: name, category, description, path) using the host's installationRoot; query (substring of name or category) and category (exact) narrow the list; texts are read from Bitwig's own resources at runtime. Copy kind=file and path into devices.insert. kind=bitwig UUIDs are not discoverable here (bitwigIdAvailable=false); no guessed UUIDs or exhaustive plug-in inventory. File presence is not insertion or musical verification."
-DEVICES_INSERT_DESCRIPTION = "Insert a native device, plug-in or preset into a track's device chain or into one chain of a layer device. to is {parent: track ref or chain ref, position?}; position is start, end (default), {before: deviceRef} or {after: deviceRef} of a device in that parent. kind=bitwig requires a canonical UUID id; vst2 a signed int32 decimal id; vst3 32 hex digits; clap printable ASCII; kind=file an absolute normalized path instead of id (a .bwdevice or a .bwpreset from presets.search). The result has the new device's ref (inserted) and the verification: the count grew by one, the devices before the point are unchanged and those after it shifted (in a chain inside a device: the new device object is at the point and everything else kept its order). It does not prove the requested native UUID: inspect requestedIdentifierVerified. Insertion can load plug-ins or produce audio; observe before retrying."
-DEVICES_DELETE_DESCRIPTION = "Delete one device (Device.deleteObject): target is a device ref from devices.list. Needs no recording or automation write. Returns the deleted device, the chain before and after, and the verification (the count dropped by one and the devices after it shifted); an unknown outcome (not_observed, readback_mismatch) means read devices.list before another edit. One Undo step; never retry."
-DEVICES_MOVE_DESCRIPTION = "Move one device within its chain: target is a device ref, to {position: start|end|{before: deviceRef}|{after: deviceRef}}; to.parent stays the device's own track or chain (moving to another parent is not supported yet). A device already at that position is already_matched. Verified by the arrangement of the whole chain: observed names/types in a track's chain, where devices with identical name and type cannot prove a move (outcome unknown, readback_mismatch); device objects in a chain inside a device. Same safety and no-retry rules as devices.delete."
+DEVICES_CATALOG_DESCRIPTION = "List installed Bitwig factory device files (about 150: name, category, description, path) using the host's installationRoot; query (substring of name or category) and category (exact) narrow the list; texts are read from Bitwig's own resources at runtime. Pass a row's insert {kind: file, path} to devices.insert unchanged. kind=bitwig UUIDs are not discoverable here (bitwigIdAvailable=false); no guessed UUIDs or exhaustive plug-in inventory. File presence is not insertion or musical verification."
+DEVICES_INSERT_DESCRIPTION = "Insert a native device, plug-in or preset into a track's device chain or into one chain of a layer device. to is the track ref or chain ref; position is start, end (default), {before: deviceRef} or {after: deviceRef} of a device in it (indexes are not accepted). insert is {kind, id|path}, the insert object of a presets.search or devices.catalog row passed unchanged: kind=bitwig requires a canonical UUID id; vst2 a signed int32 decimal id; vst3 32 hex digits; clap printable ASCII; kind=file an absolute normalized path instead of id (a .bwdevice or .bwpreset). The result has the new device's ref (inserted) and verification api_readback (the count grew by one, the devices before the point are unchanged and those after it shifted) or, in a chain inside a device, native_readback (the new device object is at the point and everything else kept its order). It does not prove the requested native UUID: inspect requestedIdentifierVerified. Insertion can load plug-ins or produce audio; observe before retrying."
+DEVICES_DELETE_DESCRIPTION = "Delete one device (Device.deleteObject): target is a device ref from devices.list. Needs no recording or automation write. Returns the deleted device, the chain before and after, and verification api_readback (the count dropped by one and the devices after it shifted) or native_readback inside a device; an unknown outcome (not_observed, readback_mismatch) means read devices.list before another edit. One Undo step; never retry."
+DEVICES_MOVE_DESCRIPTION = "Move one device within its chain: target is a device ref, position start|end|{before: deviceRef}|{after: deviceRef} (required); to, when given, is the device's own track or chain ref (moving to another parent is not supported yet). A device already at that position is already_matched. Verified by the arrangement of the whole chain: observed names/types in a track's chain, where devices with identical name and type cannot prove a move (outcome unknown, readback_mismatch); device objects in a chain inside a device. Same safety and no-retry rules as devices.delete."
 DEVICES_REMOTE_GET_DESCRIPTION = "Read one root device's Remote Controls: the page list (remotePage refs) and the controls of one page, each with the parameter ref, name and bare value. page is the page index; omitted reads the extension's own current page, not the GUI's; a page past the page count is target_not_found. Pass a control's ref to parameters.set; a control remapped to another name is stale."
 
 
@@ -147,16 +159,16 @@ SPECS: dict[str, ToolSpec] = {
         DEVICES_INSERT_DESCRIPTION,
         False,
         examples=(
-            {"to": {"parent": TRACK_REF}, "kind": "clap", "id": "org.example.synth"},
+            {"to": TRACK_REF, "insert": {"kind": "clap", "id": "org.example.synth"}},
             {
-                "to": {"parent": TRACK_REF, "position": {"after": {**DEVICE_REF, "index": 1, "name": "EQ-5"}}},
-                "kind": "clap",
-                "id": "org.example.synth",
+                "to": TRACK_REF,
+                "position": {"after": {**DEVICE_REF, "index": 1, "name": "EQ-5"}},
+                "insert": {"kind": "file", "path": "/presets/Warm Pad.bwpreset"},
             },
-            {"to": {"parent": CHAIN_REF, "position": "start"}, "kind": "clap", "id": "org.example.effect"},
+            {"to": CHAIN_REF, "position": "start", "insert": {"kind": "clap", "id": "org.example.effect"}},
         ),
         requires=PROJECT_READY,
-        summary="Insert a native device, plug-in or preset into a track's chain or a layer chain: to {parent: track or chain ref, position?: start|end|{before|after: deviceRef}}, kind bitwig|vst2|vst3|clap with id, or kind=file with an absolute path. The requested identity is not proven: check requestedIdentifierVerified.",
+        summary="Insert a native device, plug-in or preset into a track's chain or a layer chain: to (track or chain ref), position? start|end|{before|after: deviceRef}, insert {kind bitwig|vst2|vst3|clap, id} or {kind file, path} as presets.search and devices.catalog return it. The requested identity is not proven: check requestedIdentifierVerified.",
     ),
     "devices.delete": ToolSpec(
         DeviceTargetArgs, DEVICES_DELETE_DESCRIPTION, False, examples=({"target": DEVICE_REF},), requires=PROJECT_READY
@@ -165,7 +177,7 @@ SPECS: dict[str, ToolSpec] = {
         DeviceMoveArgs,
         DEVICES_MOVE_DESCRIPTION,
         False,
-        examples=({"target": {**DEVICE_REF, "index": 3, "name": "Comp"}, "to": {"position": "start"}},),
+        examples=({"target": {**DEVICE_REF, "index": 3, "name": "Comp"}, "position": "start"},),
         requires=PROJECT_READY,
     ),
     "devices.remote.get": ToolSpec(

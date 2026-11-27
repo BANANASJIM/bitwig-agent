@@ -7,6 +7,7 @@ import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.Outcome;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Results;
+import dev.bitwigagent.core.Verification;
 import dev.bitwigagent.host.DeviceSources;
 import java.util.*;
 import java.util.function.Consumer;
@@ -110,7 +111,7 @@ public final class GridModuleNameWriter {
                 result.addProperty("mutationDispatched", changed);
                 result.addProperty("nativeMutation", changed);
                 result.addProperty("nativeUndo", changed);
-                result.addProperty("verification", "later_document_event_bounded_native_graph_observation");
+                Verification.NATIVE_READBACK.put(result);
                 result.addProperty(
                         "nativeUndoScope",
                         changed

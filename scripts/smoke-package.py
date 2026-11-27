@@ -49,7 +49,7 @@ def main() -> None:
                     raise RuntimeError(f"MCP version mismatch: {initialized.server_info.version}")
                 tools = await session.list_tools()
                 names = {tool.name for tool in tools.tools}
-                if not {"tracks.list", "notes.edit"} <= names:
+                if not {"tracks.list", "notes.set"} <= names:
                     raise RuntimeError(f"Missing expected MCP tools: {names}")
                 print(
                     f"{initialized.server_info.name} {installed_version}: "

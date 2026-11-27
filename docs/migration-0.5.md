@@ -22,6 +22,7 @@ An old MCP configuration now starts the CLI instead of the server and the client
 | an `unknown` result without a pointer to what to look at | `next` names the read method of the write that was called (`transport.set` → `transport.get`), unless the result names one itself |
 | `unresolved_mutation` and `extension.restart` to clear it | `pending` / `unresolved` with `next`; release with `ack <id>` after inspecting |
 | `grid_verification_failed`, `grid_bounds_exceeded` | `readback_mismatch`, `out_of_bounds` |
+| free-form `verification` strings | `verification` is `native_readback`, `api_readback` or `file_readback` |
 | requests without a protocol field | every request carries `"protocol":"0.5"` |
 
 ## Methods
@@ -37,7 +38,7 @@ An old MCP configuration now starts the CLI instead of the server and the client
 | `bounce.inPlace` | `tracks.bounce` | renamed; `trackIds` is `targets`; gained `inPlace` |
 | `markers.rename` | `markers.set` | renamed |
 | `devices.layers.list` | `chains.list` | renamed |
-| `devices.layers.insert` | `devices.insert` (`to.parent` is a chain) | merged |
+| `devices.layers.insert` | `devices.insert` (`to` is a chain ref) | merged |
 | `devices.remote.deletePage` | `devices.remote.delete` | renamed |
 | `devices.remote.page` | none | removed; Remote Controls pages are addressed by their ref |
 | `devices.remote.set`, `parameters.layer.set`, `modulators.parameters.set` | `parameters.set` | merged |
@@ -74,8 +75,8 @@ One concept has one name. Objects are addressed by refs that a read returned (`d
 | `markerIndex`, `expectedName`, `expectedBeat` (markers) | `target` (a marker ref) |
 | `modulatorId`, `parent`, `expectedCount`, `expectedAmount` (modulators) | `target` refs (`to` on `modulators.insert`); `expect` and `source` on `modulators.map` / `unmap`; `expectedCount` is gone from `modulators.insert` |
 | `parameterId`, `contextToken` on `parameters.set` | `target` (a parameter ref), optional `expect`; tokens are gone |
-| `toIndex` on `devices.move` | `to: {parent?, position}` |
-| `parent`, `position` on `devices.insert` | `to: {parent, position?}`, the same shape as the `devices.move` destination |
+| `toIndex` on `devices.move` | `position` (`start`, `end`, `{before: deviceRef}`, `{after: deviceRef}`); optional `to` (the device's own track or chain ref) |
+| `parent`, `position`, `kind`, `id`, `path` on `devices.insert` | `to` (track or chain ref), optional `position`, `insert: {kind, id\|path}` exactly as `presets.search` and `devices.catalog` rows return it |
 | `device` on `presets.search` | `deviceName` |
 | `devices.catalog` takes nothing | optional `query` and `category`; a record list (`--format`, `--fields`) |
 | `expectedCount`, `expectedHash` on `automation.points.set` | `expect: {pointsHash}`; the read returns `lane.pointsHash` |
@@ -86,3 +87,17 @@ One concept has one name. Objects are addressed by refs that a read returned (`d
 | `format` on `export.audio`, `grid.render` | `fileType` |
 | `outPath`, `overwrite` on `grid.export` | removed; redirect the output (`bitwig-agent grid export ... > file`) |
 | `status` takes nothing | `detail: "full"` |
+
+## Changed during the 0.5 pre-release
+
+Clients written against an earlier 0.5 build must change these; there are no aliases.
+
+| Earlier 0.5 | 0.5 |
+|---|---|
+| `devices.insert {to: {parent, position?}, kind, id\|path}` | `devices.insert {to: <track or chain ref>, position?, insert: {kind, id\|path}}`; pass the `insert` of a `presets.search` or `devices.catalog` row unchanged |
+| `devices.move {target, to: {parent?, position}}` | `devices.move {target, position, to?}` |
+| `devices.catalog` rows `{kind: "file", path}` | rows carry `insert: {kind: "file", path}` |
+| an integer or malformed `position` answered with every union branch | one sentence: "position is start\|end\|{before: deviceRef}\|{after: deviceRef}; indexes are not accepted" |
+| routing and sidechain entries `{kind, trackId}`, with `trackName` / `sourceTrackName` beside them | `{kind, track: <track ref>}`; the ref carries the public name, and reads return what writes and `expect` accept |
+| about 30 free-form `verification` strings | `native_readback`, `api_readback`, `file_readback`; native results all carry `nativeVersion` and `nativeJarSha256` |
+| `devices.sidechain.set` refused while the transport plays | allowed while playing (recording and automation write still refused); pending native verification on 6.1.7 |

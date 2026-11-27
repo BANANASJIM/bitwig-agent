@@ -1,7 +1,8 @@
 package dev.bitwigagent.arranger;
 
 import com.google.gson.*;
-import dev.bitwigagent.bitwig614.Bitwig614ArrangerAccess;
+import dev.bitwigagent.core.Verification;
+import dev.bitwigagent.nativehost.NativeArrangerAccess;
 import java.util.*;
 
 /**
@@ -13,7 +14,7 @@ public final class ArrangerNotes {
     private ArrangerNotes() {}
 
     public interface Host {
-        Object newNote(double beat, double durationBeats, double velocity01);
+        Object newNote(double beat, double duration, double velocity01);
         /** Native {@code AGr.MRY(note, channel, key, selection)}. */
         void addNote(Object clip, Object note, int channel, int key);
 
@@ -32,7 +33,7 @@ public final class ArrangerNotes {
         double velocity01(Object note);
     }
 
-    /** Notes are {beat, pitch, velocity, durationBeats}. */
+    /** Notes are {beat, pitch, velocity, duration}. */
     public static void write(Host host, Object clip, List<double[]> notes, int channel) {
         for (double[] n : notes) host.addNote(clip, host.newNote(n[0], n[3], n[2] / 127.0), channel, (int) n[1]);
     }
@@ -88,11 +89,11 @@ public final class ArrangerNotes {
         out.addProperty("channel", channel);
         out.add("unverifiedNotes", missing);
         out.addProperty("invalidRows", invalid);
-        out.addProperty("verification", "native_note_rows_readback_channel_key_beat_duration_velocity");
+        Verification.NATIVE_READBACK.put(out);
         return new Readback(out, invalid, invalid == 0 && verified == notes.size() && count == notes.size());
     }
 
     private static boolean near(double a, double b) {
-        return Math.abs(a - b) <= Bitwig614ArrangerAccess.EPS;
+        return Math.abs(a - b) <= NativeArrangerAccess.EPS;
     }
 }

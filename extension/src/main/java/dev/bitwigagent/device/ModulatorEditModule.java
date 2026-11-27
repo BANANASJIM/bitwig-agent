@@ -1,9 +1,6 @@
 package dev.bitwigagent.device;
 
 import com.google.gson.*;
-import dev.bitwigagent.bitwig614.Bitwig614GridAdapter;
-import dev.bitwigagent.bitwig614.Bitwig614ModulatorEditAccess;
-import dev.bitwigagent.bitwig614.Bitwig614Runtime;
 import dev.bitwigagent.core.BoundedJson;
 import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.HostModule;
@@ -16,6 +13,9 @@ import dev.bitwigagent.core.ValueInput;
 import dev.bitwigagent.host.DeviceSources;
 import dev.bitwigagent.host.NativeRuntime;
 import dev.bitwigagent.host.TransportSafety;
+import dev.bitwigagent.nativehost.NativeGridAdapter;
+import dev.bitwigagent.nativehost.NativeHost;
+import dev.bitwigagent.nativehost.NativeModulatorEditAccess;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Consumer;
@@ -69,15 +69,15 @@ public final class ModulatorEditModule implements HostModule {
     ModulatorEditor editor(HostOperation op) {
         if (editor != null) return editor;
         if (unavailable != null) throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, unavailable);
-        Bitwig614Runtime.Access bindings = natives.get(op).access();
+        NativeHost.Access bindings = natives.get(op).access();
         if (bindings.gateError() != null)
             throw Errors.notApplied(
                     Reason.NATIVE_UNAVAILABLE, "Exact runtime gate is unavailable: " + bindings.gateError());
         try {
-            Bitwig614GridAdapter grid = new Bitwig614GridAdapter(natives.get(op).access());
-            editor = new ModulatorEditor(new Bitwig614ModulatorEditAccess(bindings, grid));
+            NativeGridAdapter grid = new NativeGridAdapter(natives.get(op).access());
+            editor = new ModulatorEditor(new NativeModulatorEditAccess(bindings, grid));
         } catch (ReflectiveOperationException | RuntimeException | LinkageError error) {
-            unavailable = "Device-modulator edit bindings unavailable: " + Bitwig614Runtime.diagnostic(error);
+            unavailable = "Device-modulator edit bindings unavailable: " + NativeHost.diagnostic(error);
             throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, unavailable);
         }
         return editor;

@@ -1,4 +1,4 @@
-"""Raw <-> display scales of Grid parameters, natively measured on Bitwig 6.1.4.
+"""Raw <-> display scales of Grid parameters, natively measured on Bitwig 6.1.4 and re-checked unchanged on 6.1.7.
 
 `numericUnit` names the unit the host displays, not how the raw value maps to it. This table records the mapping per
 (module type, parameter) so display writes ("-12 st", "-6 dB", "4 Hz") can be converted to raw client-side and agents can read

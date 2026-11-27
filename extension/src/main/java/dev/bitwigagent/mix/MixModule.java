@@ -17,6 +17,7 @@ import dev.bitwigagent.core.RpcException;
 import dev.bitwigagent.core.Scheduler;
 import dev.bitwigagent.core.ValueInput;
 import dev.bitwigagent.core.ValueMatch;
+import dev.bitwigagent.core.Verification;
 import dev.bitwigagent.host.EnumOptions;
 import dev.bitwigagent.host.SelectionLease;
 import dev.bitwigagent.host.TrackRefs;
@@ -793,6 +794,7 @@ public final class MixModule implements HostModule {
         }
         result.addProperty("outcome", worst.wire());
         if (!worst.succeeded()) result.addProperty("reason", reason != null ? reason.wire() : why);
+        if (worst == Outcome.APPLIED) Verification.API_READBACK.put(result);
     }
 
     /** Compact identity row for context.get (null fields when unobserved); never selects. */

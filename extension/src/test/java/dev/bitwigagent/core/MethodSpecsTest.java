@@ -51,7 +51,8 @@ public final class MethodSpecsTest {
         methods.add(name, method);
         root.add("methods", methods);
         JsonObject full = bundle();
-        for (String key : new String[] {"limits", "protocol", "outcomes", "errorCodes", "reasons", "refs"})
+        for (String key :
+                new String[] {"limits", "protocol", "outcomes", "errorCodes", "verifications", "reasons", "refs"})
             root.add(key, full.get(key));
         return root;
     }

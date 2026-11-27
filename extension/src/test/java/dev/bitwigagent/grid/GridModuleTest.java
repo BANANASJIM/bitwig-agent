@@ -7,8 +7,6 @@ import com.google.gson.*;
 import dev.bitwigagent.FakeHost;
 import dev.bitwigagent.HostFixture;
 import dev.bitwigagent.TestServices;
-import dev.bitwigagent.bitwig614.Bitwig614GridAdapter;
-import dev.bitwigagent.bitwig614.Bitwig614Runtime;
 import dev.bitwigagent.core.BoundedJson;
 import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.HostOperation;
@@ -16,6 +14,8 @@ import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Refs;
 import dev.bitwigagent.core.RpcException;
 import dev.bitwigagent.host.DeviceSources;
+import dev.bitwigagent.nativehost.NativeGridAdapter;
+import dev.bitwigagent.nativehost.NativeHost;
 import dev.bitwigagent.recovery.AckModule;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
@@ -209,12 +209,11 @@ public final class GridModuleTest {
 
     @Test
     void loadedSourceGateFailsClosed() throws Exception {
-        GridAdapter wrongVersion =
-                new Bitwig614GridAdapter(new Bitwig614Runtime(new Object(), "6.1.3", () -> {}).access());
+        GridAdapter wrongVersion = new NativeGridAdapter(new NativeHost(new Object(), "6.1.3", () -> {}).access());
         assertTrue(
                 !wrongVersion.capabilities().get("gatePassed").getAsBoolean(),
                 "unsupported version fails before any native binding");
-        GridAdapter noSource = new Bitwig614GridAdapter(new Bitwig614Runtime(new Object(), "6.1.4", () -> {}).access());
+        GridAdapter noSource = new NativeGridAdapter(new NativeHost(new Object(), "6.1.4", () -> {}).access());
         assertTrue(
                 !noSource.capabilities().get("gatePassed").getAsBoolean(),
                 "missing loaded CodeSource cannot fall back to arbitrary installed JAR");
@@ -268,12 +267,12 @@ public final class GridModuleTest {
         try {
             Files.writeString(file, "abc", StandardCharsets.UTF_8);
             assertTrue(
-                    Bitwig614Runtime.hash(file, () -> {})
+                    NativeHost.hash(file, () -> {})
                             .equals("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"),
                     "hash reads bytes not filename or version text");
             {
                 RpcException error = assertThrows(RpcException.class, () -> {
-                    Bitwig614Runtime.hash(file, () -> {
+                    NativeHost.hash(file, () -> {
                         throw Errors.notApplied(Reason.CANCELLED, "cancel hashing");
                     });
                 });
@@ -1194,7 +1193,7 @@ public final class GridModuleTest {
     private static JsonObject capabilitiesWith(GridTopologyQuarantine guard) {
         JsonObject full = new JsonObject();
         full.addProperty("topologyQuarantined", guard.quarantined());
-        full.add("topologyQuarantine", Bitwig614GridAdapter.quarantineState(guard));
+        full.add("topologyQuarantine", NativeGridAdapter.quarantineState(guard));
         return full;
     }
 

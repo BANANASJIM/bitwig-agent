@@ -4,6 +4,7 @@ import com.google.gson.*;
 import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.Outcome;
 import dev.bitwigagent.core.Reason;
+import dev.bitwigagent.core.Verification;
 
 /** One panel CAS with its unique same-module bipolar scalar guarded and reported explicitly. */
 public final class GridBooleanPanelWriter {
@@ -80,7 +81,7 @@ public final class GridBooleanPanelWriter {
         result.addProperty(
                 "couplingScope", "unique_same_module_exact_TZj_reference_native_range_and_value_side_effects");
         result.addProperty("mutationDispatched", changed);
-        result.addProperty("verification", "exact_native_boolean_panel_readback");
+        Verification.NATIVE_READBACK.put(result);
         result.addProperty("nativeMutation", changed);
         result.addProperty("nativeUndo", changed);
         result.addProperty(

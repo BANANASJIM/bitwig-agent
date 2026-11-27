@@ -16,12 +16,14 @@ import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.Scheduler;
 import dev.bitwigagent.core.ValueInput;
 import dev.bitwigagent.core.ValueMatch;
+import dev.bitwigagent.core.Verification;
 import dev.bitwigagent.host.DeviceSources;
 import dev.bitwigagent.host.RequestSnapshot;
 import dev.bitwigagent.host.TrackRefs;
 import dev.bitwigagent.host.TrackWindow;
 import dev.bitwigagent.host.TransportSafety;
 import java.util.*;
+import java.util.function.Consumer;
 
 /**
  * parameters.list and parameters.set: one parameter of a device by its ref. Direct parameters of a root device are
@@ -260,13 +262,15 @@ public final class ParameterModule implements HostModule, ParameterResolver.Dire
                 observed -> {
                     snapshot.require(op);
                     Double seen = observedAfter(parameter, before);
-                    op.result.complete(result(
+                    JsonObject result = result(
                             ref,
                             asked,
                             seen,
                             null,
                             observed ? Outcome.APPLIED : Outcome.UNKNOWN,
-                            observed ? null : seen != null ? Reason.READBACK_MISMATCH : Reason.NOT_OBSERVED));
+                            observed ? null : seen != null ? Reason.READBACK_MISMATCH : Reason.NOT_OBSERVED);
+                    if (observed) Verification.API_READBACK.put(result);
+                    op.result.complete(result);
                 });
     }
 
@@ -359,7 +363,8 @@ public final class ParameterModule implements HostModule, ParameterResolver.Dire
                                     op,
                                     port,
                                     wanted,
-                                    outcome -> finishSolve(op, ref, text, wanted, parameter, outcome))
+                                    outcome -> finishSolve(
+                                            op, ref, text, wanted, parameter, outcome, Verification.API_READBACK::put))
                             .start();
                 });
     }
@@ -375,7 +380,8 @@ public final class ParameterModule implements HostModule, ParameterResolver.Dire
             String text,
             DisplayScale.Quantity wanted,
             ParameterState parameter,
-            DisplaySolver.Result solved) {
+            DisplaySolver.Result solved,
+            Consumer<JsonObject> evidence) {
         JsonElement asked = new JsonObject();
         ((JsonObject) asked).addProperty("display", text);
         Outcome outcome = solved.ok
@@ -383,6 +389,7 @@ public final class ParameterModule implements HostModule, ParameterResolver.Dire
                 : !solved.dispatched || solved.restored ? Outcome.NOT_APPLIED : Outcome.UNKNOWN;
         JsonObject result =
                 result(ref, asked, parameter.value, solved.observedDisplay, outcome, solved.ok ? null : solved.reason);
+        if (outcome == Outcome.APPLIED) evidence.accept(result);
         result.add("displayWrite", solved.json(text, wanted.value));
         op.result.complete(result);
     }
@@ -446,13 +453,15 @@ public final class ParameterModule implements HostModule, ParameterResolver.Dire
             walk.a.write(parameter, applied);
             double seen = walk.a.value(parameter);
             boolean ok = Math.abs(seen - applied) <= TOLERANCE;
-            return result(
+            JsonObject result = result(
                     ref,
                     asked,
                     seen,
                     walk.a.display(parameter),
                     ok ? Outcome.APPLIED : Outcome.UNKNOWN,
                     ok ? null : Reason.READBACK_MISMATCH);
+            if (ok) nativeEvidence(walk.a, result);
+            return result;
         });
     }
 
@@ -484,7 +493,14 @@ public final class ParameterModule implements HostModule, ParameterResolver.Dire
                                             op,
                                             port,
                                             wanted,
-                                            outcome -> finishSolve(op, ref, text, wanted, port.observed(), outcome))
+                                            outcome -> finishSolve(
+                                                    op,
+                                                    ref,
+                                                    text,
+                                                    wanted,
+                                                    port.observed(),
+                                                    outcome,
+                                                    result -> nativeEvidence(port.a, result)))
                                     .start(),
                             0);
                 },
@@ -497,6 +513,7 @@ public final class ParameterModule implements HostModule, ParameterResolver.Dire
         private final JsonObject ref;
         private final Runnable safety;
         volatile Object parameter;
+        private volatile NativeChains.Access a;
         private volatile Double value;
         private volatile String display;
         private volatile long valueSeq, displaySeq;
@@ -509,6 +526,7 @@ public final class ParameterModule implements HostModule, ParameterResolver.Dire
         }
 
         void read(NativeChains.Walk walk) {
+            a = walk.a;
             value = finite(walk.a.value(parameter));
             display = walk.a.display(parameter);
             valueSeq++;
@@ -563,6 +581,11 @@ public final class ParameterModule implements HostModule, ParameterResolver.Dire
             RuntimeException failed = failure;
             if (failed != null) throw failed;
         }
+    }
+
+    private static void nativeEvidence(NativeChains.Access a, JsonObject result) {
+        Verification.NATIVE_READBACK.put(result);
+        a.provenance(result);
     }
 
     private static Double finite(double value) {

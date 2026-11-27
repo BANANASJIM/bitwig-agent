@@ -10,8 +10,6 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import com.google.gson.*;
 import dev.bitwigagent.HostFixture;
-import dev.bitwigagent.bitwig614.Bitwig614GridConnectionAccess;
-import dev.bitwigagent.bitwig614.Bitwig614GridModuleAccess;
 import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.HostOperation;
 import dev.bitwigagent.core.Reason;
@@ -19,6 +17,8 @@ import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.RpcException;
 import dev.bitwigagent.host.DeviceSources;
 import dev.bitwigagent.host.NativeReadContext;
+import dev.bitwigagent.nativehost.NativeGridConnectionAccess;
+import dev.bitwigagent.nativehost.NativeGridModuleAccess;
 import java.util.*;
 import java.util.function.Supplier;
 import java.util.stream.Stream;
@@ -1582,7 +1582,7 @@ public final class GridSnapshotReaderTest {
                         && result.get("previousValue").getAsString().equals("before")
                         && result.get("requestedValue").getAsString().equals(text)
                         && result.get("mutationDispatched").getAsBoolean()
-                        && result.get("verification").getAsString().equals("exact_native_string_panel_readback")
+                        && result.get("verification").getAsString().equals("native_readback")
                         && !result.get("undoGroupingVerified").getAsBoolean()
                         && !result.get("engineAcknowledgement").getAsBoolean(),
                 "string panel write performs one native operation, preserves text verbatim and reads it back");
@@ -2279,8 +2279,8 @@ public final class GridSnapshotReaderTest {
             java.lang.reflect.Method exception = TestMoveCallback.class.getMethod("error", Exception.class);
             java.lang.reflect.Method message = TestMoveCallback.class.getMethod("error", String.class);
             for (int mode = 0; mode < 6; mode++) {
-                Bitwig614GridModuleAccess.MoveCallback capture =
-                        new Bitwig614GridModuleAccess.MoveCallback(success, exception, message);
+                NativeGridModuleAccess.MoveCallback capture =
+                        new NativeGridModuleAccess.MoveCallback(success, exception, message);
                 if (mode == 0) capture.invoke(null, success, new Object[] {new Object()});
                 if (mode == 1) capture.invoke(null, exception, new Object[] {new Exception("native")});
                 if (mode == 2) capture.invoke(null, message, new Object[] {"rejected"});
@@ -2761,15 +2761,15 @@ public final class GridSnapshotReaderTest {
     void connectionExactRuntimeGatesRejectOverrides() {
         class Base {}
         class Derived extends Base {}
-        Bitwig614GridConnectionAccess.requireExact(new Base(), Base.class, "test input");
+        NativeGridConnectionAccess.requireExact(new Base(), Base.class, "test input");
         assertRpcError(
                 "native_unavailable",
-                () -> Bitwig614GridConnectionAccess.requireExact(new Derived(), Base.class, "test input"));
+                () -> NativeGridConnectionAccess.requireExact(new Derived(), Base.class, "test input"));
         assertRpcError(
                 "native_unavailable",
-                () -> Bitwig614GridConnectionAccess.requireExact(new Derived(), Base.class, "test undo"));
+                () -> NativeGridConnectionAccess.requireExact(new Derived(), Base.class, "test undo"));
         assertRpcError(
-                "native_unavailable", () -> Bitwig614GridConnectionAccess.requireExact(null, Base.class, "test undo"));
+                "native_unavailable", () -> NativeGridConnectionAccess.requireExact(null, Base.class, "test undo"));
     }
 
     public static final class ConnectionFixture implements GridConnectionWriter.Access {
@@ -3285,6 +3285,7 @@ public final class GridSnapshotReaderTest {
         final Node first = module(0, graph), second = module(1, graph);
         final Node input = port(INPUT, first, "in"), output = port(OUTPUT, first, "out");
         List<?> catalog = List.of();
+        Set<Class<?>> internal = Set.of();
         boolean parameters = true, display = true, document = true;
         int closed, catalogReads, graphReads, targetReads, uuidReads;
         Runnable afterModules = () -> {};
@@ -3392,6 +3393,7 @@ public final class GridSnapshotReaderTest {
 
         @Override
         public boolean is(GridSnapshotReader.Kind kind, Object value) {
+            if (kind == GridSnapshotReader.Kind.INTERNAL) return internal.contains(value.getClass());
             return value instanceof Node && ((Node) value).kinds.contains(kind);
         }
 

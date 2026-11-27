@@ -1,5 +1,5 @@
-"""Data shipped with the package: the Bitwig host target, the facts shared with the Java extension, and the Grid module
-schema and measured notes for that host."""
+"""Data shipped with the package: the Bitwig host targets, the facts shared with the Java extension, and the Grid module
+schema and measured notes per host."""
 
 from __future__ import annotations
 
@@ -21,18 +21,19 @@ def _load(path: str) -> dict[str, Any]:
 shared = _shared  # `shared/<name>.json`: also bundled into the extension jar, read by both sides
 
 
-def host_version() -> str:
-    version: str = shared("host")["version"]
-    return version
+def host_version(connected: str | None = None) -> str:
+    """The supported host whose Grid schema and notes apply: the connected one, else (offline) the newest."""
+    versions: list[str] = [host["version"] for host in shared("host")]
+    return connected if connected is not None and connected in versions else versions[-1]
 
 
-def _versioned(stem: str) -> dict[str, Any]:
-    return _load(f"data/{stem}_{host_version().replace('.', '_')}.json")
+def _versioned(stem: str, connected: str | None) -> dict[str, Any]:
+    return _load(f"data/{stem}_{host_version(connected).replace('.', '_')}.json")
 
 
-def bundled_schema() -> dict[str, Any]:
-    return _versioned("grid_schema")
+def bundled_schema(connected: str | None = None) -> dict[str, Any]:
+    return _versioned("grid_schema", connected)
 
 
-def measured_notes() -> dict[str, Any]:
-    return _versioned("grid_notes")
+def measured_notes(connected: str | None = None) -> dict[str, Any]:
+    return _versioned("grid_notes", connected)

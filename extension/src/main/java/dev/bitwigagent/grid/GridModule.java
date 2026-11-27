@@ -3,7 +3,6 @@ package dev.bitwigagent.grid;
 import com.bitwig.extension.callback.*;
 import com.bitwig.extension.controller.api.*;
 import com.google.gson.*;
-import dev.bitwigagent.bitwig614.Bitwig614GridAdapter;
 import dev.bitwigagent.core.BoundedJson;
 import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.HostModule;
@@ -16,6 +15,7 @@ import dev.bitwigagent.core.Scheduler;
 import dev.bitwigagent.host.DeviceSources;
 import dev.bitwigagent.host.NativeRuntime;
 import dev.bitwigagent.host.TransportSafety;
+import dev.bitwigagent.nativehost.NativeGridAdapter;
 import java.util.Set;
 import java.util.UUID;
 
@@ -195,7 +195,7 @@ public final class GridModule implements HostModule {
     public void status(HostOperation operation, JsonObject out, boolean full) {
         if (!full) return;
         if (adapter == null)
-            adapter = new Bitwig614GridAdapter(natives.get(operation).access());
+            adapter = new NativeGridAdapter(natives.get(operation).access());
         out.add("grid", adapter.capabilities());
     }
 
@@ -246,7 +246,7 @@ public final class GridModule implements HostModule {
     @Override
     public void dispatch(HostOperation op, String method, JsonObject p) {
         scheduler.check(op);
-        if (adapter == null) adapter = new Bitwig614GridAdapter(natives.get(op).access());
+        if (adapter == null) adapter = new NativeGridAdapter(natives.get(op).access());
         final boolean moving = method.equals("grid.modules.move");
         final boolean connection = method.equals("grid.connections.set");
         final boolean inserting = method.equals("grid.modules.insert");
@@ -409,7 +409,7 @@ public final class GridModule implements HostModule {
     public void ackTopology(HostOperation op, String device) {
         scheduler.check(op);
         String trackId = device.substring(0, device.indexOf('/'));
-        if (adapter == null) adapter = new Bitwig614GridAdapter(natives.get(op).access());
+        if (adapter == null) adapter = new NativeGridAdapter(natives.get(op).access());
         java.util.List<DeviceSources.RootReadTicket> targets = sources.rootReads(trackId);
         adapter.execute(() -> {
             try {

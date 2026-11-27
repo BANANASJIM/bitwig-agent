@@ -7,8 +7,6 @@ import com.bitwig.extension.controller.api.Action;
 import com.bitwig.extension.controller.api.Application;
 import com.bitwig.extension.controller.api.Project;
 import com.google.gson.JsonObject;
-import dev.bitwigagent.bitwig614.Bitwig614ProjectSaveAsAccess;
-import dev.bitwigagent.bitwig614.Bitwig614Runtime;
 import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.Holds;
 import dev.bitwigagent.core.HostModule;
@@ -19,8 +17,11 @@ import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.RpcException;
 import dev.bitwigagent.core.Scheduler;
+import dev.bitwigagent.core.Verification;
 import dev.bitwigagent.host.NativeRuntime;
 import dev.bitwigagent.host.ProjectState;
+import dev.bitwigagent.nativehost.NativeHost;
+import dev.bitwigagent.nativehost.NativeProjectSaveAsAccess;
 import dev.bitwigagent.recovery.JobsModule;
 import java.nio.file.Path;
 import java.util.Set;
@@ -47,7 +48,7 @@ public final class ProjectModule implements HostModule, JobsModule.Source {
     public interface SaveAsAccess {
         void execute(Runnable work);
 
-        String nativeJarSha256();
+        void provenance(JsonObject out);
         /** Bitwig's configured projects folder; native document thread. */
         Path projectsRoot();
         /** Dispatch once on the native document thread; failures before beforeDispatch are not_applied. */
@@ -225,15 +226,14 @@ public final class ProjectModule implements HostModule, JobsModule.Source {
         }
         result.addProperty(
                 "binding",
-                "exact_" + Bitwig614Runtime.VERSION
-                        + "_hash_gated_save_project_pipeline_with_native_completion_callback");
-        result.addProperty("verification", "native_callback_file_written_isModified_false_and_project_name");
+                "exact_" + NativeHost.SUPPORTED + "_hash_gated_save_project_pipeline_with_native_completion_callback");
+        Verification.FILE_READBACK.put(result);
         return result;
     }
 
     private SaveAsAccess access(HostOperation op) {
         if (access == null)
-            access = Bitwig614ProjectSaveAsAccess.bind(natives.get(op).access());
+            access = NativeProjectSaveAsAccess.bind(natives.get(op).access());
         return access;
     }
 
@@ -306,7 +306,7 @@ public final class ProjectModule implements HostModule, JobsModule.Source {
                         op.fail(error);
                         return;
                     }
-                    next.failed(Bitwig614Runtime.diagnostic(error), false);
+                    next.failed(NativeHost.diagnostic(error), false);
                     finishSaveAs(op, next, bridge);
                 }
             });
@@ -354,8 +354,10 @@ public final class ProjectModule implements HostModule, JobsModule.Source {
             return;
         }
         JsonObject result;
-        if (done && saveObserved(current.plan)) result = Results.outcome(Outcome.APPLIED);
-        else {
+        if (done && saveObserved(current.plan)) {
+            result = Results.outcome(Outcome.APPLIED);
+            Verification.FILE_READBACK.put(result);
+        } else {
             result = JobsModule.deadline(
                     current.id,
                     done
@@ -378,8 +380,7 @@ public final class ProjectModule implements HostModule, JobsModule.Source {
         result.addProperty("expectedProjectName", plan.name);
         result.addProperty("projectName", application.projectName().get());
         result.add("projectModified", Results.modified(projectState.modified()));
-        result.addProperty("nativeVersion", Bitwig614Runtime.VERSION);
-        result.addProperty("nativeJarSha256", bridge.nativeJarSha256());
+        bridge.provenance(result);
         result.addProperty("verificationScope", "native_callback_file_and_model_flags_not_reopen");
     }
 

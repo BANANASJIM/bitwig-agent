@@ -33,7 +33,7 @@ Turn the user's musical goal into a small, inspectable next step. The CLI knows 
 | Where am I, what is in the project | `bitwig-agent context get` | none |
 | New instrument or sound (preset first if one fits, else a Poly Grid) | `bitwig-agent presets search --help` | [midi-and-clips](references/midi-and-clips.md), [grid-and-recipes](references/grid-and-recipes.md), [sound-design](references/sound-design.md) |
 | New clip with notes, clip variants | `bitwig-agent clips insert --help` | [midi-and-clips](references/midi-and-clips.md) |
-| Edit notes of an existing clip | `bitwig-agent notes edit --help` | [midi-and-clips](references/midi-and-clips.md) |
+| Edit notes of an existing clip | `bitwig-agent notes set --help` | [midi-and-clips](references/midi-and-clips.md) |
 | Levels, routing, sidechain, groups | `bitwig-agent devices sidechain set --help` | [mixing-and-export](references/mixing-and-export.md) |
 | Bounce, export, loudness | `bitwig-agent export audio --help` | [mixing-and-export](references/mixing-and-export.md) |
 | Song structure, launcher vs arranger, automation | `bitwig-agent automation points set --help` | [arrangement-and-automation](references/arrangement-and-automation.md) |

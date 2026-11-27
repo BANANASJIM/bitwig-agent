@@ -9,7 +9,6 @@ import static dev.bitwigagent.host.DeviceSources.Native.Field.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 import com.google.gson.*;
-import dev.bitwigagent.bitwig614.Bitwig614Runtime;
 import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.HostOperation;
 import dev.bitwigagent.core.Outcome;
@@ -17,6 +16,7 @@ import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.RpcException;
 import dev.bitwigagent.host.NativeReadContext;
+import dev.bitwigagent.nativehost.NativeHost;
 import java.lang.reflect.*;
 import java.util.*;
 import java.util.function.Consumer;
@@ -384,7 +384,7 @@ public final class GridModuleNameWriterTest {
             Throwable nativeError = f.failure.getCause();
             assertTrue(
                     nativeError instanceof RpcException
-                            && Bitwig614Runtime.isInvocationFailure(nativeError)
+                            && NativeHost.isInvocationFailure(nativeError)
                             && nativeError.getCause() instanceof InvocationTargetException
                             && nativeError.getCause().getCause() == cause,
                     "shared quarantine preserves translated reflection boundary and original native throwable identity");
@@ -508,7 +508,7 @@ public final class GridModuleNameWriterTest {
             return () -> {
                 calls++;
                 if (reflectedFailure != null) {
-                    Bitwig614Runtime.invoke(
+                    NativeHost.invoke(
                             PartialSetter.SET, new PartialSetter((Node) module, reflectedFailure), customName);
                     return;
                 }

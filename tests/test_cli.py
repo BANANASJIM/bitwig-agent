@@ -62,16 +62,16 @@ async def test_typed_arguments_forward_without_null_defaults(host, monkeypatch):
 async def test_nested_note_arguments_and_raw_json_are_equivalent(host, monkeypatch):
     monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
     edits = [
-        {"op": "set", "beat": 0, "pitch": 60, "velocity": 90, "durationBeats": 1},
+        {"op": "set", "beat": 0, "pitch": 60, "velocity": 90, "duration": 1},
         {"op": "clear", "beat": 1, "pitch": 64},
     ]
     args = {**NOTE_WINDOW, "edits": edits}
-    typed = flags("notes.edit", args)
-    for argv in [["notes.edit", *typed], ["notes.edit", json.dumps(args)]]:
+    typed = flags("notes.set", args)
+    for argv in [["notes.set", *typed], ["notes.set", json.dumps(args)]]:
         payload, code = await execute(argv)
         assert code == 0, payload
         assert host.requests[-1]["params"] == args
-    assert "durationBeats" not in host.requests[-1]["params"]["edits"][1]
+    assert "duration" not in host.requests[-1]["params"]["edits"][1]
 
 
 @pytest.mark.parametrize(
@@ -83,9 +83,9 @@ async def test_nested_note_arguments_and_raw_json_are_equivalent(host, monkeypat
         ["transport.set", "--playing=1"],
         ["transport.set", "--playing=null"],
         ["transport.set", "--playing=true", "--playing=false"],
-        ["transport.set", "--tempoBpm=NaN"],
-        ["transport.set", "--tempoBpm=1e9999"],
-        ["transport.set", "--tempoBpm=19"],
+        ["transport.set", "--tempo=NaN"],
+        ["transport.set", "--tempo=1e9999"],
+        ["transport.set", "--tempo=19"],
         ["transport.set"],
         ["tracks.set", TARGET_FLAG, "--mute=true", "--volume=2"],
         ["tracks.insert", "--type=instrument", "--position=1.5", "--name=x"],
@@ -341,7 +341,7 @@ async def test_offline_entrypoint_and_client_do_not_import_mcp():
         "-m",
         "bitwig_agent.frontends.cli",
         "help",
-        "notes.edit",
+        "notes.set",
         "--schema",
         env={**os.environ, "BITWIG_AGENT_PORT": "bad"},
         stdout=asyncio.subprocess.PIPE,
@@ -349,7 +349,7 @@ async def test_offline_entrypoint_and_client_do_not_import_mcp():
     )
     stdout, stderr = await process.communicate()
     assert process.returncode == 0, stderr.decode()
-    assert json.loads(stdout)["method"] == "notes.edit"
+    assert json.loads(stdout)["method"] == "notes.set"
 
 
 DEVICE_REF = {"kind": "device", "track": {"kind": "track", "id": TRACK, "name": "Lead"}, "index": 0, "name": "Polymer"}
@@ -522,7 +522,7 @@ def test_unknown_argument_synonyms_hint_but_never_alias():
     target = GRID
     for method, bad, want in (
         ("grid.get", {**target, "offset": 0, "limit": 5}, ["moduleOffset", "moduleLimit"]),
-        ("transport.set", {"tempo": 120}, ["tempoBpm"]),
+        ("transport.set", {"bpm": 120}, ["tempo"]),
         ("grid.connections.set", {**target, "instanceId": "x"}, ["targetModuleId"]),
     ):
         with pytest.raises(ValidationError) as error:
@@ -535,12 +535,12 @@ def test_unknown_argument_synonyms_hint_but_never_alias():
 def test_nested_unknown_argument_names_full_path_and_siblings():
 
     args = {
-        "to": {"track": TRACK_REF, "startBeats": 0},
+        "to": {"track": TRACK_REF, "start": 0},
         "name": "x",
-        "lengthBeats": 4,
+        "length": 4,
         "notes": [
-            {"beat": 0, "pitch": 60, "velocity": 0.8, "durationBeats": 1},
-            {"beat": 1, "pitch": 62, "velocity": 0.8, "durationBeats": 1, "channel": 2},
+            {"beat": 0, "pitch": 60, "velocity": 0.8, "duration": 1},
+            {"beat": 1, "pitch": 62, "velocity": 0.8, "duration": 1, "channel": 2},
         ],
     }
     with pytest.raises(ValidationError) as error:
@@ -548,7 +548,7 @@ def test_nested_unknown_argument_names_full_path_and_siblings():
     message = invalid_params_message("clips.insert", error.value)
     assert "notes[1].channel" in message
     assert "Accepted at notes[]: " in message
-    assert "durationBeats" in message
+    assert "duration" in message
     assert "velocity" in message
     assert "notes (did you mean notes?)" not in message
     assert "notes.1" not in message
@@ -631,8 +631,8 @@ async def test_json_is_compact_in_a_pipe_and_indented_on_a_terminal(host, monkey
 
 
 def test_flag_forms_bare_boolean_separate_value_and_operand_end():
-    params, timeout = parse_arguments("transport.set", ["--playing", "--timeoutMs", "250", "--", '{"tempoBpm":120}'])
-    assert params == {"playing": True, "tempoBpm": 120}
+    params, timeout = parse_arguments("transport.set", ["--playing", "--timeoutMs", "250", "--", '{"tempo":120}'])
+    assert params == {"playing": True, "tempo": 120}
     assert timeout == 250
     assert parse_arguments("tracks.set", [TARGET_FLAG, "--name", "Bass"])[0]["name"] == "Bass"
     with pytest.raises(ValueError, match="needs a value"):
@@ -642,11 +642,11 @@ def test_flag_forms_bare_boolean_separate_value_and_operand_end():
 async def test_stdin_feeds_one_value_or_the_whole_operand(host, monkeypatch):
     monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
     reply_with(host, {"outcome": "applied"})
-    assert (await execute(["transport", "set", "--tempoBpm=-"], stdin="120.5"))[1] == 0
-    assert host.requests[-1]["params"] == {"tempoBpm": 120.5}
+    assert (await execute(["transport", "set", "--tempo=-"], stdin="120.5"))[1] == 0
+    assert host.requests[-1]["params"] == {"tempo": 120.5}
     assert (await execute(["transport", "set", "-"], stdin='{"playing": false}'))[1] == 0
     assert host.requests[-1]["params"] == {"playing": False}
-    payload, code = await execute(["transport", "set", "--tempoBpm=-", "-"], stdin="1")
+    payload, code = await execute(["transport", "set", "--tempo=-", "-"], stdin="1")
     assert code == 2
     assert "stdin can be read once" in payload["error"]["message"]
     assert len(host.requests) == 2
@@ -657,8 +657,8 @@ async def test_operand_file_and_flags_merge_and_a_repeat_is_an_error(host, monke
     reply_with(host, {"outcome": "applied"})
     path = tmp_path / "args.json"
     path.write_text('{"playing": true}')
-    assert (await execute(["transport", "set", f"@{path}", "--tempoBpm=100"]))[1] == 0
-    assert host.requests[-1]["params"] == {"playing": True, "tempoBpm": 100}
+    assert (await execute(["transport", "set", f"@{path}", "--tempo=100"]))[1] == 0
+    assert host.requests[-1]["params"] == {"playing": True, "tempo": 100}
     payload, code = await execute(["transport", "set", f"@{path}", "--playing=false"])
     assert code == 2
     assert "Given both as flag and in ARGS: playing" in payload["error"]["message"]
@@ -758,7 +758,7 @@ async def test_bad_row_options_are_usage_errors(host, monkeypatch, argv, fragmen
     ("argv", "fragment"),
     [
         (["status", "--format=csv"], "has no record list"),
-        (["notes", "read", "--format=csv"], "returns an outcome"),
+        (["notes", "get", "--format=csv"], "returns an outcome"),
         (["transport", "set", "--playing=false", "--fields=outcome"], "returns an outcome"),
     ],
 )
@@ -936,7 +936,7 @@ async def test_batch_stops_at_the_first_error_and_names_the_line(host, monkeypat
         ('{"method":"status","extra":1}\n', "line 1: expected"),
         ("\n \n", "no calls"),
         ('{"method":"nope"}\n', "line 1: Unknown method"),
-        ('{"method":"status"}\n{"method":"transport.set","params":{"tempoBpm":19}}\n', "line 2: "),
+        ('{"method":"status"}\n{"method":"transport.set","params":{"tempo":19}}\n', "line 2: "),
     ],
 )
 async def test_batch_validates_every_line_before_sending_any(host, monkeypatch, stdin, fragment):
@@ -1229,3 +1229,10 @@ async def test_catalog_rows_print_as_records_and_filters_reach_the_host(host, mo
     )
     assert out.stdout.splitlines() == ["name\tpath", "Delay+\t/x/Delay+.bwdevice"]
     assert host.requests[-1]["params"] == {"query": "delay", "category": "Delay"}
+
+
+def test_a_union_with_a_string_takes_a_bare_word_and_still_parses_json():
+    assert args_of("devices.insert", ["--position=start"]) == {"position": "start"}
+    assert args_of("devices.insert", ['--position={"before": 1}']) == {"position": {"before": 1}}
+    with pytest.raises(ValueError, match="--insert: not strict JSON"):
+        args_of("devices.insert", ["--insert=bare"])

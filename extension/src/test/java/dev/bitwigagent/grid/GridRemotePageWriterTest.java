@@ -304,7 +304,7 @@ public final class GridRemotePageWriterTest {
                 "slots hold the bound native parameters and labels");
         assertTrue(
                 result.get("created").getAsBoolean()
-                        && result.get("verification").getAsString().equals("exact_native_remote_page_readback")
+                        && result.get("verification").getAsString().equals("native_readback")
                         && result.getAsJsonObject("page")
                                 .get("name")
                                 .getAsString()
@@ -395,7 +395,7 @@ public final class GridRemotePageWriterTest {
                         && !result.get("created").getAsBoolean()
                         && page.slots.size() == 2
                         && page.slots.get(1).target == f.grit
-                        && result.get("verification").getAsString().equals("exact_native_remote_page_readback"),
+                        && result.get("verification").getAsString().equals("native_readback"),
                 "replace maps changed slots and clears slots the request leaves empty, keeping matching ones");
         f.calls.clear();
         f.op = new HostOperation(Long.MAX_VALUE);
@@ -638,7 +638,7 @@ public final class GridRemotePageWriterTest {
                         && f.pages.size() == 1
                         && f.op.dispatched()
                         && result.get("deletedPage").getAsString().equals("Macros")
-                        && result.get("verification").getAsString().equals("native_page_absent_after_delete")
+                        && result.get("verification").getAsString().equals("native_readback")
                         && result.getAsJsonArray("pages").size() == 2,
                 "a named preset page is deleted and verified absent");
         RemoteFixture missing = new RemoteFixture();

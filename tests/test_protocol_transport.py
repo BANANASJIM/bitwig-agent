@@ -6,7 +6,9 @@ from bitwig_agent.protocol import validate_call
 
 def test_transport_rejects_finite_fields_whose_loop_end_overflows():
     with pytest.raises(ValidationError):
-        validate_call("transport.set", {"loopStartBeats": 1e308, "loopDurationBeats": 1e308})
+        validate_call("transport.set", {"loop": {"start": 1e308, "length": 1e308}})
+    with pytest.raises(ValidationError):
+        validate_call("transport.set", {"loop": {}})
 
 
 def test_transport_guide_settings():

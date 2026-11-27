@@ -414,8 +414,8 @@ public final class ProjectModuleTest {
                     document.add(work);
                 }
 
-                public String nativeJarSha256() {
-                    return "simulated";
+                public void provenance(JsonObject out) {
+                    out.addProperty("nativeVersion", "simulated");
                 }
 
                 public Path projectsRoot() {

@@ -5,11 +5,12 @@ from bitwig_agent.protocol import TOOLS, validate_call
 
 TRACK = {"kind": "track", "id": "11111111-1111-1111-1111-111111111111", "name": "Lead"}
 OTHER = "22222222-2222-2222-2222-222222222222"
+OTHER_TRACK = {"kind": "track", "id": OTHER, "name": "Bass"}
 DEVICE = {"kind": "device", "track": TRACK, "index": 0, "name": "Compressor"}
 SIDECHAIN_REF = {"kind": "sidechain", "device": DEVICE, "index": 0, "id": "SIDECHAIN"}
 SIDECHAIN = {
     "target": SIDECHAIN_REF,
-    "source": {"kind": "pre_fader", "trackId": OTHER},
+    "source": {"kind": "pre_fader", "track": OTHER_TRACK},
     "expect": {"source": {"kind": "none"}},
 }
 
@@ -30,14 +31,14 @@ def test_routing_get_and_choices():
 @pytest.mark.parametrize(
     "args",
     [
-        {"output": {"kind": "track_audio_input", "trackId": OTHER}, "expect": {"output": {"kind": "none"}}},
+        {"output": {"kind": "track_audio_input", "track": OTHER_TRACK}, "expect": {"output": {"kind": "none"}}},
         {
-            "output": {"kind": "track_note_input", "trackId": OTHER},
+            "output": {"kind": "track_note_input", "track": OTHER_TRACK},
             "expect": {"output": {"kind": "other", "name": "Out 1/2"}},
         },
-        {"output": {"kind": "none"}, "expect": {"output": {"kind": "track_audio_input", "trackId": OTHER}}},
-        {"input": {"kind": "post_fader", "trackId": OTHER}, "expect": {"input": {"kind": "none"}}},
-        {"input": {"kind": "all_ins"}, "expect": {"input": {"kind": "track_notes", "trackId": OTHER}}},
+        {"output": {"kind": "none"}, "expect": {"output": {"kind": "track_audio_input", "track": OTHER_TRACK}}},
+        {"input": {"kind": "post_fader", "track": OTHER_TRACK}, "expect": {"input": {"kind": "none"}}},
+        {"input": {"kind": "all_ins"}, "expect": {"input": {"kind": "track_notes", "track": OTHER_TRACK}}},
         {"input": {"kind": "onscreen_keyboard"}},
         {"output": {"kind": "none"}},
         {
@@ -61,10 +62,10 @@ def test_routing_set_accepts_entries_with_an_optional_expect(args):
         {"input": {"kind": "none"}, "expect": {"output": {"kind": "none"}}},
         {"output": {"kind": "none"}, "expect": {}},
         {"output": {"kind": "none"}, "expectedOutput": {"kind": "none"}},
-        {"output": {"kind": "pre_fader", "trackId": OTHER}},
-        {"input": {"kind": "track_audio_input", "trackId": OTHER}},
+        {"output": {"kind": "pre_fader", "track": OTHER_TRACK}},
+        {"input": {"kind": "track_audio_input", "track": OTHER_TRACK}},
         {"output": {"kind": "track_audio_input"}},
-        {"output": {"kind": "none", "trackId": OTHER}},
+        {"output": {"kind": "none", "track": OTHER_TRACK}},
         {"output": {"kind": "other", "name": "Out"}},
         {"output": {"kind": "none"}, "expect": {"output": {"kind": "other"}}},
         {"output": {"kind": "none"}, "expect": {"output": {"kind": "none", "nativeType": "fe"}}},
@@ -72,7 +73,8 @@ def test_routing_set_accepts_entries_with_an_optional_expect(args):
         {"output": {"kind": "none"}, "expect": {"output": {"kind": "none", "name": "x"}}},
         {"output": {"kind": "none"}, "expect": {"output": {"kind": "none", "extra": 1}}},
         {"input": {"kind": "hardware"}},
-        {"input": {"kind": "pre_fader", "trackId": "nope"}},
+        {"input": {"kind": "pre_fader", "trackId": OTHER}},
+        {"input": {"kind": "pre_fader", "track": {"kind": "track", "id": OTHER}}},
         {"input": {"kind": "none"}, "expect": {"input": None}},
     ],
 )
@@ -114,7 +116,7 @@ def test_sidechain_set_addresses_the_component_by_its_ref():
         {"target": {**SIDECHAIN_REF, "moduleId": "module"}},
         {"target": {**SIDECHAIN_REF, "index": -1}},
         {"target": DEVICE},
-        {"source": {"kind": "track_audio_input", "trackId": OTHER}},
+        {"source": {"kind": "track_audio_input", "track": OTHER_TRACK}},
         {"source": {"kind": "other", "name": "In 1"}},
         {"expect": {"source": {"kind": "other"}}},
         {"expect": {}},

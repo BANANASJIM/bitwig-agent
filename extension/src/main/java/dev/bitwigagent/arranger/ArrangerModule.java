@@ -3,7 +3,6 @@ package dev.bitwigagent.arranger;
 import com.bitwig.extension.callback.*;
 import com.bitwig.extension.controller.api.*;
 import com.google.gson.*;
-import dev.bitwigagent.bitwig614.Bitwig614ArrangerAccess;
 import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.Holds;
 import dev.bitwigagent.core.HostLimits;
@@ -20,6 +19,7 @@ import dev.bitwigagent.host.TrackWindow;
 import dev.bitwigagent.host.TransportSafety;
 import dev.bitwigagent.launcher.LauncherState;
 import dev.bitwigagent.launcher.NoteGrid;
+import dev.bitwigagent.nativehost.NativeArrangerAccess;
 import java.math.BigDecimal;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicLongArray;
@@ -37,8 +37,8 @@ public final class ArrangerModule implements HostModule {
         JsonObject create(
                 Object trackProxy,
                 String trackId,
-                double startBeats,
-                double lengthBeats,
+                double clipStart,
+                double clipLength,
                 String name,
                 List<double[]> notes,
                 int channel,
@@ -50,7 +50,7 @@ public final class ArrangerModule implements HostModule {
                 Object slotProxy,
                 String trackId,
                 String expectedClipName,
-                double startBeats,
+                double clipStart,
                 Runnable check,
                 Runnable beforeWrite);
 
@@ -108,7 +108,7 @@ public final class ArrangerModule implements HostModule {
     @Override
     public void validate(String method, JsonObject p) {}
 
-    /** Notes are {beat, pitch, velocity, durationBeats}; beats are relative to the clip start, on a 1/128-beat grid. */
+    /** Notes are {beat, pitch, velocity, duration}; beats are relative to the clip start, on a 1/128-beat grid. */
     public static List<double[]> notes(JsonArray array, double length) {
         NoteGrid.requireNoteRules(array, BigDecimal.valueOf(length));
         List<double[]> out = new ArrayList<>();
@@ -118,7 +118,7 @@ public final class ArrangerModule implements HostModule {
                 n.get("beat").getAsDouble(),
                 n.get("pitch").getAsInt(),
                 n.get("velocity").getAsInt(),
-                n.get("durationBeats").getAsDouble()
+                n.get("duration").getAsDouble()
             });
         }
         return out;
@@ -143,8 +143,8 @@ public final class ArrangerModule implements HostModule {
     public void create(
             HostOperation op,
             JsonObject trackRef,
-            double startBeats,
-            double lengthBeats,
+            double clipStart,
+            double clipLength,
             String name,
             JsonArray notes,
             int channel,
@@ -154,7 +154,7 @@ public final class ArrangerModule implements HostModule {
             throw Errors.notApplied(
                     Reason.UNSUPPORTED_SCOPE,
                     "clips.insert makes MIDI note clips and needs an instrument track; use clips.copy for audio.");
-        List<double[]> list = notes == null ? List.of() : notes(notes, lengthBeats);
+        List<double[]> list = notes == null ? List.of() : notes(notes, clipLength);
         JsonObject current = trackRefs.ref(index);
         run(
                 op,
@@ -162,13 +162,13 @@ public final class ArrangerModule implements HostModule {
                 -1,
                 true,
                 (bridge, track, id, check, beforeWrite) ->
-                        bridge.create(track, id, startBeats, lengthBeats, name, list, channel, check, beforeWrite),
+                        bridge.create(track, id, clipStart, clipLength, name, list, channel, check, beforeWrite),
                 result -> done.accept(shaped(result, current)));
     }
 
     /** The launcher clip in {@code source}'s slot, copied onto the same track's timeline. */
     public void copyFromLauncher(
-            HostOperation op, LauncherState.Target source, double startBeats, Consumer<JsonObject> done) {
+            HostOperation op, LauncherState.Target source, double clipStart, Consumer<JsonObject> done) {
         int index = source.at.track;
         String name = source.slot.api.name().get();
         run(
@@ -177,7 +177,7 @@ public final class ArrangerModule implements HostModule {
                 source.at.offset,
                 true,
                 (bridge, track, id, check, beforeWrite) ->
-                        bridge.copyFromLauncher(track, source.slot.api, id, name, startBeats, check, beforeWrite),
+                        bridge.copyFromLauncher(track, source.slot.api, id, name, clipStart, check, beforeWrite),
                 result -> done.accept(shaped(result, source.at.trackRef)));
     }
 
@@ -219,7 +219,7 @@ public final class ArrangerModule implements HostModule {
                 "ref",
                 Refs.arrangerClip(
                         trackRef,
-                        row.get("startBeats").getAsDouble(),
+                        row.get("start").getAsDouble(),
                         row.get("name").getAsString()));
         for (Map.Entry<String, JsonElement> e : row.entrySet())
             if (!e.getKey().equals("clipIndex")) out.add(e.getKey(), e.getValue());
@@ -238,8 +238,7 @@ public final class ArrangerModule implements HostModule {
         String id = track.channelId().get();
         if (write) op.inspect = dev.bitwigagent.core.Refs.read("clip:arranger");
         SafetyObservation safety = write ? transportSafety.stopped(op) : null;
-        if (access == null)
-            access = Bitwig614ArrangerAccess.bind(natives.get(op).access());
+        if (access == null) access = NativeArrangerAccess.bind(natives.get(op).access());
         long epoch = epochs.get(index);
         Runnable check = () -> {
             scheduler.check(op);

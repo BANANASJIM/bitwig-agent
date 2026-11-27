@@ -3,7 +3,6 @@ package dev.bitwigagent.grid;
 import static dev.bitwigagent.grid.GridSnapshotReader.Field.*;
 
 import com.google.gson.*;
-import dev.bitwigagent.bitwig614.Bitwig614Runtime;
 import dev.bitwigagent.core.Batch;
 import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.Outcome;
@@ -11,7 +10,9 @@ import dev.bitwigagent.core.Params;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.RpcException;
+import dev.bitwigagent.core.Verification;
 import dev.bitwigagent.host.DeviceSources;
+import dev.bitwigagent.nativehost.NativeHost;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
@@ -429,7 +430,7 @@ public final class GridInsertionWriter {
                 result.addProperty("mutationDispatched", written > 0 || stale);
                 result.addProperty("nativeMutation", written > 0 || stale);
                 result.addProperty("nativeUndo", written > 0 || stale);
-                result.addProperty("verification", "later_document_event_bounded_native_graph_observation_per_entry");
+                Verification.NATIVE_READBACK.put(result);
                 // After an unknown entry the last observed graph is not the current one: no diff is offered.
                 if (lastGraph != null && !stale) {
                     result.add("graph", lastGraph);
@@ -559,7 +560,7 @@ public final class GridInsertionWriter {
                                     ? (Exception) error
                                     : new Exception("Insertion preplacement gate failed", error));
                     normalHandling = true; // Record normal delivered cleanup BEFORE any outward notification.
-                    if (!(error instanceof RpcException) || Bitwig614Runtime.isInvocationFailure(error))
+                    if (!(error instanceof RpcException) || NativeHost.isInvocationFailure(error))
                         adapterFailure(error);
                     return true;
                 } catch (Throwable cleanupError) {
@@ -712,7 +713,7 @@ public final class GridInsertionWriter {
                 result.addProperty("undoGroupingVerified", false);
                 result.addProperty("engineAcknowledgement", false);
                 result.addProperty("nativeLifetimeSettled", true);
-                result.addProperty("verification", "later_document_event_bounded_native_graph_observation");
+                Verification.NATIVE_READBACK.put(result);
                 result.addProperty("nativeUndoScope", "native_operation_not_verified_grouping_or_commit");
                 result.addProperty(
                         "contextScope",
@@ -744,7 +745,7 @@ public final class GridInsertionWriter {
 
     static boolean settlementMismatch(Throwable error) {
         return error instanceof RpcException
-                && !Bitwig614Runtime.isInvocationFailure(error)
+                && !NativeHost.isInvocationFailure(error)
                 && MISMATCH_CODES.stream().anyMatch(((RpcException) error)::is);
     }
 

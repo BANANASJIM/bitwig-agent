@@ -14,6 +14,7 @@ import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.Scheduler;
 import dev.bitwigagent.core.ValueInput;
 import dev.bitwigagent.core.ValueMatch;
+import dev.bitwigagent.core.Verification;
 import dev.bitwigagent.grid.GridRemotePageWriter;
 import dev.bitwigagent.host.DeviceSources;
 import dev.bitwigagent.host.RequestSnapshot;
@@ -38,9 +39,6 @@ public final class RemoteModule implements HostModule, ParameterResolver.RemoteP
     private final Map<DeviceSources.Source, Remote> remoteSources = new IdentityHashMap<>();
     /** How a write that finds its cache not fresh learns what the control holds; null when there is no native model. */
     public NativeValues nativeValues;
-
-    /** The verification a no-op carries when the native model, not the observed cache, showed the value. */
-    static final String NATIVE_READBACK = "exact_native_model_readback";
 
     /** Reads a control's value from the native model on the document thread. */
     interface NativeValues {
@@ -354,7 +352,7 @@ public final class RemoteModule implements HostModule, ParameterResolver.RemoteP
         snapshot.require(op);
         if (held != null && Math.abs(held - requested) <= HostLimits.TOLERANCE) {
             JsonObject result = result(ref, new JsonPrimitive(requested), held, Outcome.ALREADY_MATCHED, null);
-            result.addProperty("verification", NATIVE_READBACK);
+            Verification.NATIVE_READBACK.put(result);
             op.result.complete(result);
             return;
         }
@@ -387,7 +385,7 @@ public final class RemoteModule implements HostModule, ParameterResolver.RemoteP
                     double seen = control.value().get();
                     op.result.complete(Errors.withInspect(
                             observed
-                                    ? result(ref, asked, seen, Outcome.APPLIED, null)
+                                    ? applied(result(ref, asked, seen, Outcome.APPLIED, null))
                                     : result(
                                             ref,
                                             asked,
@@ -396,6 +394,11 @@ public final class RemoteModule implements HostModule, ParameterResolver.RemoteP
                                             fresh ? Reason.READBACK_MISMATCH : Reason.NOT_OBSERVED),
                             op.inspect));
                 });
+    }
+
+    private static JsonObject applied(JsonObject result) {
+        Verification.API_READBACK.put(result);
+        return result;
     }
 
     private static JsonObject result(

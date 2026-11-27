@@ -193,7 +193,7 @@ async def _module_warnings(f: _Facts, rules: dict[str, Any], is_poly: IsPoly) ->
 
 async def trap_warnings(spec: Spec, existing: Collection[str], graph: Graph, is_poly: IsPoly) -> list[str]:
     """Measured traps (grid_notes rules): ignored phase cable, filter keytrack in a Poly Grid, dangling modules."""
-    rules = measured_notes().get("rules", {})
+    rules = measured_notes(spec.host).get("rules", {})
     label = {r["instanceId"]: r["customName"] for r in graph.rows}
     ins = {(e.dst, e.dst_port) for e in spec.edges} | {
         (label.get(c["targetModuleId"]), c["targetPortKey"]) for c in graph.cables

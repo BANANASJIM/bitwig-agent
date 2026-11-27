@@ -5,6 +5,7 @@ import com.bitwig.extension.controller.AutoDetectionMidiPortNamesList;
 import com.bitwig.extension.controller.ControllerExtension;
 import com.bitwig.extension.controller.ControllerExtensionDefinition;
 import com.bitwig.extension.controller.api.ControllerHost;
+import com.google.gson.JsonElement;
 import dev.bitwigagent.core.BuildInfo;
 import dev.bitwigagent.core.SharedData;
 import java.util.UUID;
@@ -27,7 +28,11 @@ public final class BitwigAgentExtensionDefinition extends ControllerExtensionDef
     }
 
     public int getRequiredAPIVersion() {
-        return SharedData.read("host").get("apiVersion").getAsInt();
+        int required = Integer.MAX_VALUE;
+        for (JsonElement host : SharedData.readArray("host"))
+            required =
+                    Math.min(required, host.getAsJsonObject().get("apiVersion").getAsInt());
+        return required;
     }
 
     public String getHardwareVendor() {

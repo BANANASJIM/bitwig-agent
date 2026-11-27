@@ -131,7 +131,7 @@ async def test_absent_fields_and_explicit_nullable_fields_remain_distinct_over_m
     assert not response.is_error
     assert host.requests[-1]["params"] == {"target": TRACK_REF, "mute": True}
     response = await mcp_session.call_tool(
-        "notes.edit", {**NOTE_WINDOW, "edits": [{"op": "clear", "beat": 0, "pitch": 60}]}
+        "notes.set", {**NOTE_WINDOW, "edits": [{"op": "clear", "beat": 0, "pitch": 60}]}
     )
     assert not response.is_error
     assert host.requests[-1]["params"]["edits"] == [{"op": "clear", "beat": 0, "pitch": 60}]
@@ -142,7 +142,7 @@ async def test_absent_fields_and_explicit_nullable_fields_remain_distinct_over_m
     [
         ("transport.set", {}),
         ("transport.set", {"playing": "false"}),
-        ("transport.set", {"tempoBpm": 667}),
+        ("transport.set", {"tempo": 667}),
         ("transport.set", {"playing": None}),
         ("tracks.set", {"target": TRACK_REF}),
         ("tracks.set", {"target": TRACK_REF, "volume": -1}),
@@ -161,16 +161,16 @@ async def test_absent_fields_and_explicit_nullable_fields_remain_distinct_over_m
                 "value": 0.5,
             },
         ),
-        ("clips.insert", {"to": SLOT_REF, "lengthBeats": 4, "name": "x"}),
+        ("clips.insert", {"to": SLOT_REF, "length": 4, "name": "x"}),
         ("clips.import", {"to": SLOT_REF, "path": "file:///tmp/audio.wav"}),
         (
             "clips.import",
             {"to": {**SLOT_REF, "scene": {"kind": "scene", "index": -1, "name": None}}, "path": "/tmp/audio.wav"},
         ),
         ("clips.import", {"to": SLOT_REF, "path": "/tmp/audio.wav", "overwrite": True}),
-        ("notes.read", {**NOTE_WINDOW, "pitchStart": 127, "pitchCount": 2}),
-        ("notes.edit", {**NOTE_WINDOW, "edits": [{"op": "set", "beat": 0, "pitch": 60}]}),
-        ("notes.edit", {**NOTE_WINDOW, "edits": [{"op": "clear", "beat": 0, "pitch": 60, "velocity": None}]}),
+        ("notes.get", {**NOTE_WINDOW, "pitchStart": 127, "pitchCount": 2}),
+        ("notes.set", {**NOTE_WINDOW, "edits": [{"op": "set", "beat": 0, "pitch": 60}]}),
+        ("notes.set", {**NOTE_WINDOW, "edits": [{"op": "clear", "beat": 0, "pitch": 60, "velocity": None}]}),
     ],
 )
 async def test_invalid_domain_edits_are_not_dispatched(mcp_session, host, method, params):

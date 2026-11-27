@@ -62,10 +62,10 @@ public final class RenderModuleTest {
             bad.add(p);
         }
         p = export(TestPaths.absolute("/tmp"), "master");
-        p.addProperty("endBeats", 0);
+        p.addProperty("end", 0);
         bad.add(p);
         p = export(TestPaths.absolute("/tmp"), "master");
-        p.addProperty("endBeats", 65537);
+        p.addProperty("end", 65537);
         bad.add(p);
         p = export(TestPaths.absolute("/tmp"), "master");
         p.addProperty("fileType", "mp3");
@@ -776,8 +776,8 @@ public final class RenderModuleTest {
                             document.add(work);
                         }
 
-                        public String nativeJarSha256() {
-                            return "simulated";
+                        public void provenance(JsonObject out) {
+                            out.addProperty("nativeVersion", "simulated");
                         }
 
                         public RenderModule.Handle export(
@@ -903,8 +903,8 @@ public final class RenderModuleTest {
         p.add("sources", list);
         p.addProperty("directory", dir);
         p.addProperty("baseName", "Mix");
-        p.addProperty("startBeats", 0);
-        p.addProperty("endBeats", 16);
+        p.addProperty("start", 0);
+        p.addProperty("end", 16);
         p.addProperty("fileType", "wav");
         return p;
     }
@@ -915,8 +915,8 @@ public final class RenderModuleTest {
         for (String id : ids) list.add(ref(id));
         p.add("targets", list);
         p.addProperty("inPlace", true);
-        p.addProperty("startBeats", 0);
-        p.addProperty("endBeats", 16);
+        p.addProperty("start", 0);
+        p.addProperty("end", 16);
         p.addProperty("tap", "pre_fader");
         return p;
     }
@@ -927,9 +927,9 @@ public final class RenderModuleTest {
 
     private static JsonObject clip(double start, double length, String name, String kind) {
         JsonObject c = new JsonObject();
-        c.addProperty("startBeats", start);
-        c.addProperty("lengthBeats", length);
-        c.addProperty("endBeats", start + length);
+        c.addProperty("start", start);
+        c.addProperty("length", length);
+        c.addProperty("end", start + length);
         c.addProperty("name", name);
         c.addProperty("kind", kind);
         return c;

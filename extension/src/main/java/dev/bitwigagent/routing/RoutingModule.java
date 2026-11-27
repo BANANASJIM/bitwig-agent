@@ -3,8 +3,6 @@ package dev.bitwigagent.routing;
 import com.bitwig.extension.callback.*;
 import com.bitwig.extension.controller.api.*;
 import com.google.gson.*;
-import dev.bitwigagent.bitwig614.Bitwig614RoutingAccess;
-import dev.bitwigagent.bitwig614.Bitwig614Runtime;
 import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.Holds;
 import dev.bitwigagent.core.HostLimits;
@@ -13,7 +11,6 @@ import dev.bitwigagent.core.HostOperation;
 import dev.bitwigagent.core.MethodSpecs;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Results;
-import dev.bitwigagent.core.SafetyObservation;
 import dev.bitwigagent.core.Scheduler;
 import dev.bitwigagent.core.SharedData;
 import dev.bitwigagent.core.ValueMatch;
@@ -23,6 +20,8 @@ import dev.bitwigagent.host.RequestSnapshot;
 import dev.bitwigagent.host.TrackRefs;
 import dev.bitwigagent.host.TrackWindow;
 import dev.bitwigagent.host.TransportSafety;
+import dev.bitwigagent.nativehost.NativeHost;
+import dev.bitwigagent.nativehost.NativeRoutingAccess;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -155,7 +154,7 @@ public final class RoutingModule implements HostModule {
 
     /**
      * What the schema cannot say: a routing write changes the output or the input, an expect compares only those, and
-     * an entry has a trackId exactly for the track kinds and a name exactly for kind other.
+     * an entry has a track exactly for the track kinds and a name exactly for kind other.
      */
     static void validateParams(String method, JsonObject p) {
         if (method.equals("tracks.routing.get") || method.equals("devices.sidechain.get")) return;
@@ -172,9 +171,9 @@ public final class RoutingModule implements HostModule {
     private static void entry(JsonObject entry, String where) {
         String kind = entry.get("kind").getAsString();
         boolean track = TRACK_KINDS.contains(kind), other = kind.equals("other");
-        if (entry.has("trackId") != track)
+        if (entry.has("track") != track)
             throw Errors.invalid(
-                    where + ": trackId is required for " + new TreeSet<>(TRACK_KINDS) + " and not allowed otherwise.");
+                    where + ": track is required for " + new TreeSet<>(TRACK_KINDS) + " and not allowed otherwise.");
         if (entry.has("name") != other)
             throw Errors.invalid(where + ": name is required for kind other and only then.");
         if (entry.has("nativeType") && !other) throw Errors.invalid(where + ": nativeType is only for kind other.");
@@ -204,15 +203,17 @@ public final class RoutingModule implements HostModule {
         }
     }
 
-    /** Compare-and-set: same kind, and the same trackId (track kinds) or exact name (kind other). */
+    /** The id of an entry's track ref. */
+    public static String trackId(JsonObject entry) {
+        return entry.getAsJsonObject("track").get("id").getAsString();
+    }
+
+    /** Compare-and-set: same kind, and the same track id (track kinds) or exact name (kind other). */
     public static boolean sameEntry(JsonObject expected, JsonObject observed) {
         String kind = expected.get("kind").getAsString();
         if (!kind.equals(observed.get("kind").getAsString())) return false;
         if (TRACK_KINDS.contains(kind))
-            return observed.has("trackId")
-                    && expected.get("trackId")
-                            .getAsString()
-                            .equalsIgnoreCase(observed.get("trackId").getAsString());
+            return observed.has("track") && trackId(expected).equalsIgnoreCase(trackId(observed));
         if (kind.equals("other"))
             return observed.has("name")
                     && observed.get("name").isJsonPrimitive()
@@ -251,22 +252,22 @@ public final class RoutingModule implements HostModule {
                     Reason.OUTSIDE_WINDOW,
                     "Track UUID is absent from the current " + HostLimits.TRACKS + "-track window.");
         for (String key : List.of("output", "input", "source")) {
-            if (!p.has(key) || !p.getAsJsonObject(key).has("trackId")) continue;
-            String other = p.getAsJsonObject(key).get("trackId").getAsString();
+            if (!p.has(key) || !p.getAsJsonObject(key).has("track")) continue;
+            String other = trackId(p.getAsJsonObject(key));
             if (bank.stream().noneMatch(track -> track.id.equals(other)))
                 throw Errors.notApplied(
                         Reason.OUTSIDE_WINDOW,
-                        key + ".trackId is absent from the current " + HostLimits.TRACKS
+                        key + ".track is absent from the current " + HostLimits.TRACKS
                                 + "-track window; nothing changed.");
         }
-        SafetyObservation safety = write ? transportSafety.stopped(op) : null;
+        Runnable safety = write ? transportSafety.writeGuard(op, !sidechain) : null;
         if (access == null) {
             try {
-                access = new Bitwig614RoutingAccess(natives.get(op).access());
+                access = new NativeRoutingAccess(natives.get(op).access());
             } catch (ReflectiveOperationException | LinkageError error) {
                 throw Errors.notApplied(
                         Reason.NATIVE_UNAVAILABLE,
-                        "Exact routing descriptors unavailable: " + Bitwig614Runtime.diagnostic(error));
+                        "Exact routing descriptors unavailable: " + NativeHost.diagnostic(error));
             }
         }
         long generation = epoch.get();
@@ -276,7 +277,7 @@ public final class RoutingModule implements HostModule {
                 throw Errors.notApplied(
                         Reason.TARGET_CHANGED, "Track bank changed while the routing operation was queued.");
             if (snapshot != null) snapshot.require(op);
-            if (write) transportSafety.guardStopped(safety);
+            if (write) safety.run();
         };
         Runnable beforeWrite = () -> {
             check.run();
@@ -314,7 +315,7 @@ public final class RoutingModule implements HostModule {
                                             Reason.TARGET_CHANGED, "Track target changed after native access.");
                                 if (write && Results.outcomeOf(result).succeeded()) holds.release(QUARANTINE);
                                 holds.release(PENDING);
-                                annotateTrackNames(result, trackNames());
+                                nameTracks(result, trackNames());
                                 if (method.equals("devices.sidechain.get")) hintWhenEmpty(result);
                                 if (!sidechain) result.add("ref", trackRefs.ref(slot));
                                 else if (write)
@@ -355,8 +356,6 @@ public final class RoutingModule implements HostModule {
         return out;
     }
 
-    /** Native names of track buses are blank or generic ("Pre-Fader"): next to every {kind, trackId} entry put the track's public
-     *  name as a sibling (entry -> trackName, source -> sourceTrackName, ...). Entries themselves stay verbatim, copyable into expected*. */
     static final String NO_SIDECHAIN_HINT = noSidechainHint(SharedData.read("sidechain"));
 
     static String noSidechainHint(JsonObject shared) {
@@ -380,27 +379,18 @@ public final class RoutingModule implements HostModule {
                 && components.getAsJsonArray().size() == 0) result.addProperty("hint", NO_SIDECHAIN_HINT);
     }
 
-    static void annotateTrackNames(JsonElement element, Map<String, String> names) {
-        if (element == null) return;
-        if (element.isJsonArray()) {
-            for (JsonElement item : element.getAsJsonArray()) annotateTrackNames(item, names);
-            return;
-        }
+    /** Native names of track buses are blank or generic ("Pre-Fader"): every track ref {kind, id} in an entry gets the
+     *  track's public name, so the entry is copyable into a write. */
+    static void nameTracks(JsonElement element, Map<String, String> names) {
+        if (element.isJsonArray()) for (JsonElement item : element.getAsJsonArray()) nameTracks(item, names);
         if (!element.isJsonObject()) return;
         JsonObject object = element.getAsJsonObject();
-        Map<String, String> add = new LinkedHashMap<>();
-        for (Map.Entry<String, JsonElement> field : object.entrySet()) {
-            JsonElement value = field.getValue();
-            if (value.isJsonObject()
-                    && value.getAsJsonObject().has("kind")
-                    && value.getAsJsonObject().has("trackId")) {
-                String name = names.get(value.getAsJsonObject().get("trackId").getAsString());
-                if (name != null)
-                    add.put(field.getKey().equals("entry") ? "trackName" : field.getKey() + "TrackName", name);
-            } else annotateTrackNames(value, names);
+        if (object.has("kind") && "track".equals(object.get("kind").getAsString()) && !object.has("name")) {
+            String name = names.get(object.get("id").getAsString());
+            if (name != null) object.addProperty("name", name);
+            return;
         }
-        for (Map.Entry<String, String> extra : add.entrySet())
-            if (!object.has(extra.getKey())) object.addProperty(extra.getKey(), extra.getValue());
+        for (Map.Entry<String, JsonElement> field : object.entrySet()) nameTracks(field.getValue(), names);
     }
 
     private List<TrackRef> bank() {

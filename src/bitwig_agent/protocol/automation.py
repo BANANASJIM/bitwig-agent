@@ -11,13 +11,13 @@ from bitwig_agent.protocol.values import Expect
 
 
 class AutomationRange(StrictModel):
-    startBeat: float = Field(ge=0, le=MAX_BEAT)
-    endBeat: float = Field(ge=0, le=MAX_BEAT)
+    start: float = Field(ge=0, le=MAX_BEAT)
+    end: float = Field(ge=0, le=MAX_BEAT)
 
     @model_validator(mode="after")
     def validate_order(self) -> Self:
-        if self.startBeat > self.endBeat:
-            raise ValueError("startBeat must not exceed endBeat")
+        if self.start > self.end:
+            raise ValueError("start must not exceed end")
         return self
 
 
@@ -30,7 +30,7 @@ class AutomationPoint(StrictModel):
 class AutomationPointsGetArgs(StatusArgs):
     target: AutomationParameterRef
     range: AutomationRange = omitted(
-        description="Only list points with startBeat <= beat <= endBeat; lane.count and lane.pointsHash still cover the whole lane."
+        description="Only list points with start <= beat <= end; lane.count and lane.pointsHash still cover the whole lane."
     )
 
 
@@ -46,7 +46,7 @@ class AutomationPointsSetArgs(StatusArgs):
         description="Replacement points, strictly increasing beats, inside range if given."
     )
     range: AutomationRange = omitted(
-        description="Replace only points with startBeat <= beat <= endBeat; without it the whole lane is replaced."
+        description="Replace only points with start <= beat <= end; without it the whole lane is replaced."
     )
     expect: PointsExpect = omitted(description="The lane's current pointsHash; a mismatch writes nothing.")
 
@@ -55,7 +55,7 @@ class AutomationPointsSetArgs(StatusArgs):
         beats = [point.beat for point in self.points]
         if any(b <= a for a, b in itertools.pairwise(beats)):
             raise ValueError("point beats must be strictly increasing")
-        if "range" in self.model_fields_set and any(not self.range.startBeat <= b <= self.range.endBeat for b in beats):
+        if "range" in self.model_fields_set and any(not self.range.start <= b <= self.range.end for b in beats):
             raise ValueError("every point must lie inside range")
         return self
 
@@ -79,7 +79,7 @@ GRID_CUTOFF = {
     "id": "CUTOFF",
 }
 AUTOMATION_POINTS_GET_DESCRIPTION = "Read the arranger automation points of one parameter on an audio/instrument track: target is the parameter ref tracks.get returned for volume or pan, or a Grid module parameter ref (an owner gridModule ref as grid.export read it, id the parameter key) for a float Grid control; other owners are unsupported_scope. Returns ref, lane {exists, count, pointsHash} for the whole lane (pass pointsHash as expect to automation.points.set) and points [{beat, value (normalized 0..1), interpolation linear|hold, curve}] inside the optional range, at most 1024 (truncated says more exist). Beats are quarter notes from the arrangement start. Launcher-clip automation and automation clips are not read. Native read (inspected Bitwig 6.1.4 JAR); no selection."
-AUTOMATION_POINTS_SET_DESCRIPTION = "Replace the arranger automation points of one parameter (targets as automation.points.get): every point with startBeat <= beat <= endBeat (the whole lane without range) is replaced by points [{beat, value 0..1, interpolation linear|hold}], strictly increasing, inside range. expect.pointsHash, when given, must equal a fresh automation.points.get (else stale/target_changed with observed, nothing changed). Creates the lane when missing; an empty points list clears the range, leaving only Bitwig's own base point at beat 0, which counts as cleared. One native undoable edit, verified by reading the whole lane back; new points get curve 0. Needs stopped transport with recording/automation-write off. An unknown outcome refuses further automation writes until you inspect automation.points.get and ack the hold; never retry."
+AUTOMATION_POINTS_SET_DESCRIPTION = "Replace the arranger automation points of one parameter (targets as automation.points.get): every point with start <= beat <= end (the whole lane without range) is replaced by points [{beat, value 0..1, interpolation linear|hold}], strictly increasing, inside range. expect.pointsHash, when given, must equal a fresh automation.points.get (else stale/target_changed with observed, nothing changed). Creates the lane when missing; an empty points list clears the range, leaving only Bitwig's own base point at beat 0, which counts as cleared. One native undoable edit, verified by reading the whole lane back; new points get curve 0. Needs stopped transport with recording/automation-write off. An unknown outcome refuses further automation writes until you inspect automation.points.get and ack the hold; never retry."
 
 
 SPECS: dict[str, ToolSpec] = {
@@ -89,7 +89,7 @@ SPECS: dict[str, ToolSpec] = {
         True,
         examples=(
             {"target": TRACK_VOLUME},
-            {"target": GRID_CUTOFF, "range": {"startBeat": 0, "endBeat": 16}},
+            {"target": GRID_CUTOFF, "range": {"start": 0, "end": 16}},
         ),
         summary="Read the arranger automation points of a track's volume or pan, or a float Grid module parameter, by parameter ref. Returns lane {exists, count, pointsHash} and the points in the optional range.",
     ),
@@ -105,7 +105,7 @@ SPECS: dict[str, ToolSpec] = {
                     {"beat": 0, "value": 0.2, "interpolation": "linear"},
                     {"beat": 16, "value": 0.8, "interpolation": "linear"},
                 ],
-                "range": {"startBeat": 0, "endBeat": 16},
+                "range": {"start": 0, "end": 16},
                 "expect": {"pointsHash": EMPTY_HASH},
             },
             {
@@ -114,7 +114,7 @@ SPECS: dict[str, ToolSpec] = {
                     {"beat": 32, "value": 0.1, "interpolation": "linear"},
                     {"beat": 48, "value": 0.9, "interpolation": "hold"},
                 ],
-                "range": {"startBeat": 32, "endBeat": 64},
+                "range": {"start": 32, "end": 64},
             },
         ),
         summary="Replace the points of one parameter ref in range (default the whole lane); optional expect.pointsHash. Stopped transport only.",

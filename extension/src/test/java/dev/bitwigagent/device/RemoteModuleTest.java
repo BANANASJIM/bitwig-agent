@@ -767,7 +767,7 @@ public final class RemoteModuleTest {
         HostOperation op = f.run(f.parameters(), "parameters.set", write(ref(current, 0), .6), f.host.tasks.after(20));
         JsonObject result = f.finish(op);
         assertEquals("already_matched", result.get("outcome").getAsString());
-        assertEquals("exact_native_model_readback", result.get("verification").getAsString());
+        assertEquals("native_readback", result.get("verification").getAsString());
         assertEquals(1, reads[0]);
         assertEquals(0, f.controls[1][0].child("value").writes, "nothing was sent");
         assertFalse(op.dispatched());

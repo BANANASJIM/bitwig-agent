@@ -2,7 +2,6 @@ package dev.bitwigagent.mix;
 
 import com.bitwig.extension.controller.api.*;
 import com.google.gson.*;
-import dev.bitwigagent.bitwig614.Bitwig614TrackGroupAccess;
 import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.Holds;
 import dev.bitwigagent.core.HostLimits;
@@ -14,11 +13,13 @@ import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.SafetyObservation;
 import dev.bitwigagent.core.Scheduler;
+import dev.bitwigagent.core.Verification;
 import dev.bitwigagent.host.NativeRuntime;
 import dev.bitwigagent.host.SelectionLease;
 import dev.bitwigagent.host.TrackRefs;
 import dev.bitwigagent.host.TrackWindow;
 import dev.bitwigagent.host.TransportSafety;
+import dev.bitwigagent.nativehost.NativeTrackGroupAccess;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 
@@ -232,7 +233,7 @@ public final class TrackLifecycleModule implements HostModule {
         }
         if (groupAccess == null) {
             try {
-                groupAccess = new Bitwig614TrackGroupAccess(natives.get(op).access());
+                groupAccess = new NativeTrackGroupAccess(natives.get(op).access());
             } catch (ReflectiveOperationException error) {
                 throw Errors.notApplied(
                         Reason.NATIVE_UNAVAILABLE, "Exact track group descriptors unavailable: " + error.getMessage());
@@ -320,7 +321,6 @@ public final class TrackLifecycleModule implements HostModule {
             HostOperation op, JsonObject p, List<String> ids, String parent, JsonObject nativeInfo, String found) {
         holds.release(GROUP);
         JsonObject info = nativeInfo.deepCopy();
-        info.addProperty("verification", "unique_added_group_uuid_and_every_track_parent_observed_twice");
         JsonArray children = new JsonArray();
         for (String id : ids) children.add(trackRefs.ref(window.trackSlot(id)));
         info.add("children", children);
@@ -329,6 +329,7 @@ public final class TrackLifecycleModule implements HostModule {
         int slot = window.trackSlot(found);
         if (!p.has("name")) {
             JsonObject result = Results.outcome(Outcome.APPLIED);
+            Verification.API_READBACK.put(result);
             result.add("ref", trackRefs.ref(slot));
             result.add("group", info);
             op.result.complete(result);
@@ -353,6 +354,7 @@ public final class TrackLifecycleModule implements HostModule {
                             reason);
                     JsonObject result = Results.outcome(named ? Outcome.APPLIED : Outcome.UNKNOWN);
                     if (reason != null) result.addProperty("reason", reason.wire());
+                    else Verification.API_READBACK.put(result);
                     if (current) result.add("ref", trackRefs.ref(window.trackSlot(found)));
                     JsonObject fields = new JsonObject();
                     fields.add("name", field);
@@ -476,7 +478,6 @@ public final class TrackLifecycleModule implements HostModule {
             HostOperation op, JsonObject p, Creation before, String id, Track track, String type, int requested) {
         holds.release(INSERTION);
         JsonObject info = new JsonObject();
-        info.addProperty("verification", "unique_added_uuid_count_type_position");
         info.addProperty("identityScope", "observed_addition_not_factory_return_identity");
         info.addProperty("requestedPosition", requested);
         info.addProperty("observedPosition", track.position().get());

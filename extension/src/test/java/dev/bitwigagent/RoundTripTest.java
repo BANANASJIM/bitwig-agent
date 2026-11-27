@@ -39,7 +39,7 @@ public final class RoundTripTest {
     }
 
     private static final List<Vector> TRANSPORT = List.of(
-            new Vector(TestServices::transportModule, "transport.get", "{}", "transport.set", "{}", "tempoBpm"),
+            new Vector(TestServices::transportModule, "transport.get", "{}", "transport.set", "{}", "tempo"),
             new Vector(TestServices::transportModule, "transport.get", "{}", "transport.set", "{}", "preRoll"),
             new Vector(TestServices::transportModule, "transport.get", "{}", "transport.set", "{}", "metronomeVolume"),
             new Vector(

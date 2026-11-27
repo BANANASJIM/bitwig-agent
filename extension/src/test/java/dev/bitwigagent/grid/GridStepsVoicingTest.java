@@ -169,6 +169,7 @@ public final class GridStepsVoicingTest {
     @Test
     void internalChildModelsAreNotUnsupported() {
         Fixture f = new Fixture();
+        f.internal = Set.of(BgP.class);
         f.first.put(CHILDREN, List.of(new BgP(), new BgP(), new BgP()));
         JsonObject read = f.reader.snapshot(f.source, 0, 64, true, false, null, () -> {});
         JsonObject module = read.getAsJsonArray("modules").get(0).getAsJsonObject();
@@ -191,6 +192,7 @@ public final class GridStepsVoicingTest {
                         && !has(detailed, "unknown_child_model"),
                 "diagnostics lists internal rows, still not as unsupported");
         Fixture mixed = new Fixture();
+        mixed.internal = Set.of(BgP.class);
         mixed.first.put(CHILDREN, List.of(new BgP(), new Kiy(), new Mystery()));
         JsonObject result = mixed.reader.snapshot(mixed.source, 0, 64, true, false, null, () -> {});
         assertTrue(
@@ -202,7 +204,7 @@ public final class GridStepsVoicingTest {
                                         .getAsJsonArray("parameters")
                                         .size()
                                 == 2,
-                "an unclassified child model stays unsupported, and Kiy is internal only by its fully qualified name");
+                "a child model the adapter does not classify internal stays unsupported");
     }
 
     private static final class StepFixture implements GridStepArrayWriter.Access {
@@ -312,7 +314,7 @@ public final class GridStepsVoicingTest {
                 row.getAsJsonArray("values").size() == 4
                         && row.getAsJsonArray("values").get(1).getAsDouble() == 0.1
                         && result.get("mutationDispatched").getAsBoolean()
-                        && result.get("verification").getAsString().equals("exact_native_step_array_readback")
+                        && result.get("verification").getAsString().equals("native_readback")
                         && result.getAsJsonArray("previousValues").size() == 4
                         && result.getAsJsonArray("requestedValues").size() == 3
                         && !result.get("undoGroupingVerified").getAsBoolean()
@@ -659,7 +661,7 @@ public final class GridStepsVoicingTest {
                                         .get("voices")
                                         .getAsInt()
                                 == 1
-                        && result.get("verification").getAsString().equals("exact_native_voicing_readback")
+                        && result.get("verification").getAsString().equals("native_readback")
                         && result.getAsJsonArray("changedUnrequested").size() == 0
                         && !result.get("undoGroupingVerified").getAsBoolean()
                         && !result.get("engineAcknowledgement").getAsBoolean(),

@@ -28,12 +28,12 @@ from bitwig_agent.protocol.grid_workflow import is_partial
 
 async def _load_spec(channel: Channel, args: dict[str, Any]) -> tuple[dict[str, Any], Spec]:
     caps = (await channel.call("status", {"detail": "full"}))["grid"]
-    schema = bundled_schema()
+    schema = bundled_schema(caps.get("hostVersion"))
     if caps.get("hostVersion") == schema["hostVersion"]:
         catalog = TypeCatalog.bundled(schema)
     else:
         catalog = TypeCatalog.live(await channel.read(read_catalog))
-    return caps, parse_spec(args, catalog)
+    return caps, parse_spec(args, catalog, caps.get("hostVersion"))
 
 
 class Session:

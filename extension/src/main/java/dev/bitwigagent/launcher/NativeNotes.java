@@ -1,10 +1,10 @@
 package dev.bitwigagent.launcher;
 
-import dev.bitwigagent.bitwig614.Bitwig614NoteWriteAccess;
 import dev.bitwigagent.core.HostOperation;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.RpcException;
 import dev.bitwigagent.host.NativeRuntime;
+import dev.bitwigagent.nativehost.NativeNoteWriteAccess;
 import java.util.List;
 
 /**
@@ -22,7 +22,7 @@ public final class NativeNotes {
     public static final class Cell {
         public final int channel, pitch, velocity, cells;
         public final long step;
-        public final double stepBeats, durationBeats;
+        public final double stepBeats, duration;
         public final boolean set;
 
         public Cell(
@@ -32,7 +32,7 @@ public final class NativeNotes {
                 int pitch,
                 boolean set,
                 int velocity,
-                double durationBeats,
+                double duration,
                 int cells) {
             this.channel = channel;
             this.step = step;
@@ -40,7 +40,7 @@ public final class NativeNotes {
             this.pitch = pitch;
             this.set = set;
             this.velocity = velocity;
-            this.durationBeats = durationBeats;
+            this.duration = duration;
             this.cells = cells;
         }
     }
@@ -51,13 +51,13 @@ public final class NativeNotes {
      */
     public static final class Observed {
         public final int onsets;
-        public final double velocity, durationBeats;
+        public final double velocity, duration;
         public final boolean sustained, collides;
 
-        public Observed(int onsets, double velocity, double durationBeats, boolean sustained, boolean collides) {
+        public Observed(int onsets, double velocity, double duration, boolean sustained, boolean collides) {
             this.onsets = onsets;
             this.velocity = velocity;
-            this.durationBeats = durationBeats;
+            this.duration = duration;
             this.sustained = sustained;
             this.collides = collides;
         }
@@ -85,12 +85,12 @@ public final class NativeNotes {
                 Plan plan,
                 Runnable beforeWrite);
 
-        /** Creates a named note clip of {@code lengthBeats} in the empty slot and writes {@code cells}, one undo step. */
+        /** Creates a named note clip of {@code clipLength} in the empty slot and writes {@code cells}, one undo step. */
         void create(
                 Object slot,
                 String trackId,
                 String name,
-                int lengthBeats,
+                int clipLength,
                 List<Cell> cells,
                 Runnable check,
                 Runnable beforeWrite);
@@ -109,7 +109,7 @@ public final class NativeNotes {
     Access access(HostOperation op) {
         if (access != null || unavailable != null) return access;
         try {
-            access = new Bitwig614NoteWriteAccess(natives.get(op).access());
+            access = new NativeNoteWriteAccess(natives.get(op).access());
         } catch (ReflectiveOperationException | LinkageError error) {
             unavailable = error.toString();
         } catch (RpcException error) {

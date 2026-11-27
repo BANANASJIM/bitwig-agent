@@ -27,6 +27,15 @@ public final class EnumOptions {
         return out;
     }
 
+    /**
+     * The listed id for a reported value: an observer can report a stored project id the option list does not contain
+     * (Bitwig 6.1.4: "bar") while get() gives the listed id for it ("1").
+     */
+    public static String listed(EnumValue value, String reported) {
+        List<String> options = ids(value);
+        return !options.contains(reported) && options.contains(value.get()) ? value.get() : reported;
+    }
+
     /** True when the host currently reports a value its own option list does not contain (e.g. a stored project value). */
     static boolean outsideOptions(EnumValue value) {
         return outsideOptions(value, value.get());

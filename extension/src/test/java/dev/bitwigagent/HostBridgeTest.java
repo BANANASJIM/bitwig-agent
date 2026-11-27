@@ -616,7 +616,7 @@ public final class HostBridgeTest {
         for (String key : new String[] {
             "projectName",
             "playing",
-            "tempoBpm",
+            "tempo",
             "arrangerRecordEnabled",
             "arrangerAutomationWriteEnabled",
             "clipLauncherAutomationWriteEnabled",
