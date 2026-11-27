@@ -11,7 +11,7 @@ depends=('python>=3.11' 'python-mcp>=2.3.0' 'python-mcp<3'
          'python-pydantic>=2.12' 'python-pydantic<3')
 makedepends=('python-build' 'python-hatchling' 'python-installer')
 checkdepends=('python-pytest' 'python-numpy' 'python-scipy' 'python-soundfile')
-optdepends=('bitwig-studio: native host; private APIs require exact-JAR-gated 6.1.4, Linux evidence is bounded')
+optdepends=('bitwig-studio: native host; private APIs require exact-JAR-gated 6.1.4 or 6.1.7, Linux evidence is bounded')
 source=("${url}/releases/download/v${pkgver}/bitwig_agent-${pkgver}.tar.gz"
         "BitwigAgent-${pkgver}.bwextension::${url}/releases/download/v${pkgver}/BitwigAgent.bwextension")
 noextract=("BitwigAgent-${pkgver}.bwextension")

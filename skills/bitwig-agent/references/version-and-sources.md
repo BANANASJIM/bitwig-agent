@@ -4,7 +4,7 @@ Keep four versions apart: the running Bitwig and platform (observe the applicati
 
 ## Changes that affect production guidance
 
-Checked 2026-11-26: the [release archive](https://www.bitwig.com/previous_releases/) lists Bitwig Studio 6.1.7 (2026-11-05) as the newest release, after 6.1.4 (2026-10-13), 6.1.5 and 6.1.6. The bridge's supported boundary stays 6.1.4 / API 25 with the exact loaded-JAR gate; 6.1.5 to 6.1.7 are not validated here, and the [6.1.7 release notes](https://www.bitwig.com/dl/Bitwig%20Studio/6.1.7/release_notes/) mention no Controller API version change (this is not a verification of API 25 on 6.1.7). Recheck the archive before answering a later "latest version" question. The online user guide still identifies as 5.3, so it supplies concepts while newer release notes override changed controls and names.
+Checked 2026-11-26: the [release archive](https://www.bitwig.com/previous_releases/) lists Bitwig Studio 6.1.7 (2026-11-05) as the newest release, after 6.1.4 (2026-10-13), 6.1.5 and 6.1.6. The bridge supports 6.1.4 and 6.1.7 (API 25), each with the exact loaded-JAR gate; 6.1.5 and 6.1.6 are not supported, and the [6.1.7 release notes](https://www.bitwig.com/dl/Bitwig%20Studio/6.1.7/release_notes/) mention no Controller API version change. Recheck the archive before answering a later "latest version" question. The online user guide still identifies as 5.3, so it supplies concepts while newer release notes override changed controls and names.
 
 | Release | Changes | Consequence |
 | --- | --- | --- |
@@ -12,7 +12,7 @@ Checked 2026-11-26: the [release archive](https://www.bitwig.com/previous_releas
 | 6.1 | Sampler slicing, granular and spectral modes; Tuner; Grid quantizer renames | Find the Sampler's mode before parameter advice. Recheck migrated modulation mappings and use current module names. |
 | 6.1.1 to 6.1.3 | Sampler and automation fixes, memory improvements, a Linux X11 knob and slider jump fix | Establish the exact build for these symptoms; notes list known fixes, not every cause. |
 | 6.1.4 | Maintenance fixes; rekordbox integration on Windows and macOS | No rekordbox on Linux. A host update alone does not adapt the bridge's private bindings. |
-| 6.1.5 to 6.1.7 | Plug-in, Sampler, modulator and PipeWire/Wayland fixes; macOS multitouch (not validated by this bridge) | Outside the supported boundary: the exact-JAR gate leaves private Grid/modulator access unavailable until the bindings are revalidated. |
+| 6.1.5 to 6.1.7 | Plug-in, Sampler, modulator and PipeWire/Wayland fixes; macOS multitouch (not validated by this bridge) | 6.1.7 is supported with its own exact-JAR gate; on 6.1.5 and 6.1.6 private Grid/modulator access stays unavailable. |
 
 Private Grid and modulator access is gated to an exact host version and loaded JAR. A mismatch means the capability is unavailable, so do not bypass it: guide the user through the GUI for a known gap. Upgrade the Python package and extension together.
 

@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from bitwig_agent.client import BridgeClient, configured_port, package_version
+from bitwig_agent.client import BridgeClient, configured_port, package_version, supported_bitwig
 from bitwig_agent.core import composed
 from bitwig_agent.errors import BridgeError
 from bitwig_agent.protocol import CLIENT_SIDE, TOOLS, validate_call
@@ -200,6 +200,7 @@ async def test_status_flags_extension_version_mismatch(host):
     result = await BridgeClient(host.port).call("status", {})
     assert result["extensionMismatch"]["extensionVersion"] == "0.0.1"
     assert result["extensionMismatch"]["clientVersion"] == package_version()
+    assert result["supportedBitwig"] == supported_bitwig() != []
     host.reply = lambda r: {
         "id": r["id"],
         "result": {"status": "observed", "extension": {"version": package_version(), "build": "abc"}},
