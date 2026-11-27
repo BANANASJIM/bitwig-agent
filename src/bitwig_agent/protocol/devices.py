@@ -9,15 +9,18 @@ from bitwig_agent.protocol.base import (
     PROJECT_READY,
     TRACK,
     Nonempty,
+    OnlyTrue,
     StatusArgs,
     StrictModel,
     ToolSpec,
+    UnitValue,
     omitted,
     validate_local_path,
 )
 from bitwig_agent.protocol.parameters import InitialParams, check_host_value
 from bitwig_agent.protocol.positions import DeviceParent, DevicePosition
-from bitwig_agent.protocol.refs import DeviceRef
+from bitwig_agent.protocol.refs import ChainRef, DeviceRef
+from bitwig_agent.protocol.values import Expect, Normalized
 
 REMOTE_PAGE_INDEX_MAX = 4095
 
@@ -28,6 +31,39 @@ class DevicesListArgs(StatusArgs):
 
 class ChainsListArgs(StatusArgs):
     target: DeviceRef = Field(description="A device that has chains (Instrument Layer, FX Layer, FX Selector).")
+
+
+class ChainExpect(Expect):
+    volume: UnitValue = omitted()
+    pan: UnitValue = omitted()
+    mute: bool = omitted()
+    solo: bool = omitted()
+    active: bool = omitted()
+
+
+class ChainSetArgs(StatusArgs):
+    target: ChainRef = Field(description="The chain ref chains.list returned.")
+    volume: Normalized = omitted(
+        description='Chain fader: the normalized 0..1 value chains.list returned, or {display: "-6 dB"}.'
+    )
+    pan: Normalized = omitted(description='Chain pan: normalized 0..1 where 0.5 is centre, or {display: "-25 %"}.')
+    mute: bool = omitted()
+    solo: bool = omitted(description="Solo this chain alone; the other chains keep their solo state.")
+    active: OnlyTrue = omitted(description="Make this the active chain of its Selector.")
+    expect: ChainExpect = omitted(description="Current bare values a write requires; a mismatch writes nothing.")
+
+    @model_validator(mode="after")
+    def require_change(self) -> Self:
+        if not self.model_fields_set - {"timeoutMs", "target", "expect"}:
+            raise ValueError("chains.set requires at least one changed field")
+        return self
+
+
+class ChainInsertArgs(StatusArgs):
+    to: DeviceRef = Field(description="Instrument Layer, FX Layer, an Instrument or FX Selector, or a Drum Machine.")
+    pad: int = omitted(
+        ge=0, le=127, description="Drum Machine only (required there): the MIDI pitch of the pad, 36 is C1."
+    )
 
 
 class DevicesCatalogArgs(StatusArgs):
@@ -131,7 +167,9 @@ CHAIN_REF = {
 
 DEVICES_LIST_DESCRIPTION = "List the devices of a track (root chain, up to 16 observed) or of one chain (all of its devices, read natively), without changing selection. Each row has the device ref that every device method takes back, plus name and type; window says how many there are."
 DEVICES_GET_DESCRIPTION = "Read one device without selecting it: ref, name, type, enabled and whether it has Remote Controls. target is a device ref from devices.list (a root device or a device inside a chain)."
-CHAINS_LIST_DESCRIPTION = "List every chain of a device that has them (Instrument Layer, FX Layer, the Selectors, Drum Machine pads that hold devices; also a layer device inside a chain): each row has the chain ref, its name and its device count. Chains are read natively on each request, so a device inside a chain stays addressable after inserts, deletes and moves. A chain ref follows its layer's UUID, so it survives reordering and renaming but not a Bitwig restart: Bitwig assigns new layer UUIDs then (an old ref is target_not_found), so re-read chains.list. Loading a preset onto the device keeps the UUIDs, so an older ref then names the new content. List a chain's devices with devices.list {target: chain}. FX slots and empty pads are unsupported."
+CHAINS_LIST_DESCRIPTION = "List every chain of a device that has them (Instrument Layer, FX Layer, the Selectors, Drum Machine pads that have a chain, even an empty one; also a layer device inside a chain): each row has the chain ref, its name, its device count and its mixer strip: volume and pan {value 0..1, display}, mute, solo and, on a Selector's chains, active. Chains are read natively on each request, so a device inside a chain stays addressable after inserts, deletes and moves. A chain ref follows its layer's UUID, so it survives reordering and renaming but not a Bitwig restart: Bitwig assigns new layer UUIDs then (an old ref is target_not_found), so re-read chains.list. Loading a preset onto the device keeps the UUIDs, so an older ref then names the new content. List a chain's devices with devices.list {target: chain}. FX slots are unsupported."
+CHAINS_SET_DESCRIPTION = "Set only the given fields of one chain by its chains.list ref: volume and pan (the 0..1 value chains.list returned, or {display}: found by bisection on the host's own text while the transport is stopped, several fader moves), mute, solo (this chain only), active true (make it its Selector's active chain). Solo is not an Undo step in Bitwig: reverse it with solo false. All fields are read, compared, written and read back in one native pass. Returns ref, the worst field outcome and a per-field outcome. expect compares bare current values first. A field the chain lacks is unsupported_scope. Never retry unknown."
+CHAINS_INSERT_DESCRIPTION = "Add one empty chain: to is an Instrument Layer, FX Layer or Selector (the chain is appended, named by Bitwig) or a Drum Machine with pad, the MIDI pitch of the pad to give a chain (a pad that has one is already_matched with its ref). Bitwig's own Add Nested Device Chain or Create empty chain operation, one Undo step; verified by the device's chains before and after. Returns the new chain's ref (put devices in it with devices.insert {to: ref}), parent, beforeCount and afterCount. Never retry unknown: read chains.list."
 DEVICES_SET_DESCRIPTION = "Enable or bypass one device: target is a device ref, enabled true or false. Result outcome applied or already_matched with the device ref."
 DEVICES_SELECT_DESCRIPTION = (
     "Select this device in the host UI. Unlike reads, this intentionally changes selection. Result outcome sent."
@@ -160,6 +198,24 @@ SPECS: dict[str, ToolSpec] = {
         True,
         examples=({"target": CHAIN_REF["device"]},),
         records="chains",
+    ),
+    "chains.set": ToolSpec(
+        ChainSetArgs,
+        CHAINS_SET_DESCRIPTION,
+        False,
+        examples=(
+            {"target": CHAIN_REF, "volume": {"display": "-6 dB"}, "pan": 0.4},
+            {"target": CHAIN_REF, "mute": True, "expect": {"mute": False}},
+            {"target": CHAIN_REF, "active": True},
+        ),
+        summary='Set only the given fields of a chain by its chains.list ref: volume and pan (0..1 as read, or {display: "-6 dB"}, stopped transport), mute, solo, active true. Per-field outcomes; never retry unknown. Solo is not an Undo step: reverse it with solo false.',
+    ),
+    "chains.insert": ToolSpec(
+        ChainInsertArgs,
+        CHAINS_INSERT_DESCRIPTION,
+        False,
+        examples=({"to": CHAIN_REF["device"]}, {"to": {**DEVICE_REF, "name": "Drum Machine"}, "pad": 36}),
+        requires=PROJECT_READY,
     ),
     "devices.set": ToolSpec(
         DeviceSetArgs, DEVICES_SET_DESCRIPTION, False, examples=({"target": DEVICE_REF, "enabled": False},)
