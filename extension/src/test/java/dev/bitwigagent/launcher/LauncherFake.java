@@ -872,6 +872,17 @@ public final class LauncherFake {
         for (Note n : moved) put(selected, n);
     }
 
+    /** One launcher clip "Riff" in scene 0 with three channel-0 notes. */
+    public static LauncherFake riff() {
+        LauncherFake f = new LauncherFake();
+        f.slots[0].content = true;
+        f.slots[0].name = "Riff";
+        f.put(0, 0, 0, 60, 100, 4);
+        f.put(0, 0, 1, 64, 90, 4);
+        f.put(0, 0, .375, 67, 80, 2);
+        return f;
+    }
+
     void put(int scene, int channel, double beat, int pitch, int velocity, double duration) {
         rows.computeIfAbsent(scene + ":" + channel + ":" + pitch, k -> new TreeMap<>())
                 .put(Note.ticks(beat), new Stored(velocity, duration));

@@ -81,10 +81,7 @@ final class ResultContractTest {
             "clips.import",
             "clips.launch",
             "clips.move",
-            "clips.quantize",
             "clips.set",
-            "clips.transform",
-            "clips.transpose",
             "devices.delete",
             "devices.insert",
             "devices.move",
@@ -146,6 +143,12 @@ final class ResultContractTest {
         f.tracks[0].child("sendBank").item(0).child("isEnabled").data = true;
     }
 
+    /** Clip content edits on the launcher fixture ("Riff" in scene 0), each an applied example with its params. */
+    private static final Map<String, Function<LauncherFake, String>> CLIP_EXAMPLES = Map.of(
+            "clips.transpose", f -> "{\"target\":" + f.clip(0) + ",\"semitones\":2}",
+            "clips.quantize", f -> "{\"target\":" + f.clip(0) + ",\"amount\":1}",
+            "clips.transform", f -> "{\"targets\":[" + f.clip(0) + "],\"op\":\"doubleContent\"}");
+
     private static JsonObject run(String method, Example example) {
         HostFixture f = new HostFixture();
         example.setup.accept(f);
@@ -177,10 +180,11 @@ final class ResultContractTest {
         Set<String> listed = new TreeSet<>(EXAMPLES.keySet());
         listed.addAll(SENT.keySet());
         listed.addAll(LAUNCHER.keySet());
+        listed.addAll(CLIP_EXAMPLES.keySet());
         listed.addAll(MISSING);
         assertEquals(writes, listed);
         assertEquals(
-                EXAMPLES.size() + SENT.size() + LAUNCHER.size() + MISSING.size(),
+                EXAMPLES.size() + SENT.size() + LAUNCHER.size() + CLIP_EXAMPLES.size() + MISSING.size(),
                 listed.size(),
                 "each write is listed once");
     }
@@ -206,6 +210,17 @@ final class ResultContractTest {
             JsonObject result = run(sent.getKey(), sent.getValue());
             assertEquals("sent", result.get("outcome").getAsString(), sent.getKey());
             assertFalse(result.has("verification"), sent.getKey());
+        }
+    }
+
+    @Test
+    void everyClipContentEditNamesItsVerificationOnEveryAppliedLeaf() {
+        for (Map.Entry<String, Function<LauncherFake, String>> example : CLIP_EXAMPLES.entrySet()) {
+            LauncherFake f = LauncherFake.riff();
+            JsonObject result =
+                    f.call(example.getKey(), HostFixture.json(example.getValue().apply(f)));
+            assertTrue(applies(result), example.getKey() + " example does not apply: " + result);
+            assertTrue(Results.leafRuleHolds(result), example.getKey() + ": " + result);
         }
     }
 }

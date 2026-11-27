@@ -34,7 +34,7 @@ Research (finding presets, planning the melody) can run in parallel with prepari
 
 ## Variants and edits
 
-- Copy, then transform, instead of resending notes: `clips copy`, then `clips transpose`, `clips quantize` or `clips transform`.
+- Copy, then transform, instead of resending notes: `clips copy`, then `clips transpose`, `clips quantize` or `clips transform` (op doubleContent repeats the content in a doubled loop). The host does each transform; read the result's `compared` before and after counts instead of re-reading notes.
 - Prefer a short loop over writing every repetition, and keep `range` writes small. `notes get` with `exact:false` snaps onsets to cells: quantize recorded takes before editing them on that path.
 - `clips set` changes one clip's name, color, loop and launch behavior, each field with its own outcome.
 - Scenes: `scenes list`, then `scenes set`, `scenes launch`, `scenes duplicate`, `scenes delete`. A scene launch is not a one-clip audition: it plays every track's slot in that row.
