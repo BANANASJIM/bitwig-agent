@@ -31,7 +31,7 @@ Many controls have no input port (envelope times, step counts, oscillator timbre
 
 1. `modulators describe` picks a type and explains its controls (offline).
 2. One `modulators insert` creates, shapes and maps it: `--to="$DEVICE" --typeName=LFO --params='{"Rate":{"display":"0.25 Hz"}}' --map='[{"target":'"$CUTOFF"',"amount":0.3}]'`. `params` keys are the control names `modulators get` shows (`describe` titles may differ); `map[].target` is a parameter ref from `grid export` on the same device. The result has the modulator `ref` and one entry per step.
-3. If a step failed, the modulator exists: finish with what `next` names (`parameters set` on its controls, `modulators map --source=<ref>`), never `modulators insert` again. A misspelt or shared name lists `candidates` and writes no step.
+3. If a step failed, the modulator exists: finish with what `next` names (`parameters set` on its controls, `modulators map --source=<ref>`), never `modulators insert` again. A misspelt or shared name lists `candidates` and no configure step runs (the inserted modulator still exists).
 4. Later changes: `modulators map` again changes the amount (`modulators unmap` removes it; its `--help` says what an omitted field keeps), `parameters set` on a control ref from `modulators list`. Polarity is a parameter of the modulator, not of the mapping.
 
 Modulator topology edits need a stopped, non-recording transport; `parameters set` on a modulator control may run while playing. After `unknown`, inspect `modulators list`; never repeat.

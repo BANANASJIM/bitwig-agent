@@ -24,13 +24,24 @@ PARAMETER_READ = {"devices.insert": "parameters.list", "modulators.insert": "mod
 
 
 @dataclasses.dataclass(frozen=True)
-class Step:
-    """One configure call: its entry name, and its arguments or the refusal that keeps it from being made."""
+class Call:
+    """A resolved configure step: its entry name and the call that makes it."""
 
     name: str
     method: str
-    params: dict[str, Any] | None = None
-    refusal: dict[str, Any] | None = None
+    params: dict[str, Any]
+
+
+@dataclasses.dataclass(frozen=True)
+class Refused:
+    """A configure step that cannot be made, and why."""
+
+    name: str
+    method: str
+    refusal: dict[str, Any]
+
+
+Step = Call | Refused
 
 
 Planner = Callable[[Any, dict[str, Any], dict[str, Any], int], Awaitable[list[Step]]]
@@ -40,36 +51,31 @@ def refusal(reason: str, message: str, **details: Any) -> dict[str, Any]:
     return {"outcome": Outcome.NOT_APPLIED.value, "reason": reason, "message": message, **details}
 
 
-def skeleton(extra: Mapping[str, Any]) -> list[Step]:
-    """The steps a request asks for, in run order, before anything is resolved."""
-    return [Step(f"params.{name}", "parameters.set") for name in extra.get("params", {})] + [
-        Step(f"map[{i}]", "modulators.map") for i in range(len(extra.get("map", [])))
-    ]
-
-
 def refuse_all(extra: Mapping[str, Any], why: dict[str, Any]) -> list[Step]:
-    return [dataclasses.replace(step, refusal=why) for step in skeleton(extra)]
+    """Every step the request asks for, in run order, refused for one reason."""
+    params = [(f"params.{name}", "parameters.set") for name in extra.get("params", {})]
+    maps = [(f"map[{i}]", "modulators.map") for i in range(len(extra.get("map", [])))]
+    return [Refused(name, method, why) for name, method in params + maps]
 
 
 def param_steps(params: Mapping[str, Any], rows: list[Mapping[str, Any]]) -> list[Step]:
     """A parameters.set per name, resolved against the new object's parameter rows; a missing or shared name refuses."""
     settable = [row for row in rows if "ref" in row]
     names = list(dict.fromkeys(str(row.get("name")) for row in settable))
-    steps = []
+    steps: list[Step] = []
     for name, value in params.items():
-        step = Step(f"params.{name}", "parameters.set")
+        step, method = f"params.{name}", "parameters.set"
         hits = [row["ref"] for row in settable if row.get("name") == name]
         if len(hits) == 1:
-            step = dataclasses.replace(step, params={"target": hits[0], "value": value})
+            steps.append(Call(step, method, {"target": hits[0], "value": value}))
         elif hits:
             why = refusal("ambiguous_name", f"{len(hits)} parameters are called {name!r}.", candidates=hits)
-            step = dataclasses.replace(step, refusal=why)
+            steps.append(Refused(step, method, why))
         else:
             close = difflib.get_close_matches(name, names, MAX_CANDIDATES, 0.5) or names[:MAX_CANDIDATES]
-            step = dataclasses.replace(
-                step, refusal=refusal("unknown_name", f"No parameter is called {name!r}.", candidates=close)
+            steps.append(
+                Refused(step, method, refusal("unknown_name", f"No parameter is called {name!r}.", candidates=close))
             )
-        steps.append(step)
     return steps
 
 
@@ -85,14 +91,13 @@ async def modulator_steps(client: Any, created: dict[str, Any], extra: dict[str,
     """Controls resolve against the row the insert returned; the new modulator is every mapping's source."""
     steps = param_steps(extra.get("params", {}), created["modulator"]["parameters"])
     return steps + [
-        Step(f"map[{i}]", "modulators.map", {"source": created["ref"], **mapping})
+        Call(f"map[{i}]", "modulators.map", {"source": created["ref"], **mapping})
         for i, mapping in enumerate(extra.get("map", []))
     ]
 
 
-async def run(client: Any, step: Step, timeout_ms: int) -> dict[str, Any]:
+async def run(client: Any, step: Call, timeout_ms: int) -> dict[str, Any]:
     """The step's entry: the call's own result, or its error (nothing changed) as not_applied with that reason."""
-    assert step.params is not None  # execute runs only resolved steps
     try:
         return {"step": step.name, **await client.call(step.method, step.params, timeout_ms)}
     except BridgeError as exc:
@@ -103,10 +108,11 @@ async def run(client: Any, step: Step, timeout_ms: int) -> dict[str, Any]:
 
 async def execute(client: Any, steps: list[Step], timeout_ms: int) -> list[dict[str, Any]]:
     """Nothing runs when a step was refused; otherwise in order, up to the first step that does not succeed."""
-    if any(step.refusal is not None for step in steps):
-        return [{"step": step.name, **(step.refusal or NOT_REACHED)} for step in steps]
+    calls = [step for step in steps if isinstance(step, Call)]
+    if len(calls) < len(steps):
+        return [{"step": s.name, **(s.refusal if isinstance(s, Refused) else NOT_REACHED)} for s in steps]
     entries: list[dict[str, Any]] = []
-    for step in steps:
+    for step in calls:
         stopped = entries and Outcome(entries[-1]["outcome"]) not in SUCCEEDED
         entries.append({"step": step.name, **NOT_REACHED} if stopped else await run(client, step, timeout_ms))
     return entries

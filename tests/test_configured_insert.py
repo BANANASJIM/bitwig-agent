@@ -8,9 +8,9 @@ import pytest
 
 from bitwig_agent.core.invoke import Error, invoke
 from bitwig_agent.errors import bridge_error, unknown_result
-from bitwig_agent.protocol import TOOLS, validate_call
+from bitwig_agent.protocol import TOOLS, export_bundle, validate_call
 from bitwig_agent.protocol.base import leaf_rule_holds
-from bitwig_agent.protocol.devices import DEVICE_REF, TRACK_REF
+from bitwig_agent.protocol.devices import DEVICE_REF, INSERT_CAUTION, TRACK_REF
 from bitwig_agent.protocol.modulators import DEVICE_REF as GRID_DEVICE
 from bitwig_agent.protocol.modulators import GRID_PARAMETER_REF
 
@@ -254,6 +254,10 @@ def test_the_host_never_sees_the_composed_fields():
         assert spec.host_model is spec.wire
         assert spec.model is not spec.wire
         assert not {"params", "map"} & spec.wire.model_fields.keys()
+        bundled = export_bundle()["methods"][method]["description"]
+        assert "params" not in bundled
+        assert "params" in spec.description
+        assert spec.description.startswith(bundled.split(" Needs a stopped")[0].removesuffix(INSERT_CAUTION))
         assert len(spec.host_examples) == len(spec.examples) - 1
         with pytest.raises(ValueError, match="params"):
             validate_call(method, {**spec.examples[-1]}, host=True)

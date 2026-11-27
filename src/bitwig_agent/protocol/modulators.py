@@ -151,7 +151,11 @@ MODULATOR_PARAMETER_REF = {
 MODULATORS_LIST_DESCRIPTION = "Read the modulators of one root device (the Modulators section of a device) in a single call, without selection: per modulator its ref, typeId, name, x/y, parameters (parameter ref and value {value, display, kind, minimum, maximum, options?}), read-only string-panel rows, and outputs with their mappings (target parameter ref, amount, transfer, enabled). offset 0..100000 and limit 1..128 (default 64) page the modulators. complete=false lists unsupported controls; contentsAvailable=false means the modulator was never opened. Discover target with devices.list."
 MODULATORS_GET_DESCRIPTION = "Read one modulator, in the same row shape as modulators.list: target is a modulator ref from modulators.list or modulators.insert."
 MODULATORS_DESCRIBE_DESCRIPTION = "Bitwig's own in-app help for device modulators, read offline from the local install (client-side; no host call). With type, one modulator: description, category, keywords, per-control help (docKey, title, description) and the shared help; without it, every type with name, category and one-line description (query ranks them by name, category, keywords and description, e.g. 'random', 'envelope'). Live kinds, ranges and values are not in these files: read them with modulators.list after inserting."
-MODULATORS_INSERT_DESCRIPTION = "Add one device modulator to the device `to` (typeName from modulators.describe, e.g. Random, Steps, Beat LFO, ADSR) after the existing ones, via Bitwig's own modulator-browser insertion. Returns the new row with its ref after verifying membership and type. params {name: value} sets its controls and map [{target, amount, ...}] maps it in the same call (modulators.get names, parameters.set values, modulators.map fields); entries has one step each, and once the insert applied the result keeps its ref and, if a later step failed, next: finish with parameters.set / modulators.map on that ref, never repeat the insert. Needs a stopped, nonrecording, nonautomation transport. Never retry an unknown outcome: read modulators.list."
+MODULATORS_INSERT_DESCRIPTION = "Add one device modulator to the device `to` (typeName from modulators.describe, e.g. Random, Steps, Beat LFO, ADSR) after the existing ones, via Bitwig's own modulator-browser insertion. Returns the new row with its ref after verifying membership and type. Needs a stopped, nonrecording, nonautomation transport. Never retry an unknown outcome: read modulators.list."
+MODULATORS_INSERT_CONFIGURE_DESCRIPTION = MODULATORS_INSERT_DESCRIPTION.replace(
+    " Needs a stopped",
+    " params {name: value} sets its controls and map [{target, amount, ...}] maps it in the same call (modulators.get names, parameters.set values, modulators.map fields); entries has one step each, and once the insert applied the result keeps its ref and, if a later step failed, next: finish with parameters.set / modulators.map on that ref, never repeat the insert. Needs a stopped",
+)
 MODULATORS_DELETE_DESCRIPTION = "Delete one device modulator (and its mappings) with Bitwig's native undoable delete: target is a modulator ref. Membership is verified afterwards. Stopped transport required; never retry an unknown outcome."
 MODULATORS_MAP_DESCRIPTION = "Set a modulation mapping from a modulator output to a control on the same device, whether or not one exists: source is a modulator ref, target a parameter ref of a Grid module or of another modulator (from grid.export refs or modulators.list), amount -1..1 (not clamped). An omitted transfer or enabled keeps an existing mapping's value (a new mapping gets linear, enabled). outputId may be omitted for single-output modulators. expect {amount} compares the current mapping first. Uses Bitwig's undoable modulation add; verified by exact mapping readback. Stopped transport required; never retry an unknown outcome."
 MODULATORS_UNMAP_DESCRIPTION = "Remove one modulation mapping (Bitwig's undoable Clear modulation): source is a modulator ref, target the mapped parameter ref. expect {amount} compares the current mapping first. Verified by readback. Stopped transport required."
@@ -178,7 +182,7 @@ SPECS: dict[str, ToolSpec] = {
     ),
     "modulators.insert": ToolSpec(
         ModulatorsInsertConfigureArgs,
-        MODULATORS_INSERT_DESCRIPTION,
+        MODULATORS_INSERT_CONFIGURE_DESCRIPTION,
         False,
         examples=(
             {"to": DEVICE_REF, "typeName": "Random"},
@@ -192,6 +196,7 @@ SPECS: dict[str, ToolSpec] = {
         ),
         summary="Add one device modulator (typeName from modulators.describe, or typeId) to the root device `to`; params? {name: value} sets its controls and map? [{target, amount, outputId?, transfer?, enabled?}] maps it, in one call. On a failed later step finish with parameters.set / modulators.map on the returned ref; never re-insert. Needs a stopped transport.",
         wire=ModulatorsInsertArgs,
+        wire_description=MODULATORS_INSERT_DESCRIPTION,
     ),
     "modulators.delete": ToolSpec(
         ModulatorsDeleteArgs, MODULATORS_DELETE_DESCRIPTION, False, examples=({"target": MODULATOR_REF},)

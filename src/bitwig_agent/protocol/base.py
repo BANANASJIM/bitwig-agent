@@ -265,6 +265,8 @@ class ToolSpec:
     """The read method that shows the state this write acted on; the registry fills it for every host write."""
     wire: type[BaseModel] | None = None
     """The host's own arguments when model adds fields the client composes from other calls (devices.insert params)."""
+    wire_description: str | None = None
+    """The host's own description when wire is set: the bundle never describes the composed fields."""
 
     @property
     def host_model(self) -> type[BaseModel]:
