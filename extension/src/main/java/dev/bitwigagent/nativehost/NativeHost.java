@@ -4,6 +4,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import dev.bitwigagent.core.Errors;
+import dev.bitwigagent.core.NativeProvenance;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.RpcException;
 import dev.bitwigagent.core.SharedData;
@@ -95,6 +96,11 @@ public final class NativeHost {
 
         String actualHash() {
             return actualHash;
+        }
+
+        /** Which host binary answered, as a value a domain writes once. */
+        public NativeProvenance nativeProvenance() {
+            return new NativeProvenance(hostVersion, actualHash);
         }
 
         /** Which host binary answered: the result's nativeVersion and nativeJarSha256. */

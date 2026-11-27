@@ -6,6 +6,7 @@ from typing import Any, Literal, Self
 from pydantic import Field, model_validator
 
 from bitwig_agent.protocol.base import (
+    NOT_RECORDING,
     PROJECT_READY,
     TRACK,
     Nonempty,
@@ -257,14 +258,18 @@ SPECS: dict[str, ToolSpec] = {
         wire_description=DEVICES_INSERT_DESCRIPTION,
     ),
     "devices.delete": ToolSpec(
-        DeviceTargetArgs, DEVICES_DELETE_DESCRIPTION, False, examples=({"target": DEVICE_REF},), requires=PROJECT_READY
+        DeviceTargetArgs,
+        DEVICES_DELETE_DESCRIPTION,
+        False,
+        examples=({"target": DEVICE_REF},),
+        requires=PROJECT_READY + NOT_RECORDING,
     ),
     "devices.move": ToolSpec(
         DeviceMoveArgs,
         DEVICES_MOVE_DESCRIPTION,
         False,
         examples=({"target": {**DEVICE_REF, "index": 3, "name": "Comp"}, "position": "start"},),
-        requires=PROJECT_READY,
+        requires=PROJECT_READY + NOT_RECORDING,
     ),
     "devices.remote.get": ToolSpec(
         RemoteGetArgs, DEVICES_REMOTE_GET_DESCRIPTION, True, examples=({"target": DEVICE_REF, "page": 0},)

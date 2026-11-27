@@ -50,6 +50,18 @@ class TransportSetArgs(StatusArgs):
     recordQuantizationGrid: Nonempty = omitted(
         description="Grid for quantizing recorded notes: an option of transport.get recordQuantizationGrid."
     )
+    arrangerRecordEnabled: bool = omitted(
+        description="Global Record (the arranger record button). With playing true it records into armed tracks."
+    )
+    arrangerOverdubEnabled: bool = omitted(description="Arranger overdub on/off.")
+    clipLauncherOverdubEnabled: bool = omitted(description="Clip launcher overdub on/off.")
+    arrangerAutomationWriteEnabled: bool = omitted(description="Automation write (the arranger write button) on/off.")
+    clipLauncherAutomationWriteEnabled: bool = omitted(
+        description="Clip launcher automation write on/off (deprecated in API 25; Bitwig 6 shows one write button)."
+    )
+    automationWriteMode: Nonempty = omitted(
+        description="Automation write mode: an option of transport.get automationWriteMode (latch, touch, write)."
+    )
 
     @field_validator("timeSignature")
     @classmethod
@@ -70,8 +82,8 @@ class TransportSetArgs(StatusArgs):
         return self
 
 
-TRANSPORT_GET_DESCRIPTION = "Read observed projectName, playing, tempo, position, metronome and loop settings. Recording/automation fields are arrangerRecordEnabled, arrangerAutomationWriteEnabled and clipLauncherAutomationWriteEnabled; require each explicitly false before stopped-fixture edits, not missing/null. One response covers project-label and playback-safety preflight; the name is not full-path identity or an atomic lock. metronomeVolume is {value 0..1, display}; preRoll, defaultLaunchQuantization and recordQuantizationGrid are {value, options} with the host's own option list (value null until observed). punchInEnabled and punchOutEnabled are booleans."
-TRANSPORT_SET_DESCRIPTION = "Change only supplied transport fields; e.g. tempo=120 playing=false. Supported tempo range 20..666 BPM is a toolkit bound. Beat positions are nonnegative; loop.length is positive and the loop end finite. An explicit playing=false is observed before other supplied fields are dispatched; this is not an atomic transaction. Inspect the outcome and per-field outcome/reason; stop on unknown. Playback can produce audio. Recording or automation-write mode blocks changes except an explicit playing=false stop; modes are never silently disabled. timeSignature (e.g. '7/8', numerator 1..32, denominator 1/2/4/8/16/32) is read back like the other fields; time-signature change markers are not in the public API. metronomeVolume takes the value transport.get returned (0..1, not dB); {display} is refused as invalid_params/unsupported_unit until the host's metronome display is measured. punchInEnabled, punchOutEnabled, preRoll, defaultLaunchQuantization (project default clip launch quantization) and recordQuantizationGrid take the same per-field readback; the three enums take the bare option value from transport.get (the host's own list, refused as invalid_params/not_applied otherwise, before anything is written) and punch/pre-roll/quantization edits are blocked while recording or automation write is on, like the other settings."
+TRANSPORT_GET_DESCRIPTION = "Read observed projectName, playing, tempo, position, metronome and loop settings. Recording/automation fields are arrangerRecordEnabled (Global Record), arrangerOverdubEnabled, clipLauncherOverdubEnabled, arrangerAutomationWriteEnabled, clipLauncherAutomationWriteEnabled and automationWriteMode {value, options}; a write that needs recording off (help shows Requires: notRecording or stopped) needs the three record/automation-write booleans explicitly false, not missing/null. One response covers project-label and playback-safety preflight; the name is not full-path identity or an atomic lock. metronomeVolume is {value 0..1, display}; preRoll, defaultLaunchQuantization and recordQuantizationGrid are {value, options} with the host's own option list (value null until observed). punchInEnabled and punchOutEnabled are booleans."
+TRANSPORT_SET_DESCRIPTION = "Change only supplied transport fields; e.g. tempo=120 playing=false. Supported tempo range 20..666 BPM is a toolkit bound. Beat positions are nonnegative; loop.length is positive and the loop end finite. An explicit playing=false is observed before other supplied fields are dispatched; this is not an atomic transaction. Inspect the outcome and per-field outcome/reason; stop on unknown. Playback can produce audio. The recording fields (arrangerRecordEnabled, the two overdubs, the two automation-write switches, automationWriteMode) and playing can be changed while recording or automation write is on, so recording can always be turned off; every other field is refused (unsafe_state) while recording or automation write is on, and modes are never silently disabled. arrangerRecordEnabled=true with the transport playing, or playing=true with it on, starts recording into armed tracks. timeSignature (e.g. '7/8', numerator 1..32, denominator 1/2/4/8/16/32) is read back like the other fields; time-signature change markers are not in the public API. metronomeVolume takes the value transport.get returned (0..1, not dB); {display} is refused as invalid_params/unsupported_unit until the host's metronome display is measured. punchInEnabled, punchOutEnabled, preRoll, defaultLaunchQuantization (project default clip launch quantization) and recordQuantizationGrid take the same per-field readback; the three enums take the bare option value from transport.get (the host's own list, refused as invalid_params/not_applied otherwise, before anything is written) and punch/pre-roll/quantization edits are blocked while recording or automation write is on, like the other settings. automationWriteMode takes an option of transport.get automationWriteMode the same way."
 
 
 SPECS: dict[str, ToolSpec] = {
@@ -84,6 +96,8 @@ SPECS: dict[str, ToolSpec] = {
             {"tempo": 120.0, "playing": False},
             {"preRoll": "one_bar", "punchInEnabled": True, "metronomeVolume": 0.5},
             {"loopEnabled": True, "loop": {"start": 0, "length": 16}},
+            {"arrangerRecordEnabled": False, "arrangerAutomationWriteEnabled": False},
+            {"automationWriteMode": "latch", "clipLauncherOverdubEnabled": True},
         ),
     ),
 }

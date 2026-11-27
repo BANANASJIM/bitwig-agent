@@ -5,7 +5,16 @@ from typing import Annotated, Literal, Self
 from pydantic import Field, model_validator
 
 from bitwig_agent.protocol.annotations import ADD
-from bitwig_agent.protocol.base import PROJECT_READY, Nonempty, StatusArgs, ToolSpec, UnitValue, omitted
+from bitwig_agent.protocol.base import (
+    NOT_RECORDING,
+    PROJECT_READY,
+    STOPPED,
+    Nonempty,
+    StatusArgs,
+    ToolSpec,
+    UnitValue,
+    omitted,
+)
 from bitwig_agent.protocol.limits import MAX_TIMEOUT_MS, MIN_TIMEOUT_MS, TRACK_WINDOW
 from bitwig_agent.protocol.positions import TrackPosition
 from bitwig_agent.protocol.refs import SendRef, TrackRef
@@ -171,7 +180,7 @@ SPECS: dict[str, ToolSpec] = {
         TRACKS_GROUP_DESCRIPTION,
         False,
         examples=({"targets": [EXAMPLE_TRACK, EXAMPLE_OTHER], "name": "Drums"},),
-        requires=PROJECT_READY,
+        requires=PROJECT_READY + NOT_RECORDING,
         annotations=ADD,
     ),
     "tracks.delete": ToolSpec(
@@ -179,6 +188,6 @@ SPECS: dict[str, ToolSpec] = {
         TRACKS_DELETE_DESCRIPTION,
         False,
         examples=({"target": EXAMPLE_TRACK},),
-        requires=PROJECT_READY,
+        requires=PROJECT_READY + STOPPED,
     ),
 }

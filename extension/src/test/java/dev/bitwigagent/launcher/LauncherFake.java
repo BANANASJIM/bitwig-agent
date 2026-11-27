@@ -64,6 +64,8 @@ public final class LauncherFake {
     /** When above 0 the scene bank echoes a scroll only after this many milliseconds of host time. */
     long scrollEchoMs;
 
+    public int records;
+    public boolean armed;
     public int selected, start, writes, creates, failWriteAt, nameWrites, playbackDispatches, stopWrites;
     double size = .25, loopStart;
     public String trackId = ID;
@@ -150,6 +152,7 @@ public final class LauncherFake {
             track.live("position", () -> trackIndex);
             track.live("isStopped", () -> stopped);
             track.live("isQueuedForStop", () -> stopQueued);
+            track.live("arm", () -> armed);
             FakeHost bank = FakeHost.of(ClipLauncherSlotBank.class, "bank");
             bank.live("scrollPosition", () -> bankOffset);
             bank.live("itemCount", () -> scenes);
@@ -169,7 +172,13 @@ public final class LauncherFake {
                 slot.live("name", () -> data(position).name);
                 slot.live("isPlaying", () -> data(position).playing);
                 slot.live("isPlaybackQueued", () -> data(position).queued);
-                slot.live("isRecording", () -> false);
+                slot.live("isRecording", () -> data(position).recording);
+                slot.live("isRecordingQueued", () -> false);
+                slot.on("record", a -> {
+                    records++;
+                    data(position).recording = true;
+                    return null;
+                });
                 slot.on("select", a -> {
                     selected = bankOffset + position;
                     onSelect.run();
@@ -1027,7 +1036,7 @@ public final class LauncherFake {
     }
 
     public static final class SlotData {
-        public boolean content, playing, queued;
+        public boolean content, playing, queued, recording;
         public String name = "";
         double length = 4, playStop = 4;
         final JsonObject nextAction = new JsonObject();

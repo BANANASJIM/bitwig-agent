@@ -20,10 +20,18 @@ import java.util.TreeMap;
 /** Host method metadata read from the protocol bundle generated from the Python protocol at build time. */
 public final class MethodSpecs {
     public static final String RESOURCE = "/protocol.json";
-    private static final Set<String> REQUIREMENTS = Set.of("projectReady", "engine");
+    private static final Set<String> REQUIREMENTS = Set.of("projectReady", "engine", "notRecording", "stopped");
+
+    /** The transport state a write declares it needs (its spec's requires): nothing, recording off, or also stopped. */
+    public enum Transport {
+        ANY,
+        NOT_RECORDING,
+        STOPPED
+    }
 
     public static final class Spec {
         public final boolean readOnly, projectWrite, engineRequired;
+        public final Transport transport;
         public final int defaultTimeoutMs, maxTimeoutMs;
         public final SchemaValidator params, timeout;
         /** The read method an unknown result of this write points at; null for a read. */
@@ -41,6 +49,11 @@ public final class MethodSpecs {
             this.readOnly = readOnly;
             this.projectWrite = requires.contains("projectReady");
             this.engineRequired = requires.contains("engine");
+            if (requires.contains("notRecording") && requires.contains("stopped"))
+                throw new IllegalStateException("stopped already includes notRecording");
+            this.transport = requires.contains("stopped")
+                    ? Transport.STOPPED
+                    : requires.contains("notRecording") ? Transport.NOT_RECORDING : Transport.ANY;
             this.defaultTimeoutMs = defaultTimeoutMs;
             this.maxTimeoutMs = maxTimeoutMs;
             this.params = params;

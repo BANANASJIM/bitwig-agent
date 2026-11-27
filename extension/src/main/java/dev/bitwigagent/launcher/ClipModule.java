@@ -39,6 +39,7 @@ public final class ClipModule implements HostModule {
             "clips.copy",
             "clips.move",
             "clips.launch",
+            "clips.record",
             "clips.transpose",
             "clips.quantize",
             "clips.transform");
@@ -195,6 +196,9 @@ public final class ClipModule implements HostModule {
                 break;
             case "clips.launch":
                 launch(op, p.getAsJsonObject("target"));
+                break;
+            case "clips.record":
+                record(op, p.getAsJsonObject("target"));
                 break;
             case "clips.transform":
                 transform(op, p.getAsJsonArray("targets"));
@@ -484,6 +488,22 @@ public final class ClipModule implements HostModule {
             op.markDispatched();
             target.slot.api.launch();
             state.awaitPlayback(op, target, target.slot, state.clipRef(target));
+        });
+    }
+
+    /** Slot record on an armed track; recording itself is the user's explicit request, never implied. */
+    private void record(HostOperation op, JsonObject ref) {
+        state.targets.enterSlot(op, ref, false, at -> {
+            LauncherState.Target target = state.target(at);
+            LauncherState.ready(target.slot);
+            state.guard(op, target);
+            if (!target.track.arm().get())
+                throw Errors.notApplied(
+                        Reason.UNSAFE_STATE,
+                        "The track is not observed armed, so the slot would not record; arm it with tracks.set arm=true. Nothing was sent.");
+            op.markDispatched();
+            target.slot.api.record();
+            state.awaitRecording(op, target, state.targets.slotRef(at));
         });
     }
 

@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from bitwig_agent.protocol import validate_call
+from bitwig_agent.protocol import TOOLS, validate_call
 
 
 def test_transport_rejects_finite_fields_whose_loop_end_overflows():
@@ -42,3 +42,24 @@ def test_a_metronome_volume_takes_its_value_or_its_display():
     assert validate_call("transport.set", {"metronomeVolume": {"display": "-6 dB"}})[0] == {
         "metronomeVolume": {"display": "-6 dB"}
     }
+
+
+def test_the_recording_fields_are_transport_set_fields():
+    args = {
+        "arrangerRecordEnabled": False,
+        "arrangerOverdubEnabled": True,
+        "clipLauncherOverdubEnabled": False,
+        "arrangerAutomationWriteEnabled": False,
+        "clipLauncherAutomationWriteEnabled": False,
+        "automationWriteMode": "latch",
+    }
+    assert validate_call("transport.set", args)[0] == args
+    for bad in ({"arrangerRecordEnabled": 1}, {"automationWriteMode": ""}, {"recording": True}):
+        with pytest.raises(ValidationError):
+            validate_call("transport.set", bad)
+
+
+def test_no_example_starts_recording():
+    for example in TOOLS["transport.set"].examples:
+        assert not (example.get("arrangerRecordEnabled") and example.get("playing")), example
+        assert example.get("arrangerRecordEnabled") is not True, example

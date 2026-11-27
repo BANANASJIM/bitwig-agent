@@ -13,6 +13,7 @@ import dev.bitwigagent.core.Results;
 import dev.bitwigagent.device.ChainExamples;
 import dev.bitwigagent.launcher.LauncherFake;
 import dev.bitwigagent.project.FakeKeySignature;
+import dev.bitwigagent.routing.FakeRoutingPort;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
@@ -68,7 +69,38 @@ final class ResultContractTest {
                     new Example(
                             LIFECYCLE,
                             f -> f.delete = slot -> f.removeTrack(slot, 1),
-                            "{\"target\":" + HostFixture.track(HostFixture.B) + "}"));
+                            "{\"target\":" + HostFixture.track(HostFixture.B) + "}"),
+            "tracks.routing.set",
+                    new Example(
+                            s -> s.routing(HostFixture.SPECS, routing(false)),
+                            "{\"target\":" + HostFixture.track(HostFixture.A) + ",\"input\":"
+                                    + FakeRoutingPort.BUS.json() + "}"),
+            "devices.sidechain.set",
+                    new Example(
+                            s -> s.routing(HostFixture.SPECS, routing(true)),
+                            ResultContractTest::compressor,
+                            "{\"target\":{\"kind\":\"sidechain\",\"device\":"
+                                    + Refs.device(HostFixture.track(HostFixture.A), 0, "Compressor")
+                                    + ",\"index\":0,\"id\":\"SIDECHAIN\"},\"source\":{\"kind\":\"pre_fader\",\"track\":"
+                                    + HostFixture.track(HostFixture.B) + "}}"));
+
+    /** The routing fake, running its native work at once; with the sidechain component when asked. */
+    private static FakeRoutingPort routing(boolean component) {
+        FakeRoutingPort port = new FakeRoutingPort();
+        port.inline = true;
+        port.component = component;
+        return port;
+    }
+
+    /** Track A's first device is an observed Compressor. */
+    private static void compressor(HostFixture f) {
+        FakeHost devices = f.tracks[0].child("createDeviceBank"), device = devices.item(0);
+        device.child("exists").emit(true);
+        device.child("name").emit("Compressor");
+        device.child("position").emit(0);
+        device.child("deviceType").emit("AudioEffect");
+        devices.child("itemCount").emit(1);
+    }
 
     /** Applied examples that need a fixture of their own domain (the simulated native document of chains). */
     private static final Map<String, Supplier<JsonObject>> DOMAIN_EXAMPLES =
@@ -95,7 +127,6 @@ final class ResultContractTest {
             "devices.remote.delete",
             "devices.select",
             "devices.set",
-            "devices.sidechain.set",
             "export.audio",
             "grid.connections.set",
             "grid.modules.delete",
@@ -123,8 +154,7 @@ final class ResultContractTest {
             "scenes.launch",
             "scenes.set",
             "tracks.bounce",
-            "tracks.group",
-            "tracks.routing.set");
+            "tracks.group");
 
     /**
      * Launcher note writes, run on the launcher fixture with the native note binding: params name the clip at scene 0
@@ -134,6 +164,11 @@ final class ResultContractTest {
             "notes.set",
                     f -> HostFixture.json("{\"target\":" + f.clip(0)
                             + ",\"notes\":[{\"beat\":0,\"pitch\":60,\"velocity\":90,\"duration\":1}]}"),
+            "clips.record",
+                    f -> {
+                        f.armed = true;
+                        return HostFixture.json("{\"target\":" + f.slot(0) + "}");
+                    },
             "clips.insert",
                     f -> HostFixture.json("{\"to\":" + f.slot(0) + ",\"loop\":{\"length\":4},\"name\":\"Riff\","
                             + "\"notes\":[{\"beat\":0,\"pitch\":60,\"velocity\":90,\"duration\":1}]}"));

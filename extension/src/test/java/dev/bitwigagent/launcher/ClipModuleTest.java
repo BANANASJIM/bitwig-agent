@@ -810,6 +810,37 @@ public final class ClipModuleTest {
         assertEquals(0, f.playbackDispatches);
     }
 
+    // ---- clips.record ----
+
+    @Test
+    void slotRecordNeedsAnArmedTrackAndIsReadBack() {
+        LauncherFake f = new LauncherFake();
+        RpcException unarmed =
+                assertRpcError("unsafe_state", f.startAndDrain("clips.record", params("target", f.slot(0))));
+        assertTrue(unarmed.getMessage().contains("arm"), unarmed.getMessage());
+        assertEquals(0, f.records, "an unarmed track is refused before anything is sent");
+        f.armed = true;
+        JsonObject out = f.call("clips.record", params("target", f.slot(0)));
+        assertEquals("applied", out.get("outcome").getAsString());
+        assertEquals("api_readback", out.get("verification").getAsString());
+        assertEquals("recording", out.get("recordingState").getAsString());
+        assertEquals(f.slot(0), out.get("ref"));
+        assertTrue(out.getAsJsonObject("slot").get("recording").getAsBoolean());
+        assertEquals(1, f.records);
+    }
+
+    @Test
+    void slotRecordIsAllowedWhileRecording() {
+        LauncherFake f = new LauncherFake();
+        f.armed = true;
+        f.base.transport.child("isArrangerRecordEnabled").emit(true);
+        assertEquals(
+                "applied",
+                f.call("clips.record", params("target", f.slot(0)))
+                        .get("outcome")
+                        .getAsString());
+    }
+
     // ---- clips.launch ----
 
     @Test

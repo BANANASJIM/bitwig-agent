@@ -4,6 +4,7 @@ import com.bitwig.extension.callback.BooleanValueChangedCallback;
 import com.bitwig.extension.controller.api.Transport;
 import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.HostOperation;
+import dev.bitwigagent.core.MethodSpecs;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.SafetyObservation;
 
@@ -39,6 +40,11 @@ public final class TransportSafety {
         return observed.playing;
     }
 
+    /** Recording and both automation-write modes observed, whatever their state. */
+    public void requireObserved() {
+        observed.requireObserved();
+    }
+
     /** Recording and both automation-write modes observed off; playback may run. Safe from document callbacks. */
     public void requirePlaybackSafe() {
         observed.requireNotRecording();
@@ -72,6 +78,12 @@ public final class TransportSafety {
                     Reason.UNSAFE_STATE,
                     "Transport, recording or automation-write state changed while the write was queued or running.");
         current.requireStopped();
+    }
+
+    /** Admit a method's declared transport requirement, as observed at enqueue and now. */
+    public void admit(HostOperation operation, MethodSpecs.Transport requirement) {
+        if (requirement == MethodSpecs.Transport.STOPPED) stopped(operation);
+        else if (requirement == MethodSpecs.Transport.NOT_RECORDING) recording(operation);
     }
 
     /** The one gate for Grid and modulator writes: value writes may play, structural writes need a stopped transport. */

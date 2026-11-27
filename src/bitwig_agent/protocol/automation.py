@@ -5,7 +5,7 @@ from typing import Annotated, Literal, Self
 
 from pydantic import Field, model_validator
 
-from bitwig_agent.protocol.base import MAX_BEAT, StatusArgs, StrictModel, ToolSpec, omitted
+from bitwig_agent.protocol.base import MAX_BEAT, STOPPED, StatusArgs, StrictModel, ToolSpec, omitted
 from bitwig_agent.protocol.limits import MAX_CURVE, POINT_BEAT_DIVISOR
 from bitwig_agent.protocol.refs import AutomationParameterRef
 from bitwig_agent.protocol.values import Expect, Normalized
@@ -150,5 +150,6 @@ SPECS: dict[str, ToolSpec] = {
             },
         ),
         summary='Write points of one parameter ref, value normalized or {display}, optional curve: without range only the listed points (nothing removed); range {start,end} or "all" becomes exactly the listed points. Optional expect.pointsHash. Stopped transport only.',
+        requires=STOPPED,
     ),
 }

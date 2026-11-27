@@ -49,6 +49,7 @@ import dev.bitwigagent.project.ProjectModule;
 import dev.bitwigagent.recovery.AckModule;
 import dev.bitwigagent.render.RenderModule;
 import dev.bitwigagent.routing.RoutingModule;
+import dev.bitwigagent.routing.RoutingPort;
 import dev.bitwigagent.transport.TransportModule;
 import java.util.function.LongSupplier;
 
@@ -264,7 +265,7 @@ public final class TestServices {
                 scheduler, window, trackRefs, project, transportSafety, natives, holds, access, launcher);
     }
 
-    public RoutingModule routing(MethodSpecs specs, RoutingModule.Access access) {
+    public RoutingModule routing(MethodSpecs specs, RoutingPort access) {
         return new RoutingModule(scheduler, window, trackRefs, sources, transportSafety, natives, holds, specs, access);
     }
 

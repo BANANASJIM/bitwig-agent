@@ -2,6 +2,8 @@ package dev.bitwigagent.core;
 
 /** Immutable controller observations; document callbacks never call Controller API safety getters. */
 public final class SafetyObservation {
+    private static final String OFF =
+            "arrangerRecordEnabled=false arrangerAutomationWriteEnabled=false clipLauncherAutomationWriteEnabled=false";
     public final long epoch;
     public final Boolean playing, recording, arrangerAutomation, launcherAutomation;
 
@@ -14,15 +16,19 @@ public final class SafetyObservation {
         this.launcherAutomation = launcherAutomation;
     }
 
-    public void requireNotRecording() {
+    public void requireObserved() {
         if (recording == null || arrangerAutomation == null || launcherAutomation == null)
             throw Errors.notApplied(
                     Reason.NOT_READY, "Recording and automation safety states have not all been observed.");
+    }
+
+    public void requireNotRecording() {
+        requireObserved();
         if (recording || arrangerAutomation || launcherAutomation)
             throw Errors.notApplied(
                     Reason.UNSAFE_STATE,
-                    "Recording or automation write is enabled, so this write is blocked. Turn off recording and"
-                            + " automation write in Bitwig (transport.set cannot change them), then retry.");
+                    "Recording or automation write is enabled, so this write is blocked. Turn them off with"
+                            + " transport.set " + OFF + ", then retry.");
     }
 
     public void requireNotPlaying() {
@@ -41,7 +47,7 @@ public final class SafetyObservation {
                     "This write needs a stopped transport with recording and automation write off (playing="
                             + playing + ", recording=" + recording + ", arrangerAutomation=" + arrangerAutomation
                             + ", launcherAutomation=" + launcherAutomation
-                            + "). Stop playback (transport.set playing=false) and turn recording and automation write off in"
-                            + " Bitwig (transport.set cannot change them), then retry.");
+                            + "). Stop playback and turn recording and automation write off with transport.set playing=false "
+                            + OFF + ", then retry.");
     }
 }

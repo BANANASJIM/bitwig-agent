@@ -7,6 +7,7 @@ from pydantic import Field, model_validator
 from bitwig_agent.protocol.annotations import EDIT
 from bitwig_agent.protocol.base import (
     MAX_BEAT,
+    STOPPED,
     TRACK,
     OnlyTrue,
     StrictModel,
@@ -132,6 +133,7 @@ SPECS: dict[str, ToolSpec] = {
         ),
         annotations=EDIT,
         summary="Renders each track as it is set to play over a beat range to wav/flac in an existing directory (<baseName>.<fileType>, -01, -02, ... for several): the arranger only while the track follows it; a launcher clip it plays, or a launcher stop, overrides it and is warned with the fix. Needs a stopped transport; existing files need overwrite. Longer: unknown + job, jobs.get.",
+        requires=STOPPED,
     ),
     "tracks.bounce": ToolSpec(
         TracksBounceArgs,
@@ -140,5 +142,6 @@ SPECS: dict[str, ToolSpec] = {
         examples=({"targets": [TRACK_REF], "start": 0, "end": 16, "tap": "post_fader", "inPlace": True},),
         annotations=EDIT,
         summary="Bounce a beat range of audio/instrument track refs in place: each target's main arranger lane gets one audio clip over the range, one undoable action; an instrument track becomes Hybrid. Needs a stopped transport; group tracks are refused. A job longer than the wait returns unknown with job: follow it with jobs.get; never retry unknown.",
+        requires=STOPPED,
     ),
 }

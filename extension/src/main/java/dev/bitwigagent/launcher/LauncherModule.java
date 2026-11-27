@@ -114,6 +114,7 @@ public final class LauncherModule implements HostModule {
         out.addProperty("playing", target.slot.api.isPlaying().get());
         out.addProperty("queued", target.slot.api.isPlaybackQueued().get());
         out.addProperty("recording", target.slot.api.isRecording().get());
+        out.addProperty("recordingQueued", target.slot.api.isRecordingQueued().get());
         Boolean selected = state.selected(target.slot, target.id());
         out.add("selected", selected == null ? JsonNull.INSTANCE : new JsonPrimitive(selected));
         return out;
