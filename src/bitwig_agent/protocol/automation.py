@@ -6,9 +6,14 @@ from typing import Annotated, Literal, Self
 from pydantic import Field, model_validator
 
 from bitwig_agent.protocol.base import MAX_BEAT, StatusArgs, StrictModel, ToolSpec, omitted
-from bitwig_agent.protocol.limits import MAX_CURVE
+from bitwig_agent.protocol.limits import MAX_CURVE, POINT_BEAT_DIVISOR
 from bitwig_agent.protocol.refs import AutomationParameterRef
 from bitwig_agent.protocol.values import Expect, Normalized
+
+
+def snap(beat: float) -> float:
+    """The beat on the grid automation points are identified on, as the extension snaps it."""
+    return round(beat * POINT_BEAT_DIVISOR) / POINT_BEAT_DIVISOR
 
 
 class AutomationRange(StrictModel):
@@ -53,7 +58,7 @@ class PointsExpect(Expect):
 class AutomationPointsSetArgs(StatusArgs):
     target: AutomationParameterRef
     points: Annotated[list[AutomationPoint], Field(max_length=1024)] = Field(
-        description="Points to write, strictly increasing beats, inside range if given. A point at the beat of an existing one updates it."
+        description="Points to write, beats non-decreasing (points at one beat, such as a step, in order), inside range if given. Points are identified by beat and order at that beat; a listed point updates the one in the same place."
     )
     range: AutomationRange | Literal["all"] = omitted(
         description='Without range only the listed points are written and nothing is removed. {start, end}: the points with start <= beat <= end become exactly the listed ones. "all": the whole lane does.'
@@ -62,9 +67,9 @@ class AutomationPointsSetArgs(StatusArgs):
 
     @model_validator(mode="after")
     def validate_points(self) -> Self:
-        beats = [point.beat for point in self.points]
-        if any(b <= a for a, b in itertools.pairwise(beats)):
-            raise ValueError("point beats must be strictly increasing")
+        beats = [snap(point.beat) for point in self.points]
+        if any(b < a for a, b in itertools.pairwise(beats)):
+            raise ValueError("point beats must be non-decreasing")
         if isinstance(self.range, AutomationRange) and any(not self.range.start <= b <= self.range.end for b in beats):
             raise ValueError("every point must lie inside range")
         return self
@@ -94,8 +99,8 @@ GRID_CUTOFF = {
     },
     "id": "CUTOFF",
 }
-AUTOMATION_POINTS_GET_DESCRIPTION = "Read the arranger automation points of one parameter on an audio/instrument track. target is a parameter ref as read: a track's volume or pan (tracks.get), a direct parameter of a device on the track or inside one of its chains (parameters.list), or a float Grid module parameter (an owner gridModule ref as grid.export read it, id the parameter key); Remote Control and modulator refs are unsupported_scope. Returns ref, lane {exists, count, pointsHash} for the whole lane (pass pointsHash as expect to automation.points.set) and points [{beat, value (normalized 0..1), display (the parameter's own text for value), interpolation linear|hold, curve -1..1}] inside the optional range, at most 1024 (truncated says more exist). Beats are quarter notes from the arrangement start. Only continuous (decimal) parameters have lanes here; others are unsupported_scope. Launcher-clip automation and automation clips are not read. Native read (version-gated); no selection."
-AUTOMATION_POINTS_SET_DESCRIPTION = 'Write the arranger automation points of one parameter (targets as automation.points.get). points [{beat, value, interpolation linear|hold, curve -1..1}] are strictly increasing; value is the normalized 0..1 value a read returned or {display: "800 Hz"}, which Bitwig\'s own text parser reads on that parameter, a bare number in the unit it shows (text it cannot read, or a number in another unit than the parameter shows, is unsupported_unit; past either end of its range is out_of_bounds; nothing is written). A point at the beat of an existing one updates it, keeping the interpolation and curve it omits; a new point is linear unless given, curve 0. Without range only the listed points are written and nothing is removed; range {start, end} makes the points with start <= beat <= end exactly the listed ones (they must lie inside it); range "all" does that for the whole lane. Points read by automation.points.get can be written back as {beat, value, interpolation, curve}: the same request again is already_matched. expect.pointsHash, when given, must equal a fresh automation.points.get (else stale/target_changed with observed, nothing changed). Creates the lane when missing; an empty points list with a range clears it, leaving only Bitwig\'s own base point at beat 0, which counts as cleared. Returns summary {inserted, updated, removed, unchanged}. One native undoable edit, verified by reading the whole lane back; untouched points stay the same native objects. Needs stopped transport with recording/automation-write off. An unknown outcome refuses further automation writes until you inspect automation.points.get and ack the hold; never retry.'
+AUTOMATION_POINTS_GET_DESCRIPTION = "Read the arranger automation points of one parameter on an audio/instrument track. target is a parameter ref as read: a track's volume or pan (tracks.get), a direct parameter of a device on the track or inside one of its chains (parameters.list), or a float Grid module parameter (an owner gridModule ref as grid.export read it, id the parameter key); Remote Control and modulator refs are unsupported_scope. Returns ref, lane {exists, count, pointsHash} for the whole lane (pass pointsHash as expect to automation.points.set) and points [{beat, value (normalized 0..1), display (the parameter's own text for value), interpolation linear|hold, curve -1..1}] in lane order (a step is several points at one beat) inside the optional range, at most 1024 (truncated says more exist). Beats are quarter notes from the arrangement start. Only continuous (decimal) parameters have lanes here; others are unsupported_scope. Launcher-clip automation and automation clips are not read. Native read (version-gated); no selection."
+AUTOMATION_POINTS_SET_DESCRIPTION = 'Write the arranger automation points of one parameter (targets as automation.points.get). points [{beat, value, interpolation linear|hold, curve -1..1}] have non-decreasing beats (a step is points at one beat in order, the last carrying the outgoing segment shape); value is the normalized 0..1 value a read returned or {display: "800 Hz"}, which Bitwig\'s own text parser reads on that parameter, a bare number in the unit it shows (text it cannot read, or a number in another unit than the parameter shows, is unsupported_unit; past either end of its range is out_of_bounds; nothing is written). Points are identified by beat and order at that beat: a listed point updates the one in the same place, keeping the interpolation and curve it omits; a new point is linear unless given, curve 0. Without range only the listed points are written and nothing is removed (at a beat holding several points list all of them, else an invalid_target error); range {start, end} makes the points with start <= beat <= end exactly the listed ones (they must lie inside it); range "all" does that for the whole lane; of two adjacent range writes the later owns the boundary beat. Points read by automation.points.get can be written back as {beat, value, interpolation, curve}: the same request again is already_matched. expect.pointsHash, when given, must equal a fresh automation.points.get (else stale/target_changed with observed, nothing changed). Creates the lane when missing; an empty points list with a range clears it, leaving only Bitwig\'s own base point at beat 0, which counts as cleared. Returns summary {inserted, updated, removed, unchanged}. One native undoable edit, verified by reading the whole lane back; untouched points stay the same native objects. Needs stopped transport with recording/automation-write off. An unknown outcome refuses further automation writes until you inspect automation.points.get and ack the hold; never retry.'
 
 
 SPECS: dict[str, ToolSpec] = {
