@@ -7,6 +7,7 @@ from bitwig_agent.protocol import (
     arranger,
     audio,
     automation,
+    batch,
     clips,
     devices,
     diagnostics,
@@ -49,6 +50,7 @@ _DOMAINS = (
     render,
     audio,
     actions,
+    batch,
 )
 
 
