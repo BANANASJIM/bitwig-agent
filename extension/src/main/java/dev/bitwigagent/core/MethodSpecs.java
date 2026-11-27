@@ -49,8 +49,6 @@ public final class MethodSpecs {
             this.readOnly = readOnly;
             this.projectWrite = requires.contains("projectReady");
             this.engineRequired = requires.contains("engine");
-            if (requires.contains("notRecording") && requires.contains("stopped"))
-                throw new IllegalStateException("stopped already includes notRecording");
             this.transport = requires.contains("stopped")
                     ? Transport.STOPPED
                     : requires.contains("notRecording") ? Transport.NOT_RECORDING : Transport.ANY;
