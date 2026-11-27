@@ -61,6 +61,11 @@ def leaf_rule_holds(node: Any) -> bool:
     return not leaf or "verification" in node or "released" in node
 
 
+def worst(outcomes: Iterable[str]) -> Outcome:
+    """The outcome of a result composed of entries: the most severe one."""
+    return max(map(Outcome, outcomes), key=list(Outcome).index)
+
+
 def shared_verification(entries: Iterable[Mapping[str, Any]]) -> Verification | None:
     """The leaf rule for a result composed of others: the one verification all its applied entries name, else none."""
     seen = {
@@ -258,6 +263,21 @@ class ToolSpec:
     records: str | None = None
     inspect: str | None = None
     """The read method that shows the state this write acted on; the registry fills it for every host write."""
+    wire: type[BaseModel] | None = None
+    """The host's own arguments when model adds fields the client composes from other calls (devices.insert params)."""
+    wire_description: str | None = None
+    """The host's own description when wire is set: the bundle never describes the composed fields."""
+
+    @property
+    def host_model(self) -> type[BaseModel]:
+        """What the extension validates and receives: the bundle schema and every request to the host."""
+        return self.wire or self.model
+
+    @property
+    def host_examples(self) -> tuple[dict[str, Any], ...]:
+        """The examples the host itself accepts: those without the client-composed fields."""
+        composed = self.model.model_fields.keys() - self.host_model.model_fields.keys()
+        return tuple(example for example in self.examples if not composed & example.keys())
 
     @property
     def project_write(self) -> bool:

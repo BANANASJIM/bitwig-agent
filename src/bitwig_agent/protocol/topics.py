@@ -25,7 +25,9 @@ RECOVERY = (
     "lists every unresolved hold and the next of a refusal names the one in the way. Once you have looked, "
     "ack the hold by its id: ack changes nothing, it only lets writes in that domain proceed. A long job "
     "(export.audio, tracks.bounce, project.saveAs) that outlives its request returns unknown with "
-    "reason deadline and job=<id>; follow it with jobs.get."
+    "reason deadline and job=<id>; follow it with jobs.get. An insert that also configures (devices.insert "
+    "params, modulators.insert params/map) keeps the new ref even when a later step fails: finish with the calls "
+    "its next names on that ref, never insert again."
 )
 
 REFS = (

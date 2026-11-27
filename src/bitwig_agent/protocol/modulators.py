@@ -4,12 +4,18 @@ from typing import Annotated, Literal, Self
 
 from pydantic import Field, model_validator
 
-from bitwig_agent.protocol.base import StatusArgs, ToolSpec, Uuid, omitted
+from bitwig_agent.protocol.base import StatusArgs, StrictModel, ToolSpec, Uuid, omitted
+from bitwig_agent.protocol.parameters import InitialParams
 from bitwig_agent.protocol.refs import DeviceRef, MappingParameterRef, ModulatorRef
 from bitwig_agent.protocol.values import Expect
 
 TransferFunction = Literal["linear", "rectify_pos", "rectify_neg", "abs_linear", "inv_abs_linear", "cubic", "inv_cubic"]
 ModulationAmount = Annotated[float, Field(ge=-1, le=1)]
+MAX_INITIAL_MAPPINGS = 64
+OUTPUT_ID = "Source output id from modulators.list; may be omitted when the modulator has exactly one output."
+AMOUNT = "Modulation amount -1..1 (negative inverts). Not clamped: beyond the target's range rejects."
+TRANSFER = "linear, rectify_pos/rectify_neg (keep one half), abs_linear, inv_abs_linear, cubic, inv_cubic. Omitted keeps an existing mapping's transfer; a new mapping gets linear."
+ENABLED = "Omitted keeps an existing mapping's state; a new mapping is enabled."
 
 
 class ModulatorsListArgs(StatusArgs):
@@ -40,6 +46,32 @@ class ModulatorsInsertArgs(StatusArgs):
         return self
 
 
+class InitialMapping(StrictModel):
+    """A mapping from the modulator a modulators.insert creates, set with modulators.map right after the insert."""
+
+    target: MappingParameterRef = Field(description="A gridModule or modulator parameter ref on the device `to`.")
+    amount: ModulationAmount = Field(description=AMOUNT)
+    outputId: str = omitted(max_length=1024, description=OUTPUT_ID)
+    transfer: TransferFunction = omitted(description=TRANSFER)
+    enabled: bool = omitted(description=ENABLED)
+
+
+class ModulatorsInsertConfigureArgs(ModulatorsInsertArgs):
+    params: InitialParams = omitted(
+        description="Initial control values by name (as modulators.get names them): the raw value, {display} or {label}, set with parameters.set right after the insert."
+    )
+    map: list[InitialMapping] = omitted(
+        min_length=1, max_length=MAX_INITIAL_MAPPINGS, description="Mappings from the new modulator, made after params."
+    )
+
+    @model_validator(mode="after")
+    def validate_map_device(self) -> Self:
+        for i, mapping in enumerate(self.map or ()):
+            if mapping.target.owner.device != self.to:
+                raise ValueError(f"map[{i}].target must be a parameter on the device `to`")
+        return self
+
+
 class ModulatorsDeleteArgs(StatusArgs):
     target: ModulatorRef
 
@@ -50,10 +82,7 @@ class MappingExpect(Expect):
 
 class ModulatorsUnmapArgs(StatusArgs):
     source: ModulatorRef = Field(description="The modulator whose output is mapped.")
-    outputId: str = omitted(
-        max_length=1024,
-        description="Source output id from modulators.list; may be omitted when the modulator has exactly one output.",
-    )
+    outputId: str = omitted(max_length=1024, description=OUTPUT_ID)
     target: MappingParameterRef = Field(
         description="The mapped control: a gridModule or modulator parameter ref on the same device as source."
     )
@@ -69,13 +98,9 @@ class ModulatorsUnmapArgs(StatusArgs):
 
 
 class ModulatorsMapArgs(ModulatorsUnmapArgs):
-    amount: ModulationAmount = Field(
-        description="Modulation amount -1..1 (negative inverts). Not clamped: beyond the target's range rejects."
-    )
-    transfer: TransferFunction = omitted(
-        description="linear, rectify_pos/rectify_neg (keep one half), abs_linear, inv_abs_linear, cubic, inv_cubic. Omitted keeps an existing mapping's transfer; a new mapping gets linear."
-    )
-    enabled: bool = omitted(description="Omitted keeps an existing mapping's state; a new mapping is enabled.")
+    amount: ModulationAmount = Field(description=AMOUNT)
+    transfer: TransferFunction = omitted(description=TRANSFER)
+    enabled: bool = omitted(description=ENABLED)
 
 
 class ModulatorsDescribeArgs(StatusArgs):
@@ -127,6 +152,10 @@ MODULATORS_LIST_DESCRIPTION = "Read the modulators of one root device (the Modul
 MODULATORS_GET_DESCRIPTION = "Read one modulator, in the same row shape as modulators.list: target is a modulator ref from modulators.list or modulators.insert."
 MODULATORS_DESCRIBE_DESCRIPTION = "Bitwig's own in-app help for device modulators, read offline from the local install (client-side; no host call). With type, one modulator: description, category, keywords, per-control help (docKey, title, description) and the shared help; without it, every type with name, category and one-line description (query ranks them by name, category, keywords and description, e.g. 'random', 'envelope'). Live kinds, ranges and values are not in these files: read them with modulators.list after inserting."
 MODULATORS_INSERT_DESCRIPTION = "Add one device modulator to the device `to` (typeName from modulators.describe, e.g. Random, Steps, Beat LFO, ADSR) after the existing ones, via Bitwig's own modulator-browser insertion. Returns the new row with its ref after verifying membership and type. Needs a stopped, nonrecording, nonautomation transport. Never retry an unknown outcome: read modulators.list."
+MODULATORS_INSERT_CONFIGURE_DESCRIPTION = MODULATORS_INSERT_DESCRIPTION.replace(
+    " Needs a stopped",
+    " params {name: value} sets its controls and map [{target, amount, ...}] maps it in the same call (modulators.get names, parameters.set values, modulators.map fields); entries has one step each, and once the insert applied the result keeps its ref and, if a later step failed, next: finish with parameters.set / modulators.map on that ref, never repeat the insert. Needs a stopped",
+)
 MODULATORS_DELETE_DESCRIPTION = "Delete one device modulator (and its mappings) with Bitwig's native undoable delete: target is a modulator ref. Membership is verified afterwards. Stopped transport required; never retry an unknown outcome."
 MODULATORS_MAP_DESCRIPTION = "Set a modulation mapping from a modulator output to a control on the same device, whether or not one exists: source is a modulator ref, target a parameter ref of a Grid module or of another modulator (from grid.export refs or modulators.list), amount -1..1 (not clamped). An omitted transfer or enabled keeps an existing mapping's value (a new mapping gets linear, enabled). outputId may be omitted for single-output modulators. expect {amount} compares the current mapping first. Uses Bitwig's undoable modulation add; verified by exact mapping readback. Stopped transport required; never retry an unknown outcome."
 MODULATORS_UNMAP_DESCRIPTION = "Remove one modulation mapping (Bitwig's undoable Clear modulation): source is a modulator ref, target the mapped parameter ref. expect {amount} compares the current mapping first. Verified by readback. Stopped transport required."
@@ -152,13 +181,22 @@ SPECS: dict[str, ToolSpec] = {
         ModulatorsGetArgs, MODULATORS_GET_DESCRIPTION, True, examples=({"target": MODULATOR_REF},)
     ),
     "modulators.insert": ToolSpec(
-        ModulatorsInsertArgs,
-        MODULATORS_INSERT_DESCRIPTION,
+        ModulatorsInsertConfigureArgs,
+        MODULATORS_INSERT_CONFIGURE_DESCRIPTION,
         False,
         examples=(
             {"to": DEVICE_REF, "typeName": "Random"},
             {"to": DEVICE_REF, "typeId": "bf29a7b0-91dc-4851-8a94-c63f358f3cda"},
+            {
+                "to": DEVICE_REF,
+                "typeName": "LFO",
+                "params": {"Rate": -0.60206},
+                "map": [{"target": GRID_PARAMETER_REF, "amount": 0.3}],
+            },
         ),
+        summary="Add one device modulator (typeName from modulators.describe, or typeId) to the root device `to`; params? {name: value} sets its controls and map? [{target, amount, outputId?, transfer?, enabled?}] maps it, in one call. On a failed later step finish with parameters.set / modulators.map on the returned ref; never re-insert. Needs a stopped transport.",
+        wire=ModulatorsInsertArgs,
+        wire_description=MODULATORS_INSERT_DESCRIPTION,
     ),
     "modulators.delete": ToolSpec(
         ModulatorsDeleteArgs, MODULATORS_DELETE_DESCRIPTION, False, examples=({"target": MODULATOR_REF},)

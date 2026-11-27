@@ -1,16 +1,29 @@
 from __future__ import annotations
 
-from typing import Self
+from typing import Annotated, Self
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 
-from bitwig_agent.protocol.base import StatusArgs, ToolSpec, omitted
+from bitwig_agent.protocol.base import Nonempty, StatusArgs, ToolSpec, omitted
 from bitwig_agent.protocol.refs import DeviceRef, SetParameterRef
 from bitwig_agent.protocol.values import Display, Expect, Label
 
 RawValue = bool | int | float
 ParameterValue = RawValue | Display | Label
 """A host parameter takes a normalized 0..1 number or {display}; a modulator control takes its raw value or {label}."""
+MAX_INITIAL_PARAMS = 128
+
+
+def check_host_value(value: ParameterValue) -> None:
+    """A parameter not owned by a modulator takes a normalized number or {display}."""
+    if isinstance(value, Label):
+        raise ValueError("{label} is only for a modulator control's enum; write the value you read")
+    if isinstance(value, bool) or (isinstance(value, int | float) and not 0 <= value <= 1):
+        raise ValueError("value must be a number from 0 to 1 or {display}")
+
+
+InitialParams = Annotated[dict[Nonempty, ParameterValue], Field(min_length=1, max_length=MAX_INITIAL_PARAMS)]
+"""Values to set right after creating their owner, keyed by parameter name: the owner has no refs to copy yet."""
 
 
 class ParametersListArgs(StatusArgs):
@@ -30,10 +43,7 @@ class ParametersSetArgs(StatusArgs):
     def validate_value(self) -> Self:
         if self.target.owner.kind == "modulator":
             return self
-        if isinstance(self.value, Label):
-            raise ValueError("{label} is only for a modulator control's enum; write the value you read")
-        if isinstance(self.value, bool) or (isinstance(self.value, int | float) and not 0 <= self.value <= 1):
-            raise ValueError("value must be a number from 0 to 1 or {display}")
+        check_host_value(self.value)
         if self.expect is not None and isinstance(self.expect.value, bool):
             raise ValueError("expect.value must be a number from 0 to 1")
         return self

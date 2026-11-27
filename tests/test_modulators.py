@@ -213,7 +213,7 @@ def test_insert_delete_and_get_schemas():
         {"to": SOURCE, "typeName": "Random"},
         {"parent": PARENT, "typeName": "Random"},
     ):
-        with pytest.raises(ValueError, match=r"validation errors? for ModulatorsInsertArgs"):
+        with pytest.raises(ValueError, match=r"validation errors? for ModulatorsInsert\w*Args"):
             validate_call("modulators.insert", {"to": PARENT, **bad})
     for method in ("modulators.get", "modulators.delete"):
         assert validate_call(method, {"target": SOURCE})[0] == {"target": SOURCE}

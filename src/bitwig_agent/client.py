@@ -99,7 +99,7 @@ def _encode_request(method: str, params: dict[str, Any], timeout_ms: int) -> tup
         raise ValueError(f"timeoutMs must be an integer in {MIN_TIMEOUT_MS}..{limit}")
     if "timeoutMs" in params:
         raise ValueError("Pass timeout_ms separately from host params")
-    params, _ = validate_call(method, {**params, "timeoutMs": timeout_ms})
+    params, _ = validate_call(method, {**params, "timeoutMs": timeout_ms}, host=True)
     request_id = uuid.uuid4().hex
     request = {"id": request_id, "method": method, "params": params, "timeoutMs": timeout_ms, "protocol": PROTOCOL}
     payload = (json.dumps(request, allow_nan=False, separators=(",", ":")) + "\n").encode("utf-8")
