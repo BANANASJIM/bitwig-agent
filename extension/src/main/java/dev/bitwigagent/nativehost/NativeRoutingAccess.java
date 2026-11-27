@@ -6,6 +6,7 @@ import dev.bitwigagent.core.HostLimits;
 import dev.bitwigagent.core.Outcome;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Refs;
+import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.RpcException;
 import dev.bitwigagent.core.Verification;
 import dev.bitwigagent.host.DeviceSources;
@@ -692,36 +693,41 @@ public final class NativeRoutingAccess implements RoutingModule.Access {
         JsonObject fields = new JsonObject();
         for (Change change : changes) {
             Object now = a.invoke(change.destination ? outCurrent : inCurrent, change.chooser);
-            JsonObject row = new JsonObject();
-            row.addProperty(
-                    "outcome",
-                    (change.already
+            fields.add(
+                    change.field,
+                    row(
+                            change.already
                                     ? Outcome.ALREADY_MATCHED
-                                    : now == change.requested ? Outcome.APPLIED : Outcome.UNKNOWN)
-                            .wire());
-            row.add("requested", change.request);
-            row.add("previous", change.previous);
-            row.add("readback", change.destination ? describeDestination(now) : describeSource(now, ports));
-            if (!change.already && now != change.requested) row.addProperty("reason", Reason.READBACK_MISMATCH.wire());
-            fields.add(change.field, row);
+                                    : now == change.requested ? Outcome.APPLIED : Outcome.UNKNOWN,
+                            change.request,
+                            change.previous,
+                            change.destination ? describeDestination(now) : describeSource(now, ports)));
         }
         return fields;
+    }
+
+    /** One chooser's field: confirmed by reading the chooser back by identity, a mismatch is unknown. */
+    static JsonObject row(Outcome outcome, JsonObject request, JsonObject previous, JsonElement readback) {
+        JsonObject row = new JsonObject();
+        Results.stamp(row, outcome, Verification.NATIVE_READBACK);
+        row.add("requested", request);
+        row.add("previous", previous);
+        row.add("readback", readback);
+        if (outcome == Outcome.UNKNOWN) row.addProperty("reason", Reason.READBACK_MISMATCH.wire());
+        return row;
     }
 
     private JsonObject finish(JsonObject out, JsonObject fields, List<Change> changes) {
         boolean any = changes.stream().anyMatch(change -> !change.already);
         boolean unknown = false;
         for (Map.Entry<String, JsonElement> field : fields.entrySet())
-            unknown |= field.getValue()
-                    .getAsJsonObject()
-                    .get("outcome")
-                    .getAsString()
-                    .equals(Outcome.UNKNOWN.wire());
+            unknown |= Results.outcomeOf(field.getValue().getAsJsonObject()) == Outcome.UNKNOWN;
         out.add("fields", fields);
-        out.addProperty(
-                "outcome", (unknown ? Outcome.UNKNOWN : any ? Outcome.APPLIED : Outcome.ALREADY_MATCHED).wire());
+        Results.stamp(
+                out,
+                unknown ? Outcome.UNKNOWN : any ? Outcome.APPLIED : Outcome.ALREADY_MATCHED,
+                Verification.NATIVE_READBACK);
         if (unknown) out.addProperty("reason", Reason.READBACK_MISMATCH.wire());
-        if (any) Verification.NATIVE_READBACK.put(out);
         out.addProperty("nativeUndo", any);
         out.addProperty("undoGroupingVerified", false);
         a.provenance(out);

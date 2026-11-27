@@ -23,6 +23,7 @@ from bitwig_agent.grid.report import Ledger
 from bitwig_agent.grid.spec import Spec, TypeCatalog, parse_spec
 from bitwig_agent.grid.warnings import measured_warnings, trap_warnings
 from bitwig_agent.grid.wiring import plan_connections
+from bitwig_agent.protocol.base import shared_verification
 from bitwig_agent.protocol.grid_workflow import is_partial
 
 
@@ -106,7 +107,10 @@ class Session:
             return ledger.stop_report(stop)
         except Exception as exc:  # noqa: BLE001 - keep the report of work already dispatched
             return ledger.stop_report(Stop("internal", unknown_result("internal", f"{type(exc).__name__}: {exc}")))
-        return ledger.report("applied" if any(ledger.applied.values()) else "already_matched")
+        applied = any(ledger.applied.values())
+        return ledger.report(
+            "applied" if applied else "already_matched", shared_verification(self.channel.applied) if applied else None
+        )
 
 
 async def _unreachable(channel: Channel, args: dict[str, Any], error: dict[str, Any]) -> dict[str, Any]:

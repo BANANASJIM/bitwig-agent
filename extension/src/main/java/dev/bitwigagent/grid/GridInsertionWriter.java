@@ -362,7 +362,7 @@ public final class GridInsertionWriter {
                         one -> {
                             if (done) return;
                             try {
-                                item.add("outcome", one.get("outcome"));
+                                Results.copyOutcome(item, one);
                                 item.add("moduleId", one.get("moduleId"));
                                 item.add("actualPosition", one.get("actualPosition"));
                                 lastGraph = one.getAsJsonObject("graph");
@@ -423,14 +423,13 @@ public final class GridInsertionWriter {
             done = true;
             try {
                 if (lastGraph != null && !stale) refreshPositions();
-                JsonObject result = Results.outcome(Results.worst(items));
+                JsonObject result = Results.ofEntries(items);
                 result.addProperty("written", written);
                 result.addProperty("slowestEntryMs", slowest / 1_000_000L);
                 result.add("modules", items);
                 result.addProperty("mutationDispatched", written > 0 || stale);
                 result.addProperty("nativeMutation", written > 0 || stale);
                 result.addProperty("nativeUndo", written > 0 || stale);
-                Verification.NATIVE_READBACK.put(result);
                 // After an unknown entry the last observed graph is not the current one: no diff is offered.
                 if (lastGraph != null && !stale) {
                     result.add("graph", lastGraph);
@@ -699,7 +698,7 @@ public final class GridInsertionWriter {
                 snapshots.guardTarget(target);
                 contexts.capture(target.target, target.graph, after.modules, context, check);
                 Row actual = after.find(incoming.id);
-                JsonObject result = Results.outcome(Outcome.APPLIED);
+                JsonObject result = Results.outcome(Outcome.APPLIED, Verification.NATIVE_READBACK);
                 result.addProperty("operation", "insert");
                 result.addProperty("moduleId", actual.id.toString());
                 result.addProperty("typeId", actual.typeId.toString());
@@ -713,7 +712,6 @@ public final class GridInsertionWriter {
                 result.addProperty("undoGroupingVerified", false);
                 result.addProperty("engineAcknowledgement", false);
                 result.addProperty("nativeLifetimeSettled", true);
-                Verification.NATIVE_READBACK.put(result);
                 result.addProperty("nativeUndoScope", "native_operation_not_verified_grouping_or_commit");
                 result.addProperty(
                         "contextScope",
@@ -814,7 +812,7 @@ public final class GridInsertionWriter {
         check.run();
         if (!quarantine.ack(device, detail))
             throw Errors.notApplied(Reason.UNKNOWN_HOLD, "The hold changed while it was checked; it stays as it is.");
-        JsonObject result = Results.outcome(Outcome.APPLIED);
+        JsonObject result = Results.outcome(Outcome.APPLIED, Verification.NATIVE_READBACK);
         if (recorded != null) result.add("recorded", recorded);
         result.add("found", found);
         result.addProperty("next", "Topology writes on this device are admitted again; read with grid.export first.");

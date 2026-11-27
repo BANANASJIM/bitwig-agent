@@ -362,7 +362,7 @@ public final class DeviceChainModule implements HostModule {
             throw Errors.notApplied(Reason.TARGET_NOT_FOUND, "The position is beyond the chain.");
         scheduler.check(op);
         if (dest == from) {
-            JsonObject result = Results.outcome(Outcome.ALREADY_MATCHED);
+            JsonObject result = Results.alreadyMatched();
             result.add("ref", device.ref());
             op.result.complete(result);
             return;
@@ -435,10 +435,9 @@ public final class DeviceChainModule implements HostModule {
     private void finishEdit(HostOperation op, Edit edit, DeviceChainEdit.Observation outcome) {
         DeviceChainEdit.View view = edit.view;
         DeviceChainEdit.Plan plan = edit.plan;
-        JsonObject result = outcome.ok ? Results.outcome(Outcome.APPLIED) : Results.outcome(Outcome.UNKNOWN);
+        JsonObject result = Results.outcome(outcome.ok ? Outcome.APPLIED : Outcome.UNKNOWN, Verification.API_READBACK);
         if (!outcome.ok)
             result.addProperty("reason", (outcome.pending ? Reason.NOT_OBSERVED : Reason.READBACK_MISMATCH).wire());
-        if (outcome.ok) Verification.API_READBACK.put(result);
         result.addProperty("beforeCount", plan.before.count);
         result.addProperty("afterCount", view.count());
         result.add("before", DeviceChainEdit.before(plan.before));

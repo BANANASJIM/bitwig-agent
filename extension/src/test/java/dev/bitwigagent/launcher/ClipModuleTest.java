@@ -283,7 +283,7 @@ public final class ClipModuleTest {
         LauncherFake refused = new LauncherFake();
         refused.failWriteAt = 1;
         JsonObject kept = refused.call("clips.insert", withNotes(insertParams(refused, 0)));
-        assertEquals("api_readback", kept.get("verification").getAsString());
+        assertFalse(kept.has("verification"), "an unknown result carries none");
         assertTrue(refused.slots[0].content, "an observed create survives a failing note stage");
         assertEquals("unknown", kept.get("outcome").getAsString());
         assertEquals(

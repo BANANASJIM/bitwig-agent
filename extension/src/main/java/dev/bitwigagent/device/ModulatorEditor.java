@@ -658,7 +658,8 @@ public final class ModulatorEditor implements ParameterResolver.ModuleOwners {
                         input.form == ValueInput.Form.BARE ? input.bare : requested(input),
                         unit,
                         changed ? Outcome.APPLIED : Outcome.ALREADY_MATCHED,
-                        null));
+                        null,
+                        Verification.NATIVE_READBACK));
         result.add("fields", fields);
         written(
                 result,
@@ -979,9 +980,8 @@ public final class ModulatorEditor implements ParameterResolver.ModuleOwners {
 
     private void written(JsonObject result, boolean changed, String undoScope, String safetyScope) {
         result.addProperty("mutationDispatched", changed);
-        result.addProperty("outcome", (changed ? Outcome.APPLIED : Outcome.ALREADY_MATCHED).wire());
+        Results.stamp(result, changed ? Outcome.APPLIED : Outcome.ALREADY_MATCHED, Verification.NATIVE_READBACK);
         if (changed) {
-            Verification.NATIVE_READBACK.put(result);
             a.provenance(result);
         }
         result.addProperty("nativeMutation", changed);

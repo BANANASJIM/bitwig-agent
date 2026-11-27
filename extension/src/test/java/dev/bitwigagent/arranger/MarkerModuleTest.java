@@ -185,6 +185,7 @@ public final class MarkerModuleTest {
         f.transport.child("playPosition").data = 16.0;
         JsonObject r = call(f, m, "markers.insert", "{\"beat\":8,\"name\":\"Verse\"}");
         assertTrue(r.get("outcome").getAsString().equals("applied"), "insert observed: " + r);
+        assertTrue(r.get("verification").getAsString().equals("api_readback"), "insert verified: " + r);
         assertTrue(
                 bank.view().equals(List.of("Intro@0.0", "Verse@8.0", "Outro@64.0")),
                 "marker named and moved to the beat: " + bank.view());

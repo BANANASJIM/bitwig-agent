@@ -4,6 +4,7 @@ import com.google.gson.*;
 import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.Outcome;
 import dev.bitwigagent.core.Reason;
+import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.Verification;
 
 /** One string-panel CAS: same admission, context guards and readback as the boolean panel, without a coupled scalar. */
@@ -59,11 +60,10 @@ public final class GridStringPanelWriter {
                     changed);
         check.run();
         JsonObject result = values.parameterResult(binding, current);
-        result.addProperty("outcome", (changed ? Outcome.APPLIED : Outcome.ALREADY_MATCHED).wire());
+        Results.stamp(result, changed ? Outcome.APPLIED : Outcome.ALREADY_MATCHED, Verification.NATIVE_READBACK);
         result.add("previousValue", previous);
         result.add("requestedValue", request.value);
         result.addProperty("mutationDispatched", changed);
-        Verification.NATIVE_READBACK.put(result);
         result.addProperty("nativeMutation", changed);
         result.addProperty("nativeUndo", changed);
         result.addProperty(

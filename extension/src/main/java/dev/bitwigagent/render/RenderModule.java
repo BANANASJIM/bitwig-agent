@@ -721,13 +721,13 @@ public final class RenderModule implements HostModule, JobsModule.Source {
             else op.fail(Errors.unknown(reason, detail));
             return;
         }
-        JsonObject result = Results.outcome(Outcome.APPLIED);
+        JsonObject result =
+                Results.outcome(Outcome.APPLIED, bounce ? Verification.NATIVE_READBACK : Verification.FILE_READBACK);
         common(result, current, bridge);
         if (bounce) {
             result.add("tracks", evaluation.get("tracks"));
             trackTypes(current, evaluation.getAsJsonArray("tracks"));
             result.addProperty("nativeUndo", true);
-            Verification.NATIVE_READBACK.put(result);
         } else {
             result.add("files", evaluation.get("files"));
             result.addProperty("mayOpenFileManager", true);
@@ -737,7 +737,6 @@ public final class RenderModule implements HostModule, JobsModule.Source {
                 result.add("warnings", warnings);
                 result.addProperty("next", fixNext(current.fixes));
             }
-            Verification.FILE_READBACK.put(result);
         }
         op.result.complete(result);
     }
@@ -829,7 +828,10 @@ public final class RenderModule implements HostModule, JobsModule.Source {
                                 Outcome outcome = outcome(evaluation);
                                 report(current, outcome);
                                 row.addProperty("state", "completed");
-                                row.addProperty("outcome", outcome.wire());
+                                Results.stamp(
+                                        row,
+                                        outcome,
+                                        current.bounce() ? Verification.NATIVE_READBACK : Verification.FILE_READBACK);
                                 if (outcome != Outcome.APPLIED)
                                     row.addProperty(
                                             "reason", failure(current, outcome).wire());

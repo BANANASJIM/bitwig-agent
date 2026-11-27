@@ -335,7 +335,8 @@ public final class NativeAutomationAccess implements AutomationModule.Access {
             int removed,
             int inserted,
             boolean created) {
-        JsonObject out = AutomationModule.lane(Results.outcome(outcome), lane.lane != null, all, range);
+        JsonObject out = AutomationModule.lane(
+                Results.outcome(outcome, Verification.NATIVE_READBACK), lane.lane != null, all, range);
         a.provenance(out);
         JsonObject before = new JsonObject();
         before.addProperty("count", previous.size());
@@ -344,7 +345,6 @@ public final class NativeAutomationAccess implements AutomationModule.Access {
         out.addProperty("removed", removed);
         out.addProperty("inserted", inserted);
         out.addProperty("laneCreated", created);
-        Verification.NATIVE_READBACK.put(out);
         out.addProperty("nativeUndo", true);
         out.addProperty("undoGroupingVerified", false);
         return out;

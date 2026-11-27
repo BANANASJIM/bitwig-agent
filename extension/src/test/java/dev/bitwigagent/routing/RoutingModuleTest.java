@@ -9,9 +9,12 @@ import dev.bitwigagent.HostBridge;
 import dev.bitwigagent.HostFixture;
 import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.HostOperation;
+import dev.bitwigagent.core.Outcome;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Refs;
+import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.RpcException;
+import dev.bitwigagent.core.Verification;
 import dev.bitwigagent.host.DeviceSources;
 import java.util.*;
 import org.junit.jupiter.api.Test;
@@ -480,7 +483,7 @@ public final class RoutingModuleTest {
             writes++;
             if (failAfterWrite) throw Errors.unknown(Reason.NATIVE_UNAVAILABLE, "simulated native failure");
             JsonObject out = new JsonObject();
-            out.addProperty("outcome", unknown ? "unknown" : "applied");
+            Results.stamp(out, unknown ? Outcome.UNKNOWN : Outcome.APPLIED, Verification.NATIVE_READBACK);
             return out;
         }
     }
