@@ -27,7 +27,7 @@ def test_capability_ids_are_unique_well_formed_and_in_guide_chapter_order():
     assert set(chapters) == CHAPTERS.keys()
 
 
-def test_the_headline_counts_116_high_tier_capabilities_merging_145_audit_rows():
+def test_the_headline_counts_116_high_tier_capabilities_weighing_145_in_the_weighted_task_list():
     assert len(HIGH) == 116
     assert sum(capability.weight for capability in HIGH) == 145
 

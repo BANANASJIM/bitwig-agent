@@ -35,7 +35,7 @@ class Capability:
     tier: Literal["high", "medium", "low"] = "high"
     """How often producers use it; only high-tier capabilities count in the headline."""
     weight: int = 1
-    """The high-frequency feature-audit rows this capability merges (145 in all)."""
+    """Its weight in the weighted task list: how many common tasks it merges (145 in all)."""
 
 
 @dataclass(frozen=True)
@@ -306,7 +306,7 @@ CAPABILITIES: dict[str, tuple[str, ...]] = {
     "scenes.launch": ("launcher.launch-scene",),
     "scenes.duplicate": ("launcher.scenes",),
     "scenes.delete": ("launcher.scenes",),
-    "arranger.list": ("arranger-clips.list", "arranger-clips.loop"),
+    "arranger.list": ("arranger-clips.list",),
     "automation.points.get": ("automation.read",),
     "automation.points.set": ("automation.write", "automation.any-parameter"),
     "export.audio": ("project.export-audio",),
@@ -321,14 +321,17 @@ CAPABILITIES: dict[str, tuple[str, ...]] = {
 """By exposed method, the capabilities it does (a composer like grid.apply carries its inner methods' tags)."""
 
 PARTIAL = {
-    "browser.preset-search": Partial("fields", "Searches preset files by name and folder; no tags, collections or favorites."),
+    "browser.preset-search": Partial("fields", "Searches preset files by name, folder, creator and category; no tags, collections or favorites."),
     "browser.sample-to-sampler": Partial("fields", "Makes a plain Sampler; the drop modifiers for other Sampler setups are not available."),
     "arranger-clips.list": Partial("scope", "The main clip lane only; automation clips and take or comp lanes are not read."),
-    "arranger-clips.loop": Partial("fields", "Loop settings can be read but not changed."),
+    "arranger-clips.move": Partial("scope", "Same track only."),
+    "arranger-clips.resize": Partial("fields", "Only the end edge moves."),
     "launcher.arranger-copy": Partial("scope", "Launcher to arranger on the same track only; not arranger to launcher, not whole scenes."),
-    "mix.track-io-hardware": Partial("scope", "Hardware and host inputs only; outputs to hardware cannot be chosen."),
+    "mix.track-io-hardware": Partial("scope", "Hardware audio inputs (named input buses) and controller note inputs only; outputs to hardware and host buses cannot be chosen."),
     "devices.duplicate": Partial("scope", "Top-level devices only, duplicated in place; not devices inside chains, not to another track."),
-    "devices.synths": Partial("fields", "Insert and parameters only; loading samples, zones and slice points are not available."),
+    "devices.synths": Partial("fields", "Insert and parameters only; sample zones and slice points are not available, and a sample loads only into a new Sampler."),
+    "devices.plugin-insert": Partial("fields", "No plug-in list; you need the plug-in's id or a preset saved for it."),
+    "devices.preset-load": Partial("scope", "Top-level devices only, not devices inside a chain."),
     "devices.effects": Partial("fields", "Insert and parameters only; graphic editors outside the parameter list are not available."),
     "devices.remote-define": Partial("scope", "Pages on Grid devices only, mapping Grid module parameters."),
     "devices.sampler-sliced": Partial("fields", "Parameters only; slice points cannot be edited."),
