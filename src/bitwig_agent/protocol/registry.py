@@ -72,6 +72,8 @@ INSPECT: dict[str, str] = {
     "markers.delete": "markers.list",
     "devices.sidechain.set": "devices.sidechain.get",
     "transport.set": "transport.get",
+    "chains.set": "chains.list",
+    "chains.insert": "chains.list",
     "devices.set": "devices.get",
     "devices.select": "devices.get",
     "devices.insert": "devices.list",

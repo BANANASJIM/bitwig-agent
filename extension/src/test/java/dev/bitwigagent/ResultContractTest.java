@@ -10,12 +10,14 @@ import dev.bitwigagent.core.HostModule;
 import dev.bitwigagent.core.HostOperation;
 import dev.bitwigagent.core.Refs;
 import dev.bitwigagent.core.Results;
+import dev.bitwigagent.device.ChainExamples;
 import dev.bitwigagent.project.FakeKeySignature;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.function.Supplier;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -66,6 +68,10 @@ final class ResultContractTest {
                             LIFECYCLE,
                             f -> f.delete = slot -> f.removeTrack(slot, 1),
                             "{\"target\":" + HostFixture.track(HostFixture.B) + "}"));
+
+    /** Applied examples that need a fixture of their own domain (the simulated native document of chains). */
+    private static final Map<String, Supplier<JsonObject>> DOMAIN_EXAMPLES =
+            Map.of("chains.set", ChainExamples::set, "chains.insert", ChainExamples::insert);
 
     /**
      * Host writes with no fixture example here yet, to fill: each is still held to the leaf rule wherever a module
@@ -165,15 +171,24 @@ final class ResultContractTest {
             if (!HostFixture.SPECS.get(method).readOnly) writes.add(method);
         Set<String> listed = new TreeSet<>(EXAMPLES.keySet());
         listed.addAll(SENT.keySet());
+        listed.addAll(DOMAIN_EXAMPLES.keySet());
         listed.addAll(MISSING);
         assertEquals(writes, listed);
-        assertEquals(EXAMPLES.size() + SENT.size() + MISSING.size(), listed.size(), "each write is listed once");
+        assertEquals(
+                EXAMPLES.size() + SENT.size() + DOMAIN_EXAMPLES.size() + MISSING.size(),
+                listed.size(),
+                "each write is listed once");
     }
 
     @Test
     void everyAppliedExampleNamesItsVerificationOnEveryAppliedLeaf() {
         for (Map.Entry<String, Example> example : EXAMPLES.entrySet()) {
             JsonObject result = run(example.getKey(), example.getValue());
+            assertTrue(applies(result), example.getKey() + " example does not apply: " + result);
+            assertTrue(Results.leafRuleHolds(result), example.getKey() + ": " + result);
+        }
+        for (Map.Entry<String, Supplier<JsonObject>> example : DOMAIN_EXAMPLES.entrySet()) {
+            JsonObject result = example.getValue().get();
             assertTrue(applies(result), example.getKey() + " example does not apply: " + result);
             assertTrue(Results.leafRuleHolds(result), example.getKey() + ": " + result);
         }

@@ -204,6 +204,34 @@ def test_lists_take_a_container_target_and_chains_a_device():
             validate_call(method, {"trackId": TRACK})
 
 
+def test_chain_set_takes_mix_fields_and_a_selector_choice_by_chain_ref():
+    call = {"target": CHAIN, "volume": {"display": "-6 dB"}, "pan": 0.25, "mute": True, "solo": False, "active": True}
+    assert validate_call("chains.set", call)[0] == call
+    guarded = {"target": CHAIN, "mute": True, "expect": {"volume": 0.7, "active": False}}
+    assert validate_call("chains.set", guarded)[0] == guarded
+    for bad in (
+        {"target": CHAIN},
+        {"target": CHAIN, "expect": {"mute": False}},
+        {"target": CHAIN, "active": False},
+        {"target": CHAIN, "volume": 1.5},
+        {"target": CHAIN, "mute": True, "expect": {}},
+        {"target": CHAIN_DEVICE, "mute": True},
+        {"target": CHAIN, "name": "Renamed"},
+    ):
+        with pytest.raises(ValidationError):
+            validate_call("chains.set", bad)
+
+
+def test_chain_insert_takes_a_container_device_and_a_drum_pad_pitch():
+    assert validate_call("chains.insert", {"to": DEVICE})[0] == {"to": DEVICE}
+    assert validate_call("chains.insert", {"to": CHAIN_DEVICE, "pad": 36})[0] == {"to": CHAIN_DEVICE, "pad": 36}
+    for bad in ({"to": CHAIN}, {"to": TRACK_REF}, {"to": DEVICE, "pad": 128}, {"to": DEVICE, "position": "end"}):
+        with pytest.raises(ValidationError):
+            validate_call("chains.insert", bad)
+    assert TOOLS["chains.insert"].project_write
+    assert TOOLS["chains.set"].inspect == TOOLS["chains.insert"].inspect == "chains.list"
+
+
 @pytest.mark.parametrize("page", [0, 7, 4095])
 def test_remote_get_takes_an_optional_page_index(page):
     assert validate_call("devices.remote.get", {"target": DEVICE, "page": page})[0]["page"] == page

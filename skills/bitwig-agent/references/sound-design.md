@@ -38,6 +38,7 @@ A useful initial serial order is **note processing → instrument → corrective
 - Dynamics before ambience shapes the source; dynamics after ambience also reacts to the tail. Keep the musical reason explicit.
 - Confirm nesting: an effect inside one Drum Machine cell processes that cell; after Drum Machine it processes the combined output. Instrument **FX/Post FX** processes the instrument's combined audio output and travels with its preset. **Wet FX** affects only the wet branch; **FB FX** lies inside feedback and can strongly alter accumulating level. Do not add feedback casually.
 - Layers run in parallel; selectors select a chain. Summing two candidate chains is not A/B. Equal wet/dry or branch settings need not produce equal loudness, and parallel paths can interact in phase.
+- Build layers and pads with `bitwig-agent chains insert --help` (an empty layer, Selector chain or Drum Machine pad chain; then `devices insert` into its ref), read each chain's volume, pan, mute, solo and a Selector's active chain with `chains list`, and set them with `chains set`. A Selector plays one chain at a time, so `chains set --active` switches between candidates without summing them; match their levels before judging.
 
 For each modulation, record **source → target, base value, amount/sign, rate/time unit, trigger/reset behavior and voice scope**:
 
