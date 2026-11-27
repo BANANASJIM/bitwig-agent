@@ -22,7 +22,7 @@ pkgbase = bitwig-agent
 	noextract = BitwigAgent-0.5.0.bwextension
 	source = https://github.com/BANANASJIM/bitwig-agent/releases/download/v0.5.0/bitwig_agent-0.5.0.tar.gz
 	source = BitwigAgent-0.5.0.bwextension::https://github.com/BANANASJIM/bitwig-agent/releases/download/v0.5.0/BitwigAgent.bwextension
-	sha256sums = TO_FILL_SDIST_SHA256
-	sha256sums = TO_FILL_EXTENSION_SHA256
+	sha256sums = 9f77f36ef2e4e4249c1ef221b85032d331226a3033c325b102e80b066b72c7bb
+	sha256sums = ade15ec18d25a6c6351624699ae27fa367f1aa7383a328943554e3ca6254869f
 
 pkgname = bitwig-agent

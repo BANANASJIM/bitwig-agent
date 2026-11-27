@@ -15,9 +15,8 @@ optdepends=('bitwig-studio: native host; private APIs require exact-JAR-gated 6.
 source=("${url}/releases/download/v${pkgver}/bitwig_agent-${pkgver}.tar.gz"
         "BitwigAgent-${pkgver}.bwextension::${url}/releases/download/v${pkgver}/BitwigAgent.bwextension")
 noextract=("BitwigAgent-${pkgver}.bwextension")
-# TO FILL from SHA256SUMS (sdist, extension) before tagging; not valid hashes.
-sha256sums=('TO_FILL_SDIST_SHA256'
-            'TO_FILL_EXTENSION_SHA256')
+sha256sums=('9f77f36ef2e4e4249c1ef221b85032d331226a3033c325b102e80b066b72c7bb'
+            'ade15ec18d25a6c6351624699ae27fa367f1aa7383a328943554e3ca6254869f')
 
 build() {
     cd "bitwig_agent-${pkgver}"
