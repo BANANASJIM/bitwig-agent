@@ -61,7 +61,9 @@ def host_jars(release=False):
     BITWIG_HOST_JARS names a directory of `<version>.jar` files; otherwise the one BITWIG_API_JAR or installed host jar is
     used for the version whose hash it has. A release build needs every version's jar.
     """
-    hosts = {host["version"]: host["jarSha256"] for host in json.loads((SHARED / "host.json").read_text())}
+    hosts = {
+        host["version"]: host["jarSha256"] for host in json.loads((SHARED / "host.json").read_text(encoding="utf-8"))
+    }
     directory = os.environ.get("BITWIG_HOST_JARS")
     if directory:
         jars = {version: Path(directory, f"{version}.jar") for version in hosts}
@@ -97,12 +99,14 @@ def classes_digest(classes):
 
 
 def git_output(*args):
-    return subprocess.run(["git", "-C", str(ROOT), *args], check=True, capture_output=True, text=True).stdout.strip()
+    return subprocess.run(
+        ["git", "-C", str(ROOT), *args], check=True, capture_output=True, text=True, encoding="utf-8"
+    ).stdout.strip()
 
 
 def build_properties(classes):
     """Package version, git short SHA with dirty flag ("unknown" outside git), and a class-content hash."""
-    version = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
+    version = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
     try:
         build = git_output("rev-parse", "--short", "HEAD")
         # Untracked .claude/ (agent worktrees) is local tooling, not source: it must not mark the build dirty.
@@ -158,7 +162,7 @@ def build(release=False):
     service = resources / "META-INF/services/com.bitwig.extension.ExtensionDefinition"
     if not service.is_file():
         raise RuntimeError("Missing Bitwig ExtensionDefinition service registration")
-    definitions = [line.split("#", 1)[0].strip() for line in service.read_text().splitlines()]
+    definitions = [line.split("#", 1)[0].strip() for line in service.read_text(encoding="utf-8").splitlines()]
     definitions = [name for name in definitions if name]
     if not definitions or any(not (classes / (name.replace(".", "/") + ".class")).is_file() for name in definitions):
         raise RuntimeError("ExtensionDefinition registration does not name a compiled class")

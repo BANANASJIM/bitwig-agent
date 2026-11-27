@@ -45,6 +45,7 @@ import dev.bitwigagent.launcher.SceneWindowLease;
 import dev.bitwigagent.mix.MeterModule;
 import dev.bitwigagent.mix.MixModule;
 import dev.bitwigagent.mix.TrackLifecycleModule;
+import dev.bitwigagent.mix.TrackReshapeModule;
 import dev.bitwigagent.project.ContextModule;
 import dev.bitwigagent.project.KeySignatureModule;
 import dev.bitwigagent.project.ProjectModule;
@@ -154,7 +155,11 @@ public final class TestServices {
     }
 
     public DeviceChainModule deviceChain() {
-        return new DeviceChainModule(scheduler, window, trackRefs, sources, chains, transportSafety);
+        return deviceChain(null);
+    }
+
+    public DeviceChainModule deviceChain(RemoteModule remotes) {
+        return new DeviceChainModule(scheduler, window, trackRefs, sources, chains, transportSafety, remotes);
     }
 
     public RemoteModule remote() {
@@ -236,6 +241,10 @@ public final class TestServices {
     public TrackLifecycleModule trackLifecycle(MixModule mix, TrackLifecycleModule.GroupAccess access) {
         return new TrackLifecycleModule(
                 scheduler, window, trackRefs, application, transportSafety, selection, natives, holds, mix, access);
+    }
+
+    public TrackReshapeModule trackReshape(MixModule mix, TrackReshapeModule.Access access) {
+        return new TrackReshapeModule(scheduler, window, trackRefs, transportSafety, selection, natives, mix, access);
     }
 
     public ModulatorEditModule modulatorEdits(ModulatorEditor editor) {

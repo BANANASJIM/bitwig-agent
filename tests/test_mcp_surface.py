@@ -109,9 +109,9 @@ def agent_texts(with_help=False):
     texts |= {f"topic {name}": text for name, text in TOPICS.items()}
     if with_help:
         texts["tool help"] = views.HELP_DESCRIPTION
-    texts["USAGE.md"] = (ROOT / "USAGE.md").read_text()
+    texts["USAGE.md"] = (ROOT / "USAGE.md").read_text(encoding="utf-8")
     for path in sorted((ROOT / "skills").rglob("*.md")):
-        texts[str(path.relative_to(ROOT))] = path.read_text()
+        texts[str(path.relative_to(ROOT))] = path.read_text(encoding="utf-8")
     return texts
 
 

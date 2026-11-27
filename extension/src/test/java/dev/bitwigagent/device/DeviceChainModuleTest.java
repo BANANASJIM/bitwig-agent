@@ -298,6 +298,142 @@ public final class DeviceChainModuleTest {
                 "a changed prefix during deletion is ambiguous");
     }
 
+    /** Device B of A, B, C duplicated: an applied example. */
+    public static JsonObject duplicateExample() {
+        DeviceFixture f = abc();
+        return f.call(f.chains(), "devices.duplicate", delete(f.device(1, "B")));
+    }
+
+    /** Device B of A, B, C replaced with a preset: an applied example. */
+    public static JsonObject replaceExample() {
+        DeviceFixture f = abc();
+        return f.call(f.chains(), "devices.replace", replace(f.device(1, "B")));
+    }
+
+    private static JsonObject replace(JsonObject ref) {
+        return params(
+                "target",
+                ref,
+                "insert",
+                params("kind", "file", "path", TestPaths.absolute("/presets/Warm Pad.bwpreset")));
+    }
+
+    @Test
+    void aDuplicateIsTheSourcesCopyRightAfterIt() {
+        DeviceFixture f = abc();
+        JsonObject result = f.call(f.chains(), "devices.duplicate", delete(f.device(1, "B")));
+        assertEquals(List.of("after:1:copyDevices"), f.top.points, "copied after itself through the public API");
+        assertEquals(List.of("A", "B", "B", "C"), f.top.names());
+        assertEquals("applied", result.get("outcome").getAsString(), result.toString());
+        assertEquals("api_readback", result.get("verification").getAsString());
+        assertEquals(f.device(2, "B"), result.getAsJsonObject("ref"));
+        assertEquals("B", result.getAsJsonObject("source").get("name").getAsString());
+        assertEquals(2, result.getAsJsonObject("inserted").get("deviceIndex").getAsInt());
+
+        DeviceFixture other = abc();
+        other.top.moveMode = "other";
+        HostOperation op = other.run(
+                other.chains(), "devices.duplicate", delete(other.device(1, "B")), other.host.tasks.after(20));
+        assertUnknown("not_observed", op);
+        assertEquals(1, other.top.points.size(), "a device that is not the copy is never accepted nor retried");
+
+        String[] sixteen = new String[16];
+        for (int i = 0; i < 16; i++) sixteen[i] = "D" + i;
+        DeviceFixture full = DeviceFixture.chain(sixteen);
+        assertRpcError("outside_window", full.run(full.chains(), "devices.duplicate", delete(full.device(0, "D0"))));
+        assertTrue(full.top.points.isEmpty(), "a copy that would leave the window is refused");
+    }
+
+    @Test
+    void aReplacementKeepsEveryOtherDeviceAndShowsTheNewOne() {
+        DeviceFixture f = abc();
+        JsonObject result = f.call(f.chains(), "devices.replace", replace(f.device(1, "B")));
+        assertEquals(List.of("replace:1:insertFile"), f.top.points);
+        assertEquals(TestPaths.absolute("/presets/Warm Pad.bwpreset"), f.top.lastArgument);
+        assertEquals(List.of("A", "Replaced", "C"), f.top.names());
+        assertEquals("applied", result.get("outcome").getAsString(), result.toString());
+        assertEquals("api_readback", result.get("verification").getAsString());
+        assertEquals(f.device(1, "Replaced"), result.getAsJsonObject("ref"));
+        assertEquals("B", result.getAsJsonObject("replaced").get("name").getAsString());
+        assertFalse(result.get("requestedIdentifierVerified").getAsBoolean());
+        assertEquals(3, result.get("afterCount").getAsInt());
+
+        DeviceFixture same = abc();
+        same.top.replacement = new String[] {"B", "audio-effect"};
+        HostOperation unseen =
+                same.run(same.chains(), "devices.replace", replace(same.device(1, "B")), same.host.tasks.after(20));
+        assertUnknown("not_observed", unseen);
+        assertEquals(1, same.top.points.size(), "an unobservable replacement is reported, never retried");
+
+        DeviceFixture paged = abc();
+        paged.pages[1].child("pageNames").emit(new String[] {"Main"});
+        paged.top.replacement = new String[] {"B", "audio-effect"};
+        paged.top.replacementPages = new String[] {"Perform", "Wavetable"};
+        JsonObject preset = paged.finish(paged.run(
+                paged.chains(), "devices.replace", replace(paged.device(1, "B")), paged.host.tasks.after(20)));
+        assertEquals(
+                "applied",
+                preset.get("outcome").getAsString(),
+                "a preset of the same device shows itself by its Remote Controls pages");
+
+        DeviceFixture report = abc();
+        report.top.insertMode = "none";
+        HostOperation late = report.run(
+                report.chains(), "devices.replace", replace(report.device(1, "B")), report.host.tasks.after(20));
+        report.top.slots[1].child("name").emit("B");
+        assertUnknown("not_observed", report.finishOrError(late));
+
+        DeviceFixture unrelated = abc();
+        unrelated.top.replacement = new String[] {"Renamed", "audio-effect"};
+        HostOperation other = unrelated.run(
+                unrelated.chains(),
+                "devices.replace",
+                replace(unrelated.device(1, "B")),
+                unrelated.host.tasks.after(20));
+        assertUnknown("not_observed", unrelated.finishOrError(other));
+
+        DeviceFixture named = abc();
+        named.top.replacement = new String[] {"Warm Pad", "audio-effect"};
+        assertEquals(
+                "applied",
+                named.finish(named.run(
+                                named.chains(),
+                                "devices.replace",
+                                replace(named.device(1, "B")),
+                                named.host.tasks.after(20)))
+                        .get("outcome")
+                        .getAsString(),
+                "the requested preset's name is evidence");
+        assertEquals("Warm Pad", DeviceChainModule.stem("/presets/Warm Pad.bwpreset"));
+
+        DeviceFixture bad = abc();
+        assertRpcError(
+                "invalid_params",
+                bad.run(
+                        bad.chains(),
+                        "devices.replace",
+                        params("target", bad.device(1, "B"), "insert", params("kind", "vst3", "id", "short"))));
+        DeviceFixture recording = abc();
+        recording.host.transport.child("isArrangerRecordEnabled").emit(true);
+        assertRpcError(
+                "unsafe_state",
+                recording.run(recording.chains(), "devices.replace", replace(recording.device(0, "A"))));
+        assertTrue(bad.top.points.isEmpty() && recording.top.points.isEmpty());
+    }
+
+    @Test
+    void aDeviceInsideAChainIsNeitherDuplicatedNorReplaced() {
+        DeviceFixture.Rack[] out = new DeviceFixture.Rack[1];
+        DeviceFixture f = racks(out, "Delay");
+        for (String method : List.of("devices.duplicate", "devices.replace")) {
+            JsonObject p = method.equals("devices.duplicate")
+                    ? delete(out[0].deviceRef(0, 0))
+                    : replace(out[0].deviceRef(0, 0));
+            assertRpcError("unsupported_scope", f.run(f.chains(), method, p));
+        }
+        assertEquals(List.of("Delay"), out[0].names(0));
+    }
+
     @Test
     void aMoveObservesTheExpectedArrangement() {
         DeviceFixture f = DeviceFixture.chain("A", "B", "C", "D");

@@ -270,3 +270,23 @@ def test_catalog_is_a_filterable_record_list():
 def test_refs_topic_says_identity_correct_hand_built_refs_work():
     assert "works exactly when its identity fields are correct" in REFS
     assert "pass them back unchanged" in REFS
+
+
+def test_duplicate_takes_a_device_and_replace_an_insert_object():
+    assert validate_call("devices.duplicate", {"target": DEVICE})[0] == {"target": DEVICE}
+    args = {"target": DEVICE, "insert": FILE}
+    assert validate_call("devices.replace", args)[0] == args
+    clap = {"target": DEVICE, "insert": {"kind": "clap", "id": "org.example.eq"}}
+    assert validate_call("devices.replace", clap)[0] == clap
+    for bad in (
+        {"target": DEVICE},
+        {"target": DEVICE, "insert": {"kind": "file", "id": UUID}},
+        {"target": DEVICE, "insert": {"kind": "vst3", "id": "short"}},
+        {"target": TRACK_REF, "insert": FILE},
+    ):
+        with pytest.raises(ValidationError):
+            validate_call("devices.replace", bad)
+    with pytest.raises(ValidationError):
+        validate_call("devices.duplicate", {"target": DEVICE, "position": "end"})
+    assert TOOLS["devices.replace"].inspect == "devices.list"
+    assert TOOLS["devices.duplicate"].inspect == "devices.list"

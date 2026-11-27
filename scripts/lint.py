@@ -8,6 +8,7 @@ python scripts/lint.py --fix            apply ruff fixes and reformat Python and
 """
 
 import argparse
+import ast
 import os
 import platform
 import shutil
@@ -38,6 +39,7 @@ def tracked(*prefixes: str, suffix: str) -> list[str]:
         check=True,
         capture_output=True,
         text=True,
+        encoding="utf-8",
     ).stdout
     return sorted(name for name in listing.split("\0") if name.endswith(suffix))
 
@@ -74,6 +76,41 @@ def ruff_format(fix: bool) -> bool:
     return run(["ruff", "format", *([] if fix else ["--check"]), *python_sources()])
 
 
+def opens_text_without_encoding(call: ast.Call) -> bool:
+    """Path.read_text/write_text, or open()/Path.open() in text mode, that does not name an encoding.
+
+    ruff PLW1514 only sees receivers it can prove are pathlib.Path, so `path.read_text()` on an untyped
+    variable slips through; this checks by method name instead.
+    """
+    func = call.func
+    name = func.attr if isinstance(func, ast.Attribute) else func.id if isinstance(func, ast.Name) else ""
+    if any(keyword.arg == "encoding" for keyword in call.keywords):
+        return False
+    if name in {"read_text", "write_text"}:
+        return isinstance(func, ast.Attribute)
+    if name != "open" or (
+        isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) and func.value.id == "os"
+    ):
+        return False
+    mode_index = 0 if isinstance(func, ast.Attribute) else 1
+    mode = (
+        call.args[mode_index]
+        if len(call.args) > mode_index
+        else next((k.value for k in call.keywords if k.arg == "mode"), None)
+    )
+    return mode is None or (isinstance(mode, ast.Constant) and isinstance(mode.value, str) and "b" not in mode.value)
+
+
+def text_encoding(fix: bool) -> bool:
+    ok = True
+    for name in python_sources():
+        for node in ast.walk(ast.parse((ROOT / name).read_text(encoding="utf-8"))):
+            if isinstance(node, ast.Call) and opens_text_without_encoding(node):
+                print(f"{name}:{node.lineno}: text I/O without encoding= (Windows defaults to cp1252)")
+                ok = False
+    return ok
+
+
 def mypy(fix: bool) -> bool:
     strict = run([sys.executable, "-m", "mypy", *tracked("src/bitwig_agent", suffix=".py")])
     loose = run(
@@ -107,7 +144,7 @@ def cpd_duplicates(language: str) -> dict[tuple[str, ...], tuple[int, int]]:
     with tempfile.TemporaryDirectory() as scratch:
         listing = Path(scratch) / "files.txt"
         report_file = Path(scratch) / "report.xml"
-        listing.write_text("\n".join(str(ROOT / name) for name in files) + "\n")
+        listing.write_text("\n".join(str(ROOT / name) for name in files) + "\n", encoding="utf-8")
         command = [
             *pmd_launcher(),
             "cpd",
@@ -153,6 +190,7 @@ def cpd(fix: bool) -> bool:
 GATES = {
     "ruff check": ruff_check,
     "ruff format": ruff_format,
+    "text encoding": text_encoding,
     "mypy": mypy,
     "java format": java_format,
     "cpd": cpd,

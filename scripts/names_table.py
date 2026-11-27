@@ -69,9 +69,13 @@ def main():
     parser.add_argument("out", type=Path, help="names_<version>.json to write")
     parser.add_argument("--classes", type=Path, help="whole-jar class map with a `map` object")
     args = parser.parse_args()
-    whole_jar = json.loads(args.classes.read_text())["map"] if args.classes else None
-    table = generate(json.loads(args.previous.read_text()), json.loads(args.symbols.read_text())["symbols"], whole_jar)
-    args.out.write_text(render(table))
+    whole_jar = json.loads(args.classes.read_text(encoding="utf-8"))["map"] if args.classes else None
+    table = generate(
+        json.loads(args.previous.read_text(encoding="utf-8")),
+        json.loads(args.symbols.read_text(encoding="utf-8"))["symbols"],
+        whole_jar,
+    )
+    args.out.write_text(render(table), encoding="utf-8")
     print(f"{args.out}: {len(table['classes'])} classes, {len(table['members'])} members", file=sys.stderr)
 
 

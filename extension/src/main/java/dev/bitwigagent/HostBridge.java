@@ -47,6 +47,7 @@ import dev.bitwigagent.mix.MeterModule;
 import dev.bitwigagent.mix.MixModule;
 import dev.bitwigagent.mix.TrackLifecycleModule;
 import dev.bitwigagent.mix.TrackListModule;
+import dev.bitwigagent.mix.TrackReshapeModule;
 import dev.bitwigagent.project.ContextModule;
 import dev.bitwigagent.project.DiscoveryModule;
 import dev.bitwigagent.project.KeySignatureModule;
@@ -101,7 +102,7 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
         ProjectModule projectModule = new ProjectModule(scheduler, application, project, projectState, natives, holds);
         register(new DiscoveryModule(host, application, transport, window, projectState, specs, holds, domains));
         register(new DeviceListModule(window, trackRefs, chains));
-        register(new DeviceChainModule(scheduler, window, trackRefs, sources, chains, transportSafety));
+        register(new DeviceChainModule(scheduler, window, trackRefs, sources, chains, transportSafety, remotes));
         register(new ChainModule(scheduler, chains, transportSafety));
         register(new ActionModule(scheduler, application, projectState, selection));
         register(projectModule);
@@ -114,6 +115,7 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
         register(new TrackListModule(window, trackRefs, mix));
         register(new TrackLifecycleModule(
                 scheduler, window, trackRefs, application, transportSafety, selection, natives, holds, mix, null));
+        register(new TrackReshapeModule(scheduler, window, trackRefs, transportSafety, selection, natives, mix, null));
         register(new DeviceModule(scheduler, sources, chains, selection));
         LauncherTargets launcherTargets =
                 new LauncherTargets(window, trackRefs, new SceneWindowLease(window, scheduler));

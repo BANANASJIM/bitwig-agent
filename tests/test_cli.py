@@ -657,7 +657,7 @@ async def test_operand_file_and_flags_merge_and_a_repeat_is_an_error(host, monke
     monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
     reply_with(host, {"outcome": "applied"})
     path = tmp_path / "args.json"
-    path.write_text('{"playing": true}')
+    path.write_text('{"playing": true}', encoding="utf-8")
     assert (await execute(["transport", "set", f"@{path}", "--tempo=100"]))[1] == 0
     assert host.requests[-1]["params"] == {"playing": True, "tempo": 100}
     payload, code = await execute(["transport", "set", f"@{path}", "--playing=false"])
@@ -968,7 +968,7 @@ async def test_batch_reads_a_file_and_has_help(host, monkeypatch, tmp_path):
     monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
     reply_with(host, {"outcome": "sent"})
     path = tmp_path / "calls.jsonl"
-    path.write_text(lines_of({"method": "transport.set", "params": {"playing": False}}))
+    path.write_text(lines_of({"method": "transport.set", "params": {"playing": False}}), encoding="utf-8")
     assert (await cli.execute(["batch", f"@{path}"])).code == 0
     assert (await cli.execute(["batch", "a", "b"])).code == 2
     for argv in (["batch", "--help"], ["help", "batch"]):

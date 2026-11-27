@@ -4,7 +4,7 @@ from typing import Annotated, Literal, Self
 
 from pydantic import Field, model_validator
 
-from bitwig_agent.protocol.annotations import ADD
+from bitwig_agent.protocol.annotations import ADD, REMOVE, SET
 from bitwig_agent.protocol.base import (
     NOT_RECORDING,
     PROJECT_READY,
@@ -126,6 +126,12 @@ class TrackGroupArgs(StatusArgs):
         return self
 
 
+class TrackConvertArgs(TrackArgs):
+    to: Literal["hybrid", "audio", "instrument"] = Field(
+        description="The track type to convert to; a track that already has it is already_matched."
+    )
+
+
 TRACKS_LIST_DESCRIPTION = "Discover tracks in the flat bounded track window (tree pre-order). Each row has ref (a track ref to pass back), index, name, type, isGroup, groupExpanded (groups), parent (the group's track ref, null at top level), depth and parentResolved, plus the mix columns volume and pan {value 0..1, display}, mute, solo, arm and sends [{name, display, enabled}] (null while unobserved; tracks.get has refs and completeness); tree.complete says every parent was observed. A mix table is --format=tsv --fields=name,volume.display,pan.display,mute,solo. All indices are zero-based. Inspect window completeness before choosing targets."
 TRACKS_GET_DESCRIPTION = "Read one track's mix state and bounded sends. ref is the track ref; volume and pan are {value 0..1, display, ref} (ref is a parameter ref for automation.points.*), pan 0.5 is centre; monitorMode and crossFadeMode are {value, options} with the host's own options; send rows carry their send ref, value {value, display}, enabled, mode {value, options} (pre/post-fader tap), preFader (the effective tap) and effectTrack (a track ref). Fields may be null after target changes; inspect observationsComplete and sendObservationsComplete rather than treating partial observations as current."
 TRACKS_SET_DESCRIPTION = "Set only the given fields of one track by its ref; omitted fields stay unchanged. Returns ref (the track after the write), outcome (the worst field's) and a per-field outcome with reason; a field already at the value is already_matched. volume and pan take the value tracks.get returned or {display}: the API has no dB setter, so the extension bisects the normalized value against the host's own displayed text and verifies the final display (displayWrite carries the probe count and the final observed display); several fader moves are written while it searches. An unreadable display restores the original value and reports not_applied (unknown when the restore is not confirmed). expect compares bare current values first. Never retry unknown."
@@ -134,7 +140,10 @@ METERS_GET_DESCRIPTION = f"Read VU meter peak and RMS (left/right, steps 0..127;
 TRACKS_SELECT_DESCRIPTION = "Select a track in the host UI by its ref. Returns outcome sent: the command was dispatched and navigation is not observed; a selected snapshot does not acknowledge it. Inspect the actual UI and possible automatic arming before dependent edits; never blindly retry. Reads do not require selection."
 TRACKS_INSERT_DESCRIPTION = 'Insert and name a top-level track. position is "start", "end" (default) or {before|after: trackRef} of a top-level track of the same list (main tracks for audio/instrument, effect tracks for effect; groups count, their children do not). In a project with groups, tracks.list tree.complete must be true. Returns ref of the new track. An unresolved insertion holds further inserts (reason unresolved); inspect actual state, never blindly retry or reset to bypass ambiguity.'
 TRACKS_GROUP_DESCRIPTION = f"Put existing tracks into one new group track (the guide's select + Ctrl+G), without using the UI selection. targets must be adjacent tracks of one parent, in order (top level or the same group); effect and master tracks are refused. The new group is inserted where the first of them was, their order is kept, and the native operation selects the group. The targets must be adjacent siblings of one parent (moving tracks comes later). A named group is created and named inside one native transaction, so a single Undo (Group Tracks) restores the tree; after Redo the group comes back collapsed and its children are not listed until it is expanded (a bank limitation). Verified by one new group whose children are exactly targets, every other parent unchanged; returns ref of the group. Version-gated; needs recording/automation-write off, at most {TRACK_WINDOW - 1} tracks in the window and every parent observed. Unknown outcomes hold tracks.insert/tracks.group until you inspect tracks.list and ack the hold id; never retry."
-TRACKS_DELETE_DESCRIPTION = f"Delete one audio/instrument/hybrid/effect track by its ref (Track.deleteObject; never master or group); the ref's name must still match. Needs observed stopped transport with recording/automation write off. Verified by the track leaving the bank and the count dropping by one (outcome applied); outcome unknown (not_observed) means inspect state and never retry. Only while the whole project fits the {TRACK_WINDOW}-track bank window (offset 0, at most {TRACK_WINDOW} tracks incl. group children and effect tracks), else not_ready/not_applied. Destructive: removes the track's clips and devices; Bitwig's own Undo is the only recovery (one Undo restores the track with the same UUID)."
+TRACKS_DELETE_DESCRIPTION = f"Delete one audio/instrument/hybrid/effect or group track by its ref (Track.deleteObject; never master); the ref's name must still match. A group is deleted with every track inside it (tracks.list tree.complete must be true and the group and any group inside it expanded, so their tracks are listed; a collapsed one is not_ready: expand it in Bitwig first): the result lists them in deletedChildren. Needs observed stopped transport with recording/automation write off. Verified by exactly those tracks leaving the bank and the count dropping by their number (outcome applied); outcome unknown (not_observed) means inspect state and never retry. Only while the whole project fits the {TRACK_WINDOW}-track bank window (offset 0, at most {TRACK_WINDOW} tracks incl. group children and effect tracks), else not_ready/not_applied. Destructive: removes the tracks' clips and devices; Bitwig's own Undo is the only recovery (one Undo restores them with the same UUIDs)."
+TRACKS_DUPLICATE_DESCRIPTION = f"Duplicate one audio/instrument/hybrid/effect track by its ref (Channel.duplicate: clips, devices and settings; never group or master). The copy lands right after the source in the same parent. Verified by exactly one new track of the same type directly after the source with the same parent and the same device count (deviceCount); returns ref of the copy (its name is Bitwig's). Needs recording/automation write off, at most {TRACK_WINDOW - 1} tracks in the whole-project window and, in a grouped project, every parent observed. An unattributed copy holds tracks.insert/tracks.group/tracks.duplicate until you inspect tracks.list and ack the hold id; never retry."
+TRACKS_CONVERT_DESCRIPTION = "Convert one audio/instrument/hybrid track to another type (Bitwig's Convert to Hybrid/Audio/Instrument Track): to is hybrid, audio or instrument. The track keeps its UUID, so its ref stays valid (Bitwig may rename it, e.g. Inst 5 -> Hybrid 5). Hybrid keeps audio and note content. Bitwig refuses a conversion that would drop content: to audio needs no note clips, to instrument no audio clips (a hybrid track with both converts only to hybrid). The extension checks the track's clips first and returns not_applied (host_refused) with hasAudioClips, hasNoteClips and next, sending nothing. Bitwig's command acts on the selected track, so the extension selects the target natively, converts inside one transaction (one Undo step) and puts the user's track selection back; selectionRestored says whether that worked. Verified by the observed track type; a track already of that type is already_matched and nothing is sent. Version-gated native operation; needs recording/automation write off. No hold is placed (the type is read back directly): never retry unknown, read tracks.get."
+TRACKS_UNGROUP_DESCRIPTION = "Dissolve one group track by its ref (Bitwig's Ungroup): its direct children move up into the group's parent at the group's place, in order, and the group track itself (with its devices) is removed. Nested groups stay groups. One Undo step (an outer native transaction) restores the group. Bitwig's operation selects the last moved child, so the extension puts the user's track selection back; selectionRestored says whether that worked. Verified by the group leaving the bank and every former child now having the group's parent, every other parent unchanged; returns children (their refs) and parent. Needs recording/automation write off, the whole project in the track window, every parent observed (tracks.list tree.complete) and the group expanded (a collapsed group's tracks are not listed: not_ready, expand it in Bitwig first). Version-gated native operation. No hold is placed: never retry unknown, read tracks.list."
 
 
 SPECS: dict[str, ToolSpec] = {
@@ -192,5 +201,28 @@ SPECS: dict[str, ToolSpec] = {
         False,
         examples=({"target": EXAMPLE_TRACK},),
         requires=PROJECT_READY + STOPPED,
+    ),
+    "tracks.duplicate": ToolSpec(
+        TrackArgs,
+        TRACKS_DUPLICATE_DESCRIPTION,
+        False,
+        examples=({"target": EXAMPLE_TRACK},),
+        requires=PROJECT_READY + NOT_RECORDING,
+    ),
+    "tracks.convert": ToolSpec(
+        TrackConvertArgs,
+        TRACKS_CONVERT_DESCRIPTION,
+        False,
+        examples=({"target": EXAMPLE_TRACK, "to": "hybrid"},),
+        requires=PROJECT_READY + NOT_RECORDING,
+        annotations=SET,
+    ),
+    "tracks.ungroup": ToolSpec(
+        TrackArgs,
+        TRACKS_UNGROUP_DESCRIPTION,
+        False,
+        examples=({"target": {**EXAMPLE_TRACK, "name": "Drums"}},),
+        requires=PROJECT_READY + NOT_RECORDING,
+        annotations=REMOVE,
     ),
 }
