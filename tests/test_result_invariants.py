@@ -5,6 +5,7 @@ from collections.abc import Callable
 
 import pytest
 import test_audio_pipewire
+import test_batch
 import test_configured_insert
 import test_grid_apply
 import test_grid_probe
@@ -49,6 +50,8 @@ def test_a_composed_result_repeats_the_verification_its_applied_entries_share():
     assert shared_verification([NATIVE, NATIVE, {"outcome": "already_matched"}]) is Verification.NATIVE_READBACK
     assert shared_verification([NATIVE, API]) is None
     assert shared_verification([{"outcome": "already_matched"}]) is None
+    # an applied entry without its own verification (fields that disagree) agrees with nothing
+    assert shared_verification([NATIVE, {"outcome": "applied", "fields": {"a": NATIVE, "b": API}}]) is None
 
 
 # Client-composed methods whose result carries an outcome -> the test that runs one on a fake host and checks the leaf
@@ -61,6 +64,7 @@ CHECKED: dict[str, Callable[..., object]] = {
     "audio.route": test_audio_pipewire.test_route_outcomes,
     "devices.insert": test_configured_insert.test_a_later_failure_keeps_the_ref_and_says_how_to_finish_without_reinserting,
     "modulators.insert": test_configured_insert.test_modulators_insert_sets_controls_then_maps_from_the_new_modulator,
+    "batch": test_batch.test_n_calls_give_n_entries_in_order_and_nothing_runs_after_the_stop,
 }
 
 

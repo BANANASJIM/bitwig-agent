@@ -13,12 +13,11 @@ import difflib
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
-from bitwig_agent.errors import BridgeError
+from bitwig_agent.errors import NOT_REACHED, BridgeError, not_applied
 from bitwig_agent.protocol import TOOLS
 from bitwig_agent.protocol.base import SUCCEEDED, Outcome, shared_verification, worst
 
 MAX_CANDIDATES = 8
-NOT_REACHED = {"outcome": Outcome.NOT_APPLIED.value, "reason": "not_reached"}
 PARAMETER_READ = {"devices.insert": "parameters.list", "modulators.insert": "modulators.get"}
 """Where the new object's parameter refs are read, by insert method."""
 
@@ -47,10 +46,6 @@ Step = Call | Refused
 Planner = Callable[[Any, dict[str, Any], dict[str, Any], int], Awaitable[list[Step]]]
 
 
-def refusal(reason: str, message: str, **details: Any) -> dict[str, Any]:
-    return {"outcome": Outcome.NOT_APPLIED.value, "reason": reason, "message": message, **details}
-
-
 def refuse_all(extra: Mapping[str, Any], why: dict[str, Any]) -> list[Step]:
     """Every step the request asks for, in run order, refused for one reason."""
     params = [(f"params.{name}", "parameters.set") for name in extra.get("params", {})]
@@ -69,12 +64,14 @@ def param_steps(params: Mapping[str, Any], rows: list[Mapping[str, Any]]) -> lis
         if len(hits) == 1:
             steps.append(Call(step, method, {"target": hits[0], "value": value}))
         elif hits:
-            why = refusal("ambiguous_name", f"{len(hits)} parameters are called {name!r}.", candidates=hits)
+            why = not_applied("ambiguous_name", f"{len(hits)} parameters are called {name!r}.", candidates=hits)
             steps.append(Refused(step, method, why))
         else:
             close = difflib.get_close_matches(name, names, MAX_CANDIDATES, 0.5) or names[:MAX_CANDIDATES]
             steps.append(
-                Refused(step, method, refusal("unknown_name", f"No parameter is called {name!r}.", candidates=close))
+                Refused(
+                    step, method, not_applied("unknown_name", f"No parameter is called {name!r}.", candidates=close)
+                )
             )
     return steps
 
@@ -83,7 +80,7 @@ async def device_steps(client: Any, created: dict[str, Any], extra: dict[str, An
     try:
         listed = await client.call("parameters.list", {"target": created["ref"]}, timeout_ms)
     except BridgeError as exc:
-        return refuse_all(extra, refusal(exc.error["reason"], exc.error["message"], error=exc.error))
+        return refuse_all(extra, not_applied(exc.error["reason"], exc.error["message"], error=exc.error))
     return param_steps(extra["params"], listed["parameters"])
 
 
@@ -101,9 +98,9 @@ async def run(client: Any, step: Call, timeout_ms: int) -> dict[str, Any]:
     try:
         return {"step": step.name, **await client.call(step.method, step.params, timeout_ms)}
     except BridgeError as exc:
-        return {"step": step.name, **refusal(exc.error["reason"], exc.error["message"], error=exc.error)}
+        return {"step": step.name, **not_applied(exc.error["reason"], exc.error["message"], error=exc.error)}
     except ValueError as exc:  # a ref the host returned fails the client's own validation
-        return {"step": step.name, **refusal("invalid_params", str(exc))}
+        return {"step": step.name, **not_applied("invalid_params", str(exc))}
 
 
 async def execute(client: Any, steps: list[Step], timeout_ms: int) -> list[dict[str, Any]]:
