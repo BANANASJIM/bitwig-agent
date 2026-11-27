@@ -75,6 +75,10 @@ Pull requests follow [the template](.github/pull_request_template.md): why, a be
 
 For security-sensitive issues, use the private route in [SECURITY.md](SECURITY.md), not a public issue containing exploit details or private data.
 
+## Contributing a platform name table
+
+Private features are natively tested on Linux only. Bitwig obfuscates `bitwig.jar` separately per platform (for 6.1.7 the Linux, Windows and macOS jars differ, and so do their member names), so Windows or macOS support needs a name table generated from that platform's jar. The remapping tool currently lives outside this repository; an in-repo tool and runbook are planned. A contributor needs that platform's `bitwig.jar` for a supported version, the matching Linux name table in `src/bitwig_agent/shared/`, (`names_<version>.json`), and the ability to run the native smoke on that platform.
+
 ## Releases
 
 See the [release procedure](docs/packaging.md#release-procedure).

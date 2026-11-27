@@ -103,6 +103,10 @@ For an agent, copy the complete [portable skill folder](https://github.com/BANAN
 
 Each release gates private access to the exact host JARs it maps; `bitwig-agent status` lists the versions as `supportedBitwig`.
 
+### Platform support
+
+Features built on Bitwig's public Controller API are supported on Linux, Windows and macOS. Private features behind the native gate (Grid, modulators, routing and sidechains, layer chains, native note writes and the other version-gated methods) are maintained and natively tested on Linux only. Bitwig obfuscates each platform's `bitwig.jar` separately, so each platform needs its own name table; Windows and macOS private support depends on [community contributions](https://github.com/BANANASJIM/bitwig-agent/blob/main/CONTRIBUTING.md#contributing-a-platform-name-table). On Windows or macOS today, public features work and private features report the native gate as unavailable (see `status detail=full`).
+
 ## Documentation
 
 | Need | Guide |
