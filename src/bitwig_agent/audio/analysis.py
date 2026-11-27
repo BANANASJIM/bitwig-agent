@@ -49,19 +49,28 @@ class WavError(ValueError):
     pass
 
 
-def _finish_streamed_header(data: bytearray) -> None:
+HEADER_BYTES = 65536  # a WAV's data chunk header lies well within this
+
+
+def _streamed_wav(path: str) -> io.BytesIO | None:
     """pw-record/parec can leave data size 0 in a WAV header they never finalized. libsndfile reads such a file as
-    empty but reads 0xFFFFFFFF as "to the end of the file", so the first is rewritten as the second."""
-    if data[:4] != b"RIFF" or data[8:12] != b"WAVE":
-        return
-    pos = 12
-    while pos + 8 <= len(data):
-        size = int.from_bytes(data[pos + 4 : pos + 8], "little")
-        if data[pos : pos + 4] == b"data":
-            if size == 0:
+    empty but reads 0xFFFFFFFF as "to the end of the file": for that file only, a copy with the second size."""
+    with open(path, "rb") as handle:
+        head = handle.read(HEADER_BYTES)
+        if head[:4] != b"RIFF" or head[8:12] != b"WAVE":
+            return None
+        pos = 12
+        while pos + 8 <= len(head):
+            size = int.from_bytes(head[pos + 4 : pos + 8], "little")
+            if head[pos : pos + 4] == b"data":
+                if size:
+                    return None
+                handle.seek(0)
+                data = bytearray(handle.read())
                 data[pos + 4 : pos + 8] = STREAMED_SIZE
-            return
-        pos += 8 + size + (size & 1)
+                return io.BytesIO(data)
+            pos += 8 + size + (size & 1)
+    return None
 
 
 def read_wav(path: str, all_channels: bool = False) -> tuple[int, int, Any]:
@@ -70,13 +79,11 @@ def read_wav(path: str, all_channels: bool = False) -> tuple[int, int, Any]:
     try:
         if os.path.getsize(path) > MAX_BYTES:
             raise WavError("Audio file exceeds 256 MiB")
-        with open(path, "rb") as handle:
-            data = bytearray(handle.read())
+        source = _streamed_wav(path) or path
     except OSError as exc:
         raise WavError(f"Cannot read {path}: {exc.strerror}") from exc
-    _finish_streamed_header(data)
     try:
-        samples, rate = sf.read(io.BytesIO(data), dtype="float64", always_2d=True)
+        samples, rate = sf.read(source, dtype="float64", always_2d=True)
     except sf.SoundFileError as exc:
         raise WavError(f"Cannot decode {path}: {exc}") from exc
     channels = samples.shape[1]
@@ -85,10 +92,6 @@ def read_wav(path: str, all_channels: bool = False) -> tuple[int, int, Any]:
     if all_channels:
         return rate, channels, [np.ascontiguousarray(samples[:, c]) for c in range(channels)]
     return rate, channels, np.ascontiguousarray(samples[:, 0])
-
-
-def _db(value: float) -> float | None:
-    return round(20 * math.log10(value), 2) if value > 0 else None
 
 
 def _peak(x: Signal) -> float:
@@ -114,13 +117,15 @@ def level(x: Signal, rate: int, window_seconds: float) -> dict[str, Any]:
     for i in range(0, len(x), size):
         seg = x[i : i + size]
         r = _rms(seg)
-        rows.append({"t": round(i / rate, 3), "peak": round(_peak(seg), 4), "rms": round(r, 4), "rmsDb": _db(r)})
+        rows.append(
+            {"t": round(i / rate, 3), "peak": round(_peak(seg), 4), "rms": round(r, 4), "rmsDb": loudness.db(r)}
+        )
     quiet = sum(1 for r in rows if r["rms"] < QUIET_RMS)
     return {
         "peak": round(peak, 4),
-        "peakDb": _db(peak),
+        "peakDb": loudness.db(peak),
         "rms": round(rms, 4),
-        "rmsDb": _db(rms),
+        "rmsDb": loudness.db(rms),
         "clipping": peak >= CLIP_LEVEL,
         "windowSeconds": round(window_seconds, 3),
         "silenceRatio": round(quiet / len(rows), 3) if rows else 1.0,
@@ -316,7 +321,7 @@ CHROMA_LOW, CHROMA_HIGH = 50.0, 1500.0
 CHROMA_RATE = 4000  # chroma works on audio decimated to about this rate
 CHROMA_PASS_HZ, CHROMA_STOP_HZ = 1600.0, 2000.0  # anti-alias low-pass band edges ahead of that decimation
 CHROMA_STOP_DB = 80.0
-CHROMA_FLOOR = 1e-6  # in-range power 60 dB below the window's mean square counts as no pitched content
+CHROMA_FLOOR = 1e-6  # in-range power 60 dB below the window's total mean square (all frequencies) is no pitched content
 CHROMA_MAX_SAMPLES = 65536  # longest single chroma FFT (about 16 s at CHROMA_RATE); longer windows are split
 CHROMA_MIN_SAMPLES = 4000  # a leftover shorter than this (1 s) is dropped
 MODES = {
@@ -366,7 +371,7 @@ def _pitch_class_map(n: int, rate: float) -> tuple[int, NDArray[np.intp]]:
 def _chroma(x: Signal, rate: int) -> Signal:
     """Pitch-class power of one window: anti-alias and decimate to ~CHROMA_RATE, one Hann FFT over the whole window
     (resolution 1/window seconds, enough to separate semitones at 50 Hz), fold every bin's power in CHROMA_LOW..CHROMA_HIGH.
-    All zero when that power is below CHROMA_FLOOR of the window's mean square (no pitched content in range)."""
+    All zero when that power is below CHROMA_FLOOR of the window's total mean square, all frequencies included."""
     factor = max(1, rate // CHROMA_RATE)
     y = resample_poly(x, 1, factor, window=_chroma_lowpass(rate)) if factor > 1 else x
     yrate = rate / factor
@@ -497,7 +502,7 @@ def bands(x: Signal, rate: int, window_seconds: float, key: str | None, shift: f
             **_chroma_report(all_chroma, scale),
             "rangeHz": [CHROMA_LOW, CHROMA_HIGH],
             "note": "power of every FFT bin in the range folded to pitch classes (one long Hann FFT per window on audio low-passed and decimated to ~4 kHz); "
-            "empty when that power is 60 dB or more below the window's; drums, noise and inharmonic partials pollute it, so use it on pitched stems",
+            "empty when that power is 60 dB or more below the window's total power (all frequencies); drums, noise and inharmonic partials pollute it, so use it on pitched stems",
         }
     return out
 

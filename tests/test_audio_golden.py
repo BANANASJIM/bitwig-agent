@@ -25,7 +25,9 @@ TEXT_CHANGED = {"limits", "note"}  # wording about the new filters / removed "pu
 TRUE_PEAK_DB = 0.2  # resample_poly's filter instead of a 24-tap windowed sinc; wideband noise moves most
 CHROMA_SHARE = 0.02  # the anti-alias low-pass removes folded energy that small shares carried
 NUMERIC_FLOOR_DB = -200.0  # bandsDb this low is FFT round-off of an empty band, not a measurement
-NO_REAL_ONSETS = {"noise_f64", "sine2500_s16", "sine3000_s24"}  # flux "onsets" relative to round-off-sized flux
+# Files without onsets: flux peaks there are relative to round-off-sized flux, so they move with any filter change.
+# Bounded instead of compared: (most onsets, latest onset in seconds).
+NO_REAL_ONSETS = {"noise_f64": (25, 4.0), "sine2500_s16": (1, 0.01), "sine3000_s24": (1, 0.01)}
 ALIASED = {"sine2500_s16", "sine3000_s24"}  # the bug: their chroma was folded energy from 2.5/3 kHz
 
 
@@ -52,7 +54,7 @@ def _allowed(signal, path, field, old, new):
         return abs(old - new) <= CHROMA_SHARE
     if ".bandsDb." in path:
         return old < NUMERIC_FLOOR_DB and new < NUMERIC_FLOOR_DB
-    # ALIASED chroma is asserted empty below; near-equal shares of white noise swap order
+    # ALIASED chroma is asserted empty and NO_REAL_ONSETS bounded below; near-equal noise shares swap order
     return (".chroma" in path and (signal in ALIASED or signal == "noise_f64")) or (
         '"onsets"' in path and signal in NO_REAL_ONSETS
     )
@@ -68,6 +70,10 @@ def test_outputs_match_the_stdlib_baseline_except_the_documented_changes(tmp_pat
         _diff(old, current[call], call, diffs)
         unexplained += [d for d in diffs if not _allowed(signal, *d)]
     assert unexplained == []
+    for signal, (most, latest) in NO_REAL_ONSETS.items():
+        found = current[key(signal, {"mode": "onsets"})]["onsets"]
+        assert len(found) <= most
+        assert all(t <= latest for t in found)
     for signal in ALIASED:
         call = key(signal, {"mode": "bands", "windowSeconds": 2.0, "key": "A:aeolian"})
         assert BASELINE[call]["chroma"]["topPitchClasses"][0]["share"] == 1.0  # the baseline really carried the bug
@@ -96,6 +102,30 @@ def test_chroma_of_a_tone_with_a_high_partial_names_only_the_tone(tmp_path):
     chroma = run_analyze(tmp_path / "m.wav", mode="bands", key="A:aeolian")["chroma"]
     top = chroma["topPitchClasses"][0]
     assert (top["name"], top["share"]) == ("A", 1.0)
+
+
+@pytest.mark.parametrize(("level_db", "kept"), [(-50, True), (-70, False)])
+def test_chroma_floor_is_relative_to_the_total_power(tmp_path, level_db, kept):
+    # A loud 3000 Hz tone sets the window's total power; pitched 440 Hz content 50 dB below it is reported,
+    # 70 dB below it is under the 60 dB floor.
+    mix = [a + b for a, b in zip(sine(3000, 4, RATE), sine(440, 4, RATE, db=-6 + level_db), strict=True)]
+    write(tmp_path / "f.wav", [mix, mix], RATE, 32, True)
+    top = run_analyze(tmp_path / "f.wav", mode="bands", key="A:aeolian")["chroma"]["topPitchClasses"]
+    assert (top[0]["name"] if top else None) == ("A" if kept else None)
+
+
+def test_unrelated_import_errors_are_not_reported_as_the_missing_extra(monkeypatch, tmp_path):
+    monkeypatch.setitem(sys.modules, "soundfile", None)
+    monkeypatch.delitem(sys.modules, "bitwig_agent.audio.analysis")
+    monkeypatch.delattr(bitwig_agent.audio, "analysis")
+    with pytest.raises(BridgeError, match="soundfile is missing"):
+        run_analyze(tmp_path / "x.wav", mode="level")
+    monkeypatch.setitem(sys.modules, "bitwig_agent.audio.loudness", None)  # a broken install, not the extra
+    monkeypatch.delattr(bitwig_agent.audio, "loudness")
+    monkeypatch.delitem(sys.modules, "soundfile")
+    with pytest.raises(ImportError) as error:
+        pipewire.load_analysis()
+    assert error.value.name == "bitwig_agent.audio.loudness"
 
 
 def _program(rate=RATE):

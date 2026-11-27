@@ -80,6 +80,7 @@ sleep = asyncio.sleep
 
 
 AUDIO_EXTRA = "pip install 'bitwig-agent[audio]'"
+AUDIO_MODULES = ("numpy", "scipy", "soundfile")
 
 
 def load_analysis() -> ModuleType:
@@ -87,9 +88,11 @@ def load_analysis() -> ModuleType:
     try:
         from bitwig_agent.audio import analysis  # noqa: PLC0415 - optional dependencies load on first use
     except ImportError as exc:
+        if (exc.name or "").partition(".")[0] not in AUDIO_MODULES:
+            raise
         raise bridge_error(
             "unsupported_platform",
-            f"Audio analysis needs the optional audio dependencies (numpy, scipy, soundfile); {exc.name or exc} is missing. "
+            f"Audio analysis needs the optional audio dependencies (numpy, scipy, soundfile); {exc.name} is missing. "
             f"Install them with {AUDIO_EXTRA} (Arch: python-numpy python-scipy python-soundfile).",
         ) from exc
     return analysis

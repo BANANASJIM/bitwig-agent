@@ -15,6 +15,8 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.signal import freqz_sos, resample_poly, sosfilt
 
+Energies = NDArray[np.float64]
+
 OFFSET = -0.691  # BS.1770 constant: K-weighted energy -> LKFS
 ABS_GATE = -70.0
 REL_GATE_LU = -10.0
@@ -69,12 +71,13 @@ def gain_db(rate: int, hz: float) -> float:
     return float(20 * np.log10(np.abs(response[0])))
 
 
-def sub_block_energies(x: NDArray[np.float64], rate: int) -> list[float]:
+def sub_block_energies(x: Energies, rate: int) -> Energies:
     """Mean square of the K-weighted signal per 100 ms sub-block (full sub-blocks only)."""
     size = max(1, round(SUB_BLOCK_SECONDS * rate))
     count = len(x) // size
     weighted = sosfilt(_sos(rate), x[: count * size])
-    return [float(v) for v in np.mean((weighted * weighted).reshape(count, size), axis=1)]
+    energies: Energies = np.mean((weighted * weighted).reshape(count, size), axis=1)
+    return energies
 
 
 def channel_weights(channels: int) -> tuple[list[float], str]:
@@ -87,56 +90,46 @@ def channel_weights(channels: int) -> tuple[list[float], str]:
     return [1.0] * channels, "assumed_all_front_weight_1"
 
 
-def _lufs(energy: float) -> float:
-    return OFFSET + 10 * math.log10(energy) if energy > 0 else -math.inf
+def _lufs(energy: Any) -> Any:
+    """LKFS of a mean-square energy (scalar or array); -inf for zero."""
+    with np.errstate(divide="ignore"):
+        return OFFSET + 10 * np.log10(energy)
 
 
-def _windows(per_sub: list[float], span: int) -> list[float]:
-    """Weighted energy of every span-sub-block window, hop one sub-block."""
+def _windows(per_sub: Energies, span: int) -> Energies:
+    """Mean energy of every span-sub-block window, hop one sub-block."""
     if len(per_sub) < span:
-        return []
-    run = sum(per_sub[:span])
-    out = [run / span]
-    for i in range(span, len(per_sub)):
-        run += per_sub[i] - per_sub[i - span]
-        out.append(max(run, 0.0) / span)
-    return out
+        return np.zeros(0)
+    means: Energies = np.convolve(per_sub, np.full(span, 1 / span), mode="valid")
+    return means
 
 
-def _percentile(sorted_values: list[float], q: float) -> float:
-    pos = q * (len(sorted_values) - 1)
-    lo = math.floor(pos)
-    hi = min(lo + 1, len(sorted_values) - 1)
-    return sorted_values[lo] + (sorted_values[hi] - sorted_values[lo]) * (pos - lo)
-
-
-def integrated(block_energies: list[float]) -> tuple[float | None, dict[str, Any]]:
-    loud = [_lufs(e) for e in block_energies]
-    kept = [e for e, level in zip(block_energies, loud, strict=True) if level > ABS_GATE]
+def integrated(block_energies: Energies) -> tuple[float | None, dict[str, Any]]:
+    kept = block_energies[_lufs(block_energies) > ABS_GATE]
     info: dict[str, Any] = {
         "blocks": len(block_energies),
         "absoluteGated": len(kept),
         "relativeGated": 0,
         "relativeThresholdLufs": None,
     }
-    if not kept:
+    if not len(kept):
         return None, info
-    threshold = _lufs(sum(kept) / len(kept)) + REL_GATE_LU
-    final = [e for e, level in zip(block_energies, loud, strict=True) if level > ABS_GATE and level > threshold]
+    threshold = float(_lufs(kept.mean())) + REL_GATE_LU
+    final = kept[_lufs(kept) > threshold]
     info.update(relativeGated=len(final), relativeThresholdLufs=round(threshold, 2))
-    return _lufs(sum(final) / len(final)), info
+    return float(_lufs(final.mean())), info
 
 
-def loudness_range(short_term_energies: list[float]) -> float | None:
-    loud = [_lufs(e) for e in short_term_energies]
-    kept = [(e, level) for e, level in zip(short_term_energies, loud, strict=True) if level > ABS_GATE]
-    if not kept:
+def loudness_range(short_term_energies: Energies) -> float | None:
+    kept = short_term_energies[_lufs(short_term_energies) > ABS_GATE]
+    if not len(kept):
         return None
-    threshold = _lufs(sum(e for e, _ in kept) / len(kept)) + LRA_REL_GATE_LU
-    final = sorted(level for _, level in kept if level > threshold)
+    levels = _lufs(kept)
+    final = levels[levels > float(_lufs(kept.mean())) + LRA_REL_GATE_LU]
     if len(final) < MIN_PERCENTILE_POINTS:
         return None
-    return _percentile(final, 0.95) - _percentile(final, 0.10)
+    low, high = np.percentile(final, [10, 95])
+    return float(high - low)
 
 
 def true_peak(x: NDArray[np.float64]) -> tuple[float, float]:
@@ -156,7 +149,8 @@ def true_peak(x: NDArray[np.float64]) -> tuple[float, float]:
     return peak, best
 
 
-def _db(value: float) -> float | None:
+def db(value: float) -> float | None:
+    """Linear amplitude in dB, rounded to 0.01; None for zero."""
     return round(20 * math.log10(value), 2) if value > 0 else None
 
 
@@ -169,9 +163,7 @@ def analyze(channels: list[NDArray[np.float64]], rate: int) -> dict[str, Any]:
             f"loudness is limited to {MAX_SECONDS} s of audio per call (this file has {seconds:.0f} s); use skipSeconds or a shorter capture"
         )
     weights, layout = channel_weights(len(channels))
-    per_channel = [sub_block_energies(ch, rate) if w else [] for ch, w in zip(channels, weights, strict=False)]
-    count = min((len(e) for e, w in zip(per_channel, weights, strict=False) if w), default=0)
-    weighted = [float(sum(w * e[i] for e, w in zip(per_channel, weights, strict=False) if w)) for i in range(count)]
+    weighted = np.sum([w * sub_block_energies(ch, rate) for ch, w in zip(channels, weights, strict=False) if w], axis=0)
     momentary = _windows(weighted, MOMENTARY_SUB)
     short = _windows(weighted, SHORT_TERM_SUB)
     value, gating = integrated(momentary)
@@ -181,12 +173,12 @@ def analyze(channels: list[NDArray[np.float64]], rate: int) -> dict[str, Any]:
     tp = max(t for _, t in peaks)
     return {
         "integratedLufs": None if value is None else round(value, 2),
-        "momentaryMaxLufs": round(max(_lufs(e) for e in momentary), 2) if momentary else None,
-        "shortTermMaxLufs": round(max(_lufs(e) for e in short), 2) if short else None,
+        "momentaryMaxLufs": round(float(_lufs(np.max(momentary))), 2) if len(momentary) else None,
+        "shortTermMaxLufs": round(float(_lufs(np.max(short))), 2) if len(short) else None,
         "loudnessRangeLu": None if lra is None else round(lra, 2),
-        "truePeakDbtp": _db(tp),
-        "samplePeakDbfs": _db(sample_peak),
-        "perChannelTruePeakDbtp": [_db(t) for _, t in peaks],
+        "truePeakDbtp": db(tp),
+        "samplePeakDbfs": db(sample_peak),
+        "perChannelTruePeakDbtp": [db(t) for _, t in peaks],
         "gating": gating,
         "channelWeights": weights,
         "channelLayout": layout,
