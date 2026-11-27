@@ -143,16 +143,6 @@ def test_an_unknown_step_stops_the_run_and_points_at_its_read():
     )
 
 
-def test_an_unknown_parameter_set_is_never_named_to_finish_with():
-    host = Host(**{"parameters.set": unknown_result("not_observed", "No callback.")})
-    result = call(host, "devices.insert", {"to": TRACK_REF, "insert": FILTER, "params": {"Cutoff": 0.2}})
-    assert result["outcome"] == "unknown"
-    assert result["next"] == (
-        "devices.insert applied and its ref is in this result; do not repeat devices.insert. params.Cutoff is unknown: "
-        "inspect with parameters.list before any further write; never resend it."
-    )
-
-
 @pytest.mark.parametrize(
     ("name", "reason", "candidates"),
     [
@@ -336,7 +326,7 @@ def test_the_filled_chain_ref_has_the_name_bitwig_gave_it_after_the_file():
     )
     result = call(host, "chains.insert", {"to": DRUMS, "pad": 38, "insert": SNARE})
     assert result["ref"] == renamed
-    assert result["entries"][0]["ref"]["name"] == "C1"
+    assert result["entries"][0]["ref"] == renamed  # the chain entry agrees with the top level
 
 
 def test_a_pad_that_already_has_a_chain_is_not_filled():

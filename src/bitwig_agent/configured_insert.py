@@ -200,9 +200,10 @@ async def modulators_insert(client: Any, args: dict[str, Any], timeout_ms: int) 
 
 
 async def chains_insert(client: Any, args: dict[str, Any], timeout_ms: int) -> dict[str, Any]:
-    """Bitwig renames a chain after the file it is filled with: the filled device's ref carries the chain as read then."""
+    """Bitwig renames a chain after the file it is filled with: the filled device's ref carries the chain as read then,
+    and it replaces the chain entry's earlier ref too."""
     filling = "insert" in args  # insert_then takes it out of args
     result = await insert_then(chain_steps, "chains.insert", client, args, timeout_ms)
     if filling and result["entries"][1]["outcome"] == Outcome.APPLIED:
-        result["ref"] = result["entries"][1]["ref"]["chain"]
+        result["ref"] = result["entries"][0]["ref"] = result["entries"][1]["ref"]["chain"]
     return result
