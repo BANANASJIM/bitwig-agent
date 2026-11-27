@@ -130,7 +130,11 @@ public final class ChainModule implements HostModule {
                 op,
                 target,
                 walk -> {
-                    if (index == 0) requireExpected(request.expect, strip(walk, target));
+                    if (index == 0) {
+                        ChainStrip now = strip(walk, target);
+                        requireExpected(request.expect, now);
+                        preflight(walk.a, now, request);
+                    }
                     port.bind(walk);
                     scheduler.schedule(op, () -> start(op, request, index, port), 0);
                 },
@@ -204,12 +208,52 @@ public final class ChainModule implements HostModule {
             ChainStrip before = strip(walk, chain);
             if (request.solved.isEmpty()) requireExpected(request.expect, before);
             List<String> writes = plan(walk.a, before, request.wanted);
+            List<Boolean> others = writes.contains(SOLO) ? othersSolo(walk, chain) : null;
             if (!writes.isEmpty()) {
                 walk.dispatch();
                 for (String field : writes) apply(walk.a, chain, before, field, request.wanted.get(field));
             }
-            return result(walk, request, chain, strip(walk, chain), writes);
+            boolean othersKept = others == null || others.equals(othersSolo(walk, chain));
+            return result(walk, request, chain, strip(walk, chain), writes, othersKept);
         });
+    }
+
+    /** The solo state of the chain's siblings, in order; a chain without a mixer counts as not soloed. */
+    private static List<Boolean> othersSolo(NativeChains.Walk walk, NativeChains.Chain chain) {
+        List<Boolean> solos = new ArrayList<>();
+        for (Object other : walk.a.chains(chain.owner)) {
+            if (other == chain.chain) continue;
+            NativeChains.Mixer mixer = walk.a.mixer(other);
+            solos.add(mixer != null && mixer.solo);
+        }
+        return solos;
+    }
+
+    /**
+     * Before the first display probe: every asked field must exist on this chain and a solved fader must be writable,
+     * so a call plan() would refuse later never leaves probed values behind.
+     */
+    private static void preflight(NativeChains.Access a, ChainStrip now, Request request) {
+        for (String field : FIELDS) {
+            if (!request.params.has(field)) continue;
+            requirePresent(now, field);
+            boolean solved = request.solves.stream().anyMatch(solve -> solve.field.equals(field));
+            if (solved) requireWritable(a, now, field);
+        }
+    }
+
+    private static void requirePresent(ChainStrip now, String field) {
+        if (now.bare(field).isJsonNull())
+            throw Errors.notApplied(
+                    Reason.UNSUPPORTED_SCOPE,
+                    field.equals(ACTIVE)
+                            ? "Only a Selector's chain can be the active one."
+                            : "The chain has no mixer.");
+    }
+
+    private static void requireWritable(NativeChains.Access a, ChainStrip now, String field) {
+        if (!a.writable(now.parameter(field)))
+            throw Errors.notApplied(Reason.INVALID_TARGET, "The host does not let " + field + " be written now.");
     }
 
     /**
@@ -220,16 +264,9 @@ public final class ChainModule implements HostModule {
         List<String> writes = new ArrayList<>();
         for (Map.Entry<String, JsonElement> entry : wanted.entrySet()) {
             String field = entry.getKey();
-            JsonElement current = now.bare(field);
-            if (current.isJsonNull())
-                throw Errors.notApplied(
-                        Reason.UNSUPPORTED_SCOPE,
-                        field.equals(ACTIVE)
-                                ? "Only a Selector's chain can be the active one."
-                                : "The chain has no mixer.");
-            if (RULES.get(field).matches(entry.getValue(), current)) continue;
-            if ((field.equals(VOLUME) || field.equals(PAN)) && !a.writable(now.parameter(field)))
-                throw Errors.notApplied(Reason.INVALID_TARGET, "The host does not let " + field + " be written now.");
+            requirePresent(now, field);
+            if (RULES.get(field).matches(entry.getValue(), now.bare(field))) continue;
+            if (field.equals(VOLUME) || field.equals(PAN)) requireWritable(a, now, field);
             writes.add(field);
         }
         return writes;
@@ -253,15 +290,24 @@ public final class ChainModule implements HostModule {
         }
     }
 
-    /** Each asked field's outcome against the strip read back; a display-solved field counts its own probes. */
+    /**
+     * Each asked field's outcome against the strip read back; a display-solved field counts its own probes. A solo
+     * that changed another chain's solo does not hold either.
+     */
     private static JsonObject result(
-            NativeChains.Walk walk, Request request, NativeChains.Chain chain, ChainStrip after, List<String> writes) {
+            NativeChains.Walk walk,
+            Request request,
+            NativeChains.Chain chain,
+            ChainStrip after,
+            List<String> writes,
+            boolean othersKept) {
         JsonObject fields = new JsonObject();
         for (String field : FIELDS) {
             if (!request.params.has(field)) continue;
             DisplaySolver.Result solved = request.solved.get(field);
             boolean written = writes.contains(field) || solved != null && solved.dispatched;
-            boolean holds = RULES.get(field).matches(request.wanted.get(field), after.bare(field));
+            boolean holds = RULES.get(field).matches(request.wanted.get(field), after.bare(field))
+                    && (othersKept || !field.equals(SOLO));
             Outcome outcome = !holds ? Outcome.UNKNOWN : written ? Outcome.APPLIED : Outcome.ALREADY_MATCHED;
             fields.add(
                     field,

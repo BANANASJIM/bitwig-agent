@@ -258,6 +258,49 @@ public final class ChainModuleTest {
     }
 
     @Test
+    void aCallPlanWouldRefuseIsRefusedBeforeTheFirstDisplayProbe() {
+        Fixture x = new Fixture();
+        decibels(x.chain(0).volume);
+        assertRpcError(
+                "unsupported_scope",
+                x.fails(
+                        "chains.set",
+                        params("target", x.rack.chainRef(0), "volume", params("display", "-6 dB"), "active", true)));
+        assertEquals(0, x.chain(0).volume.writes, "active on a chain whose device is not a Selector: no probe");
+        x.chain(0).volume.writable = false;
+        assertRpcError(
+                "invalid_target",
+                x.fails("chains.set", params("target", x.rack.chainRef(0), "volume", params("display", "-6 dB"))));
+        assertEquals(0, x.chain(0).volume.writes, "a locked fader is not probed");
+    }
+
+    @Test
+    void aDisplayWriteNeedsAStoppedTransport() {
+        Fixture x = new Fixture();
+        decibels(x.chain(0).volume);
+        x.f.host.transport.child("isPlaying").emit(true);
+        assertRpcError(
+                "unsafe_state",
+                x.fails("chains.set", params("target", x.rack.chainRef(0), "volume", params("display", "-6 dB"))));
+        assertEquals(0, x.chain(0).volume.writes);
+        assertEquals("applied", x.set(0, "volume", .5).get("outcome").getAsString(), "a bare value may be written");
+    }
+
+    @Test
+    void aSoloThatUnsolosOtherChainsIsUnknownReadbackMismatch() {
+        Fixture x = new Fixture();
+        x.f.natives.exclusiveSolo = true;
+        x.chain(1).solo = true;
+        JsonObject result = assertUnknown(
+                "readback_mismatch", x.fails("chains.set", params("target", x.rack.chainRef(0), "solo", true)));
+        assertEquals("unknown", field(result, "solo").get("outcome").getAsString());
+        x.f.natives.exclusiveSolo = false;
+        x.chain(1).solo = true;
+        x.chain(0).solo = false;
+        assertEquals("applied", x.set(0, "solo", true).get("outcome").getAsString(), "siblings kept: applied");
+    }
+
+    @Test
     void anUnreachableFirstDisplayChangesNothing() {
         Fixture x = new Fixture();
         decibels(x.chain(0).volume);

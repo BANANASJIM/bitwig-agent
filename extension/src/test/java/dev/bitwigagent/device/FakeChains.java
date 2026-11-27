@@ -114,6 +114,8 @@ public final class FakeChains implements NativeChains.Access {
     RuntimeException layersBroken;
     /** Solo and Selector writes the host accepts but never carries out. */
     boolean ignoreSwitches;
+    /** A host whose solo unsolos the other chains of the same device. */
+    boolean exclusiveSolo;
     /** New chains the host accepts but never creates. */
     boolean ignoreNewChains;
 
@@ -305,7 +307,12 @@ public final class FakeChains implements NativeChains.Access {
     @Override
     public void solo(Object chain, boolean on) {
         layers();
-        if (!ignoreSwitches) ((Chain) chain).solo = on;
+        if (ignoreSwitches) return;
+        if (exclusiveSolo && on)
+            for (Node root : roots.values())
+                if (root.chains != null && root.chains.contains(chain))
+                    root.chains.forEach(other -> other.solo = false);
+        ((Chain) chain).solo = on;
     }
 
     @Override
