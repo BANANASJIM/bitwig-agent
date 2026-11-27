@@ -345,6 +345,78 @@ def test_an_omitted_velocity_or_duration_is_an_update_of_an_existing_note():
     assert params["notes"] == [{"beat": 0, "pitch": 60, "velocity": 40}]
 
 
+OPERATORS = {
+    "chance": 0.85,
+    "velocitySpread": 0.2,
+    "releaseVelocity": 0,
+    "repeat": {"count": -3, "curve": 0.3, "velocityEnd": -0.4, "velocityCurve": 1},
+    "recurrence": {"length": 4, "mask": [False, False, False, True]},
+    "occurrence": "not_prev_channel",
+    "muted": True,
+    "timbre": -1,
+    "pressure": 1,
+    "pan": 0.5,
+    "gain": 0,
+    "transpose": -96,
+}
+
+
+def test_operators_and_expressions_ride_on_the_note_record_and_null_reaches_the_wire():
+    params, _ = validate_call("notes.set", {"target": CLIP_REF, "notes": [note(**OPERATORS)]})
+    assert params["notes"] == [note(**OPERATORS)]
+    off = dict.fromkeys(OPERATORS)
+    params, _ = validate_call("notes.set", {"target": CLIP_REF, "notes": [{"beat": 0, "pitch": 60, **off}]})
+    assert params["notes"] == [{"beat": 0, "pitch": 60, **off}], "explicit null turns a feature off"
+    partial = {"beat": 0, "pitch": 60, "repeat": {"curve": 0.5}}
+    assert validate_call("notes.set", {"target": CLIP_REF, "notes": [partial]})[0]["notes"] == [partial]
+    insert = {"to": SLOT, "loop": {"length": 4}, "name": "Sketch", "notes": [note(**OPERATORS)]}
+    assert validate_call("clips.insert", insert)[0]["notes"] == [note(**OPERATORS)]
+
+
+def test_under_a_range_a_repeat_needs_its_count_and_without_one_it_may_patch():
+    partial = {"beat": 0, "pitch": 60, "repeat": {"curve": 0.5}}
+    text = message("notes.set", {"target": CLIP_REF, "range": "all", "notes": [partial]})
+    assert "notes[0] repeat is off on this note: give repeat.count to turn it on" in text
+    assert validate_call("notes.set", {"target": CLIP_REF, "notes": [partial]})[0]["notes"] == [partial]
+    counted = {**partial, "repeat": {"count": 3}}
+    assert validate_call("notes.set", {"target": CLIP_REF, "range": "all", "notes": [counted]})[0]["notes"] == [counted]
+
+
+@pytest.mark.parametrize(
+    "feature",
+    [
+        {"chance": 1.01},
+        {"velocitySpread": -0.1},
+        {"releaseVelocity": 128},
+        {"repeat": {"count": 128}},
+        {"repeat": {"count": 1, "curve": 1.5}},
+        {"repeat": {"count": 1, "speed": 2}},
+        {"recurrence": {"length": 9, "mask": [True] * 9}},
+        {"recurrence": {"length": 4, "mask": [True]}},
+        {"recurrence": {"length": 4}},
+        {"occurrence": "sometimes"},
+        {"occurrence": "FIRST"},
+        {"muted": 1},
+        {"timbre": -1.5},
+        {"pressure": -0.1},
+        {"gain": 1.1},
+        {"transpose": 97},
+    ],
+)
+def test_operator_values_outside_bitwigs_ranges_are_refused(feature):
+    with pytest.raises(ValidationError):
+        validate_call("notes.set", {"target": CLIP_REF, "notes": [note(**feature)]})
+
+
+def test_a_new_note_turning_repeats_on_needs_a_count_and_arranger_notes_take_no_operators():
+    insert = {"to": SLOT, "loop": {"length": 4}, "name": "Sketch"}
+    text = message("clips.insert", {**insert, "notes": [note(repeat={"curve": 0.2})]})
+    assert "notes[0] repeat is off on this note: give repeat.count to turn it on" in text
+    arranger = {"to": START, "length": 16, "name": "Verse", "notes": [note(chance=0.5)]}
+    assert reason("clips.insert", arranger) == "unsupported_scope"
+    assert validate_call("clips.insert", {**arranger, "notes": [note()]})[0]["notes"] == [note()]
+
+
 @pytest.mark.parametrize(
     "args",
     [

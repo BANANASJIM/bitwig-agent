@@ -47,6 +47,7 @@ RESULT_NAMES = {
     "deltaDb",
     "onsetResolution",
     "hardwareInputs",
+    "unreadFields",
 }
 
 

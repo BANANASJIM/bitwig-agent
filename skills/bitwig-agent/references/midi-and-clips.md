@@ -7,6 +7,7 @@ Fields, limits and result shapes come from `<path> --help`; this page is the wor
 - Edit the clip the user just recorded
 - Make a new part
 - Variants and edits
+- Loop + operators
 - Build a small sketch
 - Keep candidates independent
 
@@ -37,9 +38,29 @@ Research (finding presets, planning the melody) can run in parallel with prepari
 ## Variants and edits
 
 - Copy, then transform, instead of resending notes: `clips copy`, then `clips transpose`, `clips quantize` or `clips transform` (op doubleContent repeats the content in a doubled loop). The host does each transform; read the result's `compared` before and after counts instead of re-reading notes.
-- Prefer a short loop over writing every repetition, and keep `range` writes small. `notes get` with `exact:false` snaps onsets to cells: quantize recorded takes before editing them on that path.
+- Prefer a short loop over writing every repetition ([loop + operators](#loop--operators)), and keep `range` writes small. `notes get` with `exact:false` snaps onsets to cells: quantize recorded takes before editing them on that path.
 - `clips set` changes one clip's name, color, loop and launch behavior, each field with its own outcome.
 - Scenes: `scenes list`, then `scenes set`, `scenes launch`, `scenes duplicate`, `scenes delete`. A scene launch is not a one-clip audition: it plays every track's slot in that row.
+
+## Loop + operators
+
+Write variation as rules on a short loop, not as more notes. Bitwig plays the rule and rolls the dice; the record keeps the rule, so a read shows what you wrote and a replay is `already_matched`. Never pick random notes or velocities yourself to fake variation.
+
+| Want | Field on the note |
+|---|---|
+| a hat that sometimes drops out | `chance: 0.7` |
+| velocity that varies around its value | `velocitySpread: 0.2` |
+| a ratchet or roll | `repeat: {count: 3, velocityEnd: -0.4}` (`count` is needed to turn repeats on) |
+| a fill only on the last of four passes | `recurrence: {length: 4, mask: [false, false, false, true]}` |
+| only on the first pass, only after the previous note played, only with Fill | `occurrence: "first"`, `"prev"`, `"fill"` |
+| bend, pressure, pan at the note start (native path only) | `transpose: 12`, `pressure: 0.6`, `pan: -0.5` |
+
+1. Make or find a 1- or 2-bar clip with the basic pattern (`clips insert` with `notes`).
+2. Add the operators with `notes set` and no `range`, listing only `beat`, `pitch` (and `channel`) plus the fields: `{"beat":0.5,"pitch":42,"chance":0.7}`. Omitted fields keep their values, so nothing else changes.
+3. Turn one off with `null` (`"chance": null`), not by leaving it out. With `range` a listed note is the whole note: operators it does not name are turned off, so `notes get` the range first and edit that list.
+4. `notes get` lists only operators that are on, so the read is the full rule set. A 1-bar clip with one `recurrence` fill reads as 4 bars of variation.
+
+Without the native note binding (`exact:false`) operators still work, but expressions are refused and not read (`unreadFields`).
 
 ## Build a small sketch
 

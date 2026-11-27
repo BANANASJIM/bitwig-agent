@@ -9,6 +9,7 @@ import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Scheduler;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.TreeMap;
 import java.util.TreeSet;
@@ -19,7 +20,9 @@ import java.util.function.IntConsumer;
  * The note methods without the native binding: the launcher cursor clip's public note grid, 128 steps by 128 keys,
  * read and written one beat at a time on Bitwig's 1/128-beat onset grid, the finest it shows. A cell shows one onset,
  * at its start, with that note's duration, so reads and writes are exact to 1/128 beat and a read written back
- * converges. Every window binds the clip again (selecting it), and every note written is its own Undo step.
+ * converges. Every window binds the clip again (selecting it), and every note written is its own Undo step (each
+ * operator setter one more). Operators are read and written through the note step; expressions are not read (the
+ * step's getters do not return what its setters take), so notes.get omits them and notes.set refuses them here.
  */
 final class PublicNotes {
     static final int STEPS = 128;
@@ -217,12 +220,18 @@ final class PublicNotes {
     private static final class Cell {
         final int channel, x, pitch;
         final Note note; // null: clear
+        /** Whether the cell is set with setStep: a new note, or one whose velocity or duration changes. */
+        final boolean set;
+        /** Whether its operators are set through the note step: a plain note that was plain needs none. */
+        final boolean operators;
 
-        Cell(Note at, Note note) {
+        Cell(Note at, Note note, boolean set, boolean operators) {
             this.channel = at.channel;
             this.x = (int) (at.beat % BEAT / CELL);
             this.pitch = at.pitch;
             this.note = note;
+            this.set = set;
+            this.operators = operators;
         }
     }
 
@@ -238,9 +247,17 @@ final class PublicNotes {
             Consumer<JsonObject> done) {
         TreeMap<Long, List<Cell>> byBeat = new TreeMap<>();
         for (Note n : change.remove)
-            byBeat.computeIfAbsent(n.beat / BEAT, k -> new ArrayList<>()).add(new Cell(n, null));
-        for (Note n : change.written())
-            byBeat.computeIfAbsent(n.beat / BEAT, k -> new ArrayList<>()).add(new Cell(n, n));
+            byBeat.computeIfAbsent(n.beat / BEAT, k -> new ArrayList<>()).add(new Cell(n, null, false, false));
+        for (Note n : change.insert)
+            byBeat.computeIfAbsent(n.beat / BEAT, k -> new ArrayList<>())
+                    .add(new Cell(n, n, true, !n.features.equals(NoteFeatures.NONE)));
+        for (RangeEdit.Update<Note> u : change.update) {
+            boolean set = u.before.velocity != u.after.velocity || u.before.duration != u.after.duration;
+            boolean operators =
+                    !u.before.features.equals(NoteFeatures.NONE) || !u.after.features.equals(NoteFeatures.NONE);
+            byBeat.computeIfAbsent(u.after.beat / BEAT, k -> new ArrayList<>())
+                    .add(new Cell(u.after, u.after, set, operators));
+        }
         List<NoteGrid.Window> touched = fine(byBeat.navigableKeySet());
         walk(
                 op,
@@ -264,9 +281,10 @@ final class PublicNotes {
     }
 
     /**
-     * Writes one bound window's cells and polls until the window's whole content (every onset with its velocity and
-     * duration, every channel) equals {@code expected}; {@code finish} gets null then, else the mismatch at the
-     * deadline.
+     * Writes one bound window's cells and polls until the window's whole content (every onset with its velocity,
+     * duration and operators, every channel) equals {@code expected}; {@code finish} gets null then, else the mismatch
+     * at the deadline. A written note's operators are set through its step once the step shows the note's velocity and
+     * duration (a cell set with setStep shows the new note only after the host answers).
      */
     private void writeWindow(
             HostOperation op,
@@ -276,10 +294,14 @@ final class PublicNotes {
             List<Note> expected,
             Consumer<JsonObject> finish) {
         op.markDispatched();
+        List<Cell> pending = new ArrayList<>();
         for (Cell c : cells) {
             state.cursorGuard(op, target);
             if (c.note == null) state.clip.clearStep(c.channel, c.x, c.pitch);
-            else state.clip.setStep(c.channel, c.x, c.pitch, c.note.velocity, c.note.durationValue());
+            else {
+                if (c.set) state.clip.setStep(c.channel, c.x, c.pitch, c.note.velocity, c.note.durationValue());
+                if (c.operators) pending.add(c);
+            }
         }
         HashSet<Note> wanted = new HashSet<>(expected);
         scheduler.schedule(
@@ -289,11 +311,71 @@ final class PublicNotes {
                         state.until(op),
                         () -> {
                             state.cursorGuard(op, target);
+                            setOperators(pending, w);
                             List<Note> actual = onsets(w);
                             return actual.size() == wanted.size() && wanted.containsAll(actual);
                         },
                         ok -> finish.accept(ok ? null : NoteModule.mismatch(expected, onsets(w)))),
                 Scheduler.POLL_MS);
+    }
+
+    /** Sets the operators of each pending cell whose step shows its note's velocity and duration. */
+    private void setOperators(List<Cell> pending, NoteGrid.Window w) {
+        for (Iterator<Cell> it = pending.iterator(); it.hasNext(); ) {
+            Cell c = it.next();
+            NoteStep step = readable(c.channel, c.x, c.pitch);
+            if (!NoteGrid.hasState(step, "NoteOn")) continue;
+            Note shown = Note.read(c.channel, c.pitch, (w.start + c.x) * w.size, step.duration(), step.velocity());
+            if (shown.velocity != c.note.velocity || shown.duration != c.note.duration) continue;
+            write(step, c.note.features);
+            it.remove();
+        }
+    }
+
+    /** The operators a note step shows. */
+    static NoteFeatures features(NoteStep s) {
+        NoteFeatures.Builder b = new NoteFeatures.Builder();
+        if (s.isChanceEnabled()) b.chance = s.chance();
+        b.velocitySpread = s.velocitySpread();
+        b.releaseVelocity = Note.releaseMidi(s.releaseVelocity());
+        if (s.isRepeatEnabled())
+            b.repeat = new NoteFeatures.Repeat(
+                    s.repeatCount(), s.repeatCurve(), s.repeatVelocityEnd(), s.repeatVelocityCurve());
+        if (s.isRecurrenceEnabled())
+            b.recurrence = new NoteFeatures.Recurrence(s.recurrenceLength(), s.recurrenceMask());
+        if (s.isOccurrenceEnabled()) b.occurrence = s.occurrence();
+        b.muted = s.isMuted();
+        return b.build();
+    }
+
+    /**
+     * Sets a note step's operators to {@code f}; the step's setters skip a value it already shows. An operator that is
+     * off gets its neutral value when its switch is on (Bitwig's new-note state), and is left alone when it is off.
+     */
+    static void write(NoteStep s, NoteFeatures f) {
+        if (f.chance != null) {
+            s.setIsChanceEnabled(true);
+            s.setChance(f.chance);
+        } else if (s.isChanceEnabled()) s.setChance(1);
+        s.setVelocitySpread(f.velocitySpread);
+        s.setReleaseVelocity(f.releaseVelocity / 127.0);
+        if (f.repeat != null) {
+            s.setIsRepeatEnabled(true);
+            s.setRepeatCount(f.repeat.count);
+            s.setRepeatCurve(f.repeat.curve);
+            s.setRepeatVelocityEnd(f.repeat.velocityEnd);
+            s.setRepeatVelocityCurve(f.repeat.velocityCurve);
+        } else if (s.isRepeatEnabled()) s.setRepeatCount(0);
+        if (f.recurrence != null) {
+            s.setIsRecurrenceEnabled(true);
+            s.setRecurrence(f.recurrence.length, f.recurrence.mask);
+        } else if (s.isRecurrenceEnabled())
+            s.setRecurrence(NoteFeatures.Recurrence.ALWAYS.length, NoteFeatures.Recurrence.ALWAYS.mask);
+        if (f.occurrence != null) {
+            s.setIsOccurrenceEnabled(true);
+            s.setOccurrence(f.occurrence);
+        } else if (s.isOccurrenceEnabled()) s.setOccurrence(com.bitwig.extension.controller.api.NoteOccurrence.ALWAYS);
+        s.setIsMuted(f.muted);
     }
 
     /** Walks {@code windows} in order, binding each; stops early when too little time is left for the next. */
@@ -341,7 +423,8 @@ final class PublicNotes {
                 for (int pitch = 0; pitch < 128; pitch++) {
                     NoteStep step = readable(c, x, pitch);
                     if (NoteGrid.hasState(step, "NoteOn"))
-                        out.add(Note.read(c, pitch, (w.start + x) * w.size, step.duration(), step.velocity()));
+                        out.add(Note.read(
+                                c, pitch, (w.start + x) * w.size, step.duration(), step.velocity(), features(step)));
                 }
         return out;
     }
