@@ -14,7 +14,7 @@ MAX_CALLS = 1024
 
 class BatchCall(StrictModel):
     method: Nonempty = Field(description="A write method, e.g. tracks.set.")
-    params: dict[str, Any] = omitted(description="That method's arguments; omit for none.")
+    params: dict[str, Any] = omitted(description="That method's arguments; omit for none. MCP takes no timeoutMs here.")
 
 
 class BatchArgs(StatusArgs):

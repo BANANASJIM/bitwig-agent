@@ -12,6 +12,7 @@ from fakes import execute_cli as execute
 from pydantic import ValidationError
 
 from bitwig_agent.core import views
+from bitwig_agent.core.invoke import Result
 from bitwig_agent.frontends import cli
 from bitwig_agent.frontends.cli import main
 from bitwig_agent.protocol import TOOLS, invalid_params_message, validate_call
@@ -1285,3 +1286,19 @@ async def test_batch_refuses_more_lines_than_one_batch_takes(host, monkeypatch):
     assert (out.code, out.stdout) == (2, "")
     assert "calls" in json.loads(out.stderr)["message"]
     assert host.connections == 0
+
+
+def test_ctrl_c_in_a_batch_names_the_call_in_flight_and_counts_only_calls_that_ran():
+    progress = cli.Progress(emit=lambda line: None)
+    rows = cli.BatchRows([1, 2, 3], ["tracks.set", "transport.set", "transport.set"], progress)
+    rows.start(0)
+    assert progress.inflight == "tracks.set"
+    rows.put(Result({"outcome": "applied", "verification": "api_readback"}))
+    rows.start(1)
+    unknown = json.loads(cli.interrupted(progress).stdout)
+    assert (unknown["method"], unknown["next"]) == ("transport.set", "transport.get")
+    assert "1 call(s) finished" in unknown["message"]
+    rows.put(Result({"outcome": "not_applied", "reason": "limit_reached"}))
+    rows.put(Result({"outcome": "not_applied", "reason": "not_reached"}))
+    assert (progress.inflight, progress.completed) == (None, 2)
+    assert "no write was in flight" in json.loads(cli.interrupted(progress).stderr)["message"]

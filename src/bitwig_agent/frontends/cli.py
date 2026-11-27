@@ -509,6 +509,7 @@ class BatchRows:
     """The core batch as rows while it runs: a result line on stdout, an error on stderr naming its input line."""
 
     numbers: list[int]
+    methods: list[str]
     progress: Progress
     stderr: str = ""
     seen: int = 0
@@ -517,11 +518,15 @@ class BatchRows:
     verdict: Envelope | None = None
     """The stopping call's envelope, else the last one: it sets the exit code."""
 
+    def start(self, index: int) -> None:
+        self.progress.inflight = self.methods[index]
+
     def put(self, envelope: Envelope) -> None:
         index, self.seen = self.seen, self.seen + 1
-        if self.verdict is None or not self.verdict.failed:
+        if self.verdict is None or not self.verdict.failed:  # a call that ran, not a not_reached row
             self.ran, self.verdict = index, envelope
-        self.progress.completed += 1
+            self.progress.inflight = None
+            self.progress.completed += 1
         if isinstance(envelope, Error):
             self.stderr = failure(at_line(self.numbers[index], envelope)).stderr
         else:
@@ -537,13 +542,11 @@ async def batch(rest: list[str], inputs: Inputs, progress: Progress) -> Output:
     shape = check("batch", {"calls": calls})
     if shape is not None:
         return failure(shape)
-    rows = BatchRows([number for number, _, _ in numbered], progress)
-    progress.inflight = "batch"
+    rows = BatchRows([number for number, _, _ in numbered], [method for _, method, _ in numbered], progress)
     try:
-        envelope = await core_batch.run(calls, emit=rows.put)
+        envelope = await core_batch.run(calls, emit=rows.put, start=rows.start)
     except BrokenPipeError:
         return pipe_closed(calls[rows.ran]["method"], rows.numbers[rows.ran])
-    progress.inflight = None
     if isinstance(envelope, Error):  # refused before anything ran: the first refused line, as one error
         index, error = next((i, e) for i, e in enumerate(envelope.error["entries"]) if "code" in e)
         return failure(at_line(rows.numbers[index], Error(error)))

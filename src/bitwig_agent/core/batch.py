@@ -16,6 +16,7 @@ from bitwig_agent.errors import NOT_REACHED, BridgeError, bridge_error, not_appl
 from bitwig_agent.protocol.base import REASONS, ErrorCode, Outcome, shared_verification, worst
 
 Emit = Callable[["call_path.Envelope"], None]
+Start = Callable[[int], None]
 
 UNBATCHABLE = {
     "batch": "batch cannot contain batch: put its calls in this one",
@@ -64,13 +65,19 @@ def remaining(calls: Sequence[Mapping[str, Any]], stop: int) -> str:
 
 
 def next_hint(calls: Sequence[Mapping[str, Any]], stop: int, stopped: Mapping[str, Any]) -> str:
-    """What to do after the stop: the calls before it are done; inspect or fix the stop, resend only what is left."""
+    """What to do after the stop: the stopping call's own next when it has one (a composed call that already created
+    something says not to repeat it), else fix or inspect it; the calls after it were not run."""
     method, left = calls[stop]["method"], remaining(calls, stop)
-    if stopped["outcome"] == Outcome.UNKNOWN:
-        inspect = stopped.get("next", "Inspect the real state before any further write.")
-        return f"Call {stop + 1} ({method}) is unknown: {inspect} Never resend it." + (
-            f" Then send only {left}." if left else ""
+    unknown = stopped["outcome"] == Outcome.UNKNOWN
+    never = " Never resend it." if unknown else ""
+    if "next" in stopped:
+        not_run = (
+            f" {left[0].upper()}{left[1:]} {'was' if left.startswith('call ') else 'were'} not run." if left else ""
         )
+        return f"Call {stop + 1} ({method}) stopped: {stopped['next']}{never}{not_run}"
+    if unknown:
+        then = f" Then send only {left}." if left else ""
+        return f"Call {stop + 1} ({method}) is unknown: inspect the real state before any further write.{never}{then}"
     with_rest = f" with {left}" if left else ""
     return f"Call {stop + 1} ({method}) was not applied: fix it and send it again{with_rest}; the calls before it are done."
 
@@ -95,8 +102,11 @@ def report(calls: Sequence[Mapping[str, Any]], envelopes: list[call_path.Envelop
     return result | {"entries": entries}
 
 
-async def run(calls: Sequence[Mapping[str, Any]], client: Any = None, emit: Emit | None = None) -> call_path.Envelope:
-    """The batch's envelope; emit (a front end streaming rows) sees each call's envelope as it finishes."""
+async def run(
+    calls: Sequence[Mapping[str, Any]], client: Any = None, emit: Emit | None = None, start: Start | None = None
+) -> call_path.Envelope:
+    """The batch's envelope. A front end streaming rows gets start(index) as a call is sent and emit(envelope) for
+    every row as it is final, the not_reached ones included."""
     refusals = [refusal(call["method"], call.get("params", {})) for call in calls]
     if any(why is not None for why in refusals):
         return refused(calls, refusals)
@@ -105,11 +115,26 @@ async def run(calls: Sequence[Mapping[str, Any]], client: Any = None, emit: Emit
         if envelopes and envelopes[-1].failed:
             envelope: call_path.Envelope = call_path.Result(dict(NOT_REACHED))
         else:
+            if start is not None:
+                start(len(envelopes))
             envelope = await call_path.invoke(call["method"], call.get("params", {}), client)
         envelopes.append(envelope)
         if emit is not None:
             emit(envelope)
     return call_path.Result(report(calls, envelopes))
+
+
+def refuse_call_timeouts(args: Mapping[str, Any]) -> call_path.Error | None:
+    """For a front end that leaves every wait to the method's default (MCP): a call's own timeoutMs is refused too."""
+    calls = args.get("calls")
+    for index, call in enumerate(calls if isinstance(calls, list) else []):
+        params = call.get("params") if isinstance(call, dict) else None
+        if isinstance(params, dict) and "timeoutMs" in params:
+            return call_path.invalid_params_error(
+                f"Call {index + 1} ({call.get('method')}): timeoutMs is not accepted here; each call waits for its "
+                "method's default"
+            )
+    return None
 
 
 async def handle(client: Any, args: dict[str, Any], timeout_ms: int) -> dict[str, Any]:

@@ -5,6 +5,7 @@ import itertools
 from typing import Any
 
 import pytest
+import test_configured_insert
 
 from bitwig_agent.core import batch
 from bitwig_agent.core.invoke import Error, invoke
@@ -142,9 +143,42 @@ def test_the_next_hint_names_what_is_done_and_what_is_left():
         "Call 2 (transport.set) was not applied: fix it and send it again with calls 3-4; the calls before it are done."
     )
     assert hint(["unknown", "native"]) == (
-        "Call 1 (transport.set) is unknown: Inspect with transport.get. Never resend it. Then send only call 2."
+        "Call 1 (transport.set) stopped: Inspect with transport.get. Never resend it. Call 2 was not run."
     )
     assert hint(["error"]).endswith("fix it and send it again; the calls before it are done.")
+
+
+def test_an_unknown_call_without_its_own_next_is_inspected_and_never_resent():
+    result = batch.report([WRITE, WRITE, WRITE], [batch.call_path.Result({"outcome": "unknown", "reason": "deadline"})])
+    assert result["next"] == (
+        "Call 1 (transport.set) is unknown: inspect the real state before any further write. Never resend it. "
+        "Then send only calls 2-3."
+    )
+
+
+def test_a_stopping_insert_that_already_created_its_device_is_never_resent():
+    refused = bridge_error("unsupported_unit", "Cutoff shows a text display.")
+    host = test_configured_insert.Host(**{"parameters.set": [refused]})
+    insert = {"to": EXAMPLE_TRACK, "insert": test_configured_insert.FILTER, "params": {"Cutoff": {"display": "LP"}}}
+    calls = [{"method": "devices.insert", "params": insert}, WRITE, WRITE]
+    envelope = batch_call(host, {"calls": calls})
+    assert not isinstance(envelope, Error)
+    hint = envelope.result["next"]
+    assert hint.startswith("Call 1 (devices.insert) stopped: The insert applied")
+    assert "do not repeat devices.insert" in hint
+    assert "send it again" not in hint
+    assert hint.endswith("Calls 2-3 were not run.")
+    assert envelope.result["entries"][0]["ref"] == test_configured_insert.NEW_DEVICE
+    assert [method for method, _ in host.calls] == ["devices.insert", "parameters.list", "parameters.set"]
+
+
+def test_mcp_refuses_a_timeout_inside_a_call_and_takes_malformed_calls_to_validation():
+    refused = batch.refuse_call_timeouts({"calls": [WRITE, {"method": "tracks.set", "params": {"timeoutMs": 1000}}]})
+    assert refused is not None
+    assert refused.error["code"] == "invalid_params"
+    assert refused.error["message"].startswith("Call 2 (tracks.set): timeoutMs is not accepted")
+    for args in ({"calls": [WRITE]}, {"calls": "x"}, {"calls": [1, {"params": 2}]}, {}):
+        assert batch.refuse_call_timeouts(args) is None
 
 
 def test_a_batch_of_dry_runs_carries_no_outcome():
@@ -193,6 +227,11 @@ async def test_mcp_batch_tool_runs_writes_in_order_and_returns_one_entry_each(mc
     assert result["entries"][3] == NOT_REACHED
     assert (result["outcome"], result["reason"]) == ("unknown", "not_observed")
     assert [r["method"] for r in host.requests] == ["tracks.set", "transport.set", "transport.set"]
+
+    timed = await mcp_session.call_tool("batch", {"calls": [{**WRITE, "params": {"playing": False, "timeoutMs": 900}}]})
+    assert timed.is_error is True
+    assert timed.structured_content["code"] == "invalid_params"
+    assert "timeoutMs" in timed.structured_content["message"]
 
     refused = await mcp_session.call_tool("batch", {"calls": [WRITE, {"method": "tracks.list"}]})
     assert refused.is_error is True
