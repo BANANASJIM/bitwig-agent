@@ -135,7 +135,7 @@ public final class ProjectModule implements HostModule, JobsModule.Source {
             return;
         }
         if (Boolean.FALSE.equals(projectState.modified())) {
-            JsonObject done = Results.outcome(Outcome.ALREADY_MATCHED);
+            JsonObject done = Results.alreadyMatched();
             done.addProperty("projectModified", false);
             op.result.complete(done);
             return;
@@ -153,7 +153,7 @@ public final class ProjectModule implements HostModule, JobsModule.Source {
 
     private void activateEngine(HostOperation op) {
         if (projectState.engineActive()) {
-            JsonObject done = Results.outcome(Outcome.ALREADY_MATCHED);
+            JsonObject done = Results.alreadyMatched();
             done.addProperty("engineActive", true);
             op.result.complete(done);
             return;
@@ -172,7 +172,7 @@ public final class ProjectModule implements HostModule, JobsModule.Source {
     private void awaitEngine(HostOperation op) {
         scheduler.poll(op, scheduler.deadlineUntil(op), projectState::engineActive, done -> {
             if (done) {
-                JsonObject result = Results.outcome(Outcome.APPLIED);
+                JsonObject result = Results.outcome(Outcome.APPLIED, Verification.API_READBACK);
                 result.addProperty("engineActive", true);
                 op.result.complete(result);
                 return;
@@ -193,7 +193,7 @@ public final class ProjectModule implements HostModule, JobsModule.Source {
                 () -> projectState.modifiedSequence() > before && Boolean.FALSE.equals(projectState.modified()),
                 done -> {
                     if (done) {
-                        JsonObject result = Results.outcome(Outcome.APPLIED);
+                        JsonObject result = Results.outcome(Outcome.APPLIED, Verification.API_READBACK);
                         result.addProperty("projectModified", false);
                         op.result.complete(result);
                         return;
@@ -227,7 +227,7 @@ public final class ProjectModule implements HostModule, JobsModule.Source {
         result.addProperty(
                 "binding",
                 "exact_" + NativeHost.SUPPORTED + "_hash_gated_save_project_pipeline_with_native_completion_callback");
-        Verification.FILE_READBACK.put(result);
+        Results.readBy(result, Verification.FILE_READBACK);
         return result;
     }
 
@@ -355,8 +355,7 @@ public final class ProjectModule implements HostModule, JobsModule.Source {
         }
         JsonObject result;
         if (done && saveObserved(current.plan)) {
-            result = Results.outcome(Outcome.APPLIED);
-            Verification.FILE_READBACK.put(result);
+            result = Results.outcome(Outcome.APPLIED, Verification.FILE_READBACK);
         } else {
             result = JobsModule.deadline(
                     current.id,
@@ -406,7 +405,7 @@ public final class ProjectModule implements HostModule, JobsModule.Source {
             Outcome outcome = failure != null
                     ? current.refused ? Outcome.NOT_APPLIED : Outcome.UNKNOWN
                     : saveObserved(current.plan) ? Outcome.APPLIED : Outcome.UNKNOWN;
-            row.addProperty("outcome", outcome.wire());
+            Results.stamp(row, outcome, Verification.FILE_READBACK);
             if (failure != null) {
                 row.addProperty("reason", (current.refused ? Reason.HOST_REFUSED : Reason.JOB_FAILED).wire());
                 row.addProperty("failure", failure);

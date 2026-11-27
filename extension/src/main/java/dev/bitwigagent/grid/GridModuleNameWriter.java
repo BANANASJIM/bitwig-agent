@@ -98,7 +98,8 @@ public final class GridModuleNameWriter {
                             Reason.TARGET_CHANGED,
                             "Native effective module name changed during later graph observation.");
                 check.run();
-                JsonObject result = Results.outcome(changed ? Outcome.APPLIED : Outcome.ALREADY_MATCHED);
+                JsonObject result = Results.outcome(
+                        changed ? Outcome.APPLIED : Outcome.ALREADY_MATCHED, Verification.NATIVE_READBACK);
                 result.addProperty("moduleId", moduleId.toString());
                 result.addProperty("operation", "rename");
                 result.addProperty("previousCustomName", previous.custom);
@@ -111,7 +112,6 @@ public final class GridModuleNameWriter {
                 result.addProperty("mutationDispatched", changed);
                 result.addProperty("nativeMutation", changed);
                 result.addProperty("nativeUndo", changed);
-                Verification.NATIVE_READBACK.put(result);
                 result.addProperty(
                         "nativeUndoScope",
                         changed

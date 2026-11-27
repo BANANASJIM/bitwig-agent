@@ -144,7 +144,7 @@ public final class MixModule implements HostModule {
             op.markDispatched();
             target.state.track.selectInEditor();
             guard(op, target);
-            JsonObject result = Results.outcome(Outcome.SENT);
+            JsonObject result = Results.sent();
             result.add("ref", ref(target));
             op.result.complete(result);
             return;
@@ -304,7 +304,8 @@ public final class MixModule implements HostModule {
         JsonObject out = new JsonObject();
         if (current) out.add("ref", ref(target));
         boolean restored = (!result.dispatched || result.restored) && earlierRestored;
-        out.addProperty("outcome", (restored && current ? Outcome.NOT_APPLIED : Outcome.UNKNOWN).wire());
+        if (restored && current) Results.notApplied(out);
+        else Results.unknown(out);
         out.addProperty("reason", result.reason.wire());
         out.addProperty("otherFieldsApplied", !earlierRestored);
         out.add("displayWrite", target.displayWrite);
@@ -769,16 +770,19 @@ public final class MixModule implements HostModule {
             long sequence,
             boolean matched,
             boolean solved) {
-        if (!current) return Results.field(requested, observed, Outcome.UNKNOWN, Reason.TARGET_CHANGED);
-        if (before == null) return Results.field(requested, observed, Outcome.NOT_APPLIED, Reason.NOT_REACHED);
+        if (!current) return Results.unknownField(requested, observed, Reason.TARGET_CHANGED);
+        if (before == null) return Results.notAppliedField(requested, observed, Reason.NOT_REACHED);
         if (!matched)
-            return Results.field(
+            return Results.unknownField(
                     requested,
                     observed,
-                    Outcome.UNKNOWN,
                     before != -1 && sequence <= before ? Reason.NOT_OBSERVED : Reason.READBACK_MISMATCH);
         return Results.field(
-                requested, observed, before == -1 && !solved ? Outcome.ALREADY_MATCHED : Outcome.APPLIED, null);
+                requested,
+                observed,
+                before == -1 && !solved ? Outcome.ALREADY_MATCHED : Outcome.APPLIED,
+                null,
+                Verification.API_READBACK);
     }
 
     /** The result's outcome is its worst field's; {@code reason} (a failure that stopped the writes) outranks the fields'. */
@@ -792,9 +796,8 @@ public final class MixModule implements HostModule {
                 why = field.get("reason").getAsString();
             worst = worst.worst(outcome);
         }
-        result.addProperty("outcome", worst.wire());
+        Results.stamp(result, worst, fields.asMap().values());
         if (!worst.succeeded()) result.addProperty("reason", reason != null ? reason.wire() : why);
-        if (worst == Outcome.APPLIED) Verification.API_READBACK.put(result);
     }
 
     /** Compact identity row for context.get (null fields when unobserved); never selects. */

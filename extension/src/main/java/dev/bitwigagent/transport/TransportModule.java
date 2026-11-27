@@ -345,13 +345,12 @@ public final class TransportModule implements HostModule {
                 outcome = Outcome.UNKNOWN;
                 why = Reason.READBACK_MISMATCH;
             }
-            fields.add(key, Results.field(p.get(key), actual.value, outcome, why));
+            fields.add(key, Results.field(p.get(key), actual.value, outcome, why, Verification.API_READBACK));
             if (outcome.compareTo(worst) > 0 && why != null) worstReason = why;
             worst = worst.worst(outcome);
         }
-        result.addProperty("outcome", worst.wire());
+        Results.stamp(result, worst, fields.asMap().values());
         if (!worst.succeeded()) result.addProperty("reason", (reason != null ? reason : worstReason).wire());
-        if (worst == Outcome.APPLIED) Verification.API_READBACK.put(result);
         nest(fields);
         result.add("fields", fields);
         if (request.silentEngine)

@@ -257,12 +257,11 @@ public final class NativeArrangerAccess implements ArrangerModule.Access {
 
     private JsonObject written(Outcome outcome, Lane lane, String op, Object clip, JsonObject previous) {
         List<Object> after = lane.clips();
-        JsonObject out = result(Results.outcome(outcome), lane, after);
+        JsonObject out = result(Results.outcome(outcome, Verification.NATIVE_READBACK), lane, after);
         out.addProperty("op", op);
         int index = clip == null ? -1 : after.indexOf(clip);
         out.add("clip", index < 0 ? JsonNull.INSTANCE : describe(clip, index));
         if (previous != null) out.add("previous", previous);
-        Verification.NATIVE_READBACK.put(out);
         out.addProperty("nativeUndo", true);
         out.addProperty("undoGroupingVerified", false);
         return out;

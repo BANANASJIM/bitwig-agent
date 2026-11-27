@@ -11,6 +11,7 @@ from bitwig_agent.grid.read import label_of
 from bitwig_agent.grid.spec import Spec
 from bitwig_agent.grid.wiring import WiringPlan
 from bitwig_agent.protocol import TOOLS
+from bitwig_agent.protocol.base import Verification
 
 PHASES = ("voicing", "delete", "premove", "insert", "rename", "move", "params", "connections")
 APPLIED_COUNTS = ("inserted", "renamed", "moved", "paramsWritten", "connections", "disconnected", "deleted")
@@ -60,9 +61,10 @@ class Ledger:
             | notes
         )
 
-    def report(self, outcome: str) -> dict[str, Any]:
+    def report(self, outcome: str, verification: Verification | None = None) -> dict[str, Any]:
         base = {
             "outcome": outcome,
+            **({"verification": verification} if outcome == "applied" and verification else {}),
             "applied": self.applied,
             "alreadyMatched": self.matched,
             "steps": self.steps,

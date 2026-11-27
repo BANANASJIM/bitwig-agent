@@ -30,6 +30,7 @@ from bitwig_agent.audio import pipewire
 from bitwig_agent.core import composed
 from bitwig_agent.errors import BridgeError, HostChanged, bridge_error, unknown_result
 from bitwig_agent.protocol import CLIENT_SIDE, TOOLS, validate_call
+from bitwig_agent.protocol.base import leaf_rule_holds
 
 REAL_RUN = pipewire.run
 
@@ -210,6 +211,8 @@ def test_capture_from_start_orders_transport_and_reports_levels(tmp_path, monkey
     assert "bwtest.monitor" not in spawned[0]
     assert "@DEFAULT_MONITOR@" not in spawned[0]
     assert result["source"]["ports"] == ["Bitwig Studio:out1", "Bitwig Studio:out2"]
+    assert result["verification"] == "file_readback"
+    assert leaf_rule_holds(result)
     assert bridge.calls == [
         ("status", {}),
         ("context.get", {}),
@@ -582,9 +585,32 @@ def test_bands_key_chroma_and_spectrogram(tmp_path):
 def test_route_outcomes(pw):
     assert "outcome" not in route("status")
     assert route("restore")["outcome"] == "already_matched"
-    assert route("silent")["outcome"] == "applied"
+    silent = route("silent")
+    assert (silent["outcome"], silent["verification"]) == ("applied", "system_readback")
+    assert leaf_rule_holds(silent)
     assert route("silent")["outcome"] == "already_matched"
-    assert route("restore")["outcome"] == "applied"
+    restore = route("restore")
+    assert (restore["outcome"], restore["verification"]) == ("applied", "system_readback")
+
+
+def test_links_that_do_not_read_back_as_requested_are_unknown(pw, monkeypatch):
+    real = pw.run
+
+    def ignored(args, timeout=5.0):  # pw-link reports success but the link never appears
+        return (0, "", "") if args[0] == "pw-link" and args[1] not in ("-l", "-o", "-i", "-d") else real(args, timeout)
+
+    monkeypatch.setattr(pipewire, "run", ignored)
+    silent = route("silent")
+    assert (silent["outcome"], silent["reason"]) == ("unknown", "readback_mismatch")
+    assert "verification" not in silent
+    monkeypatch.setattr(pipewire, "run", real)
+    route("silent")  # a restore whose disconnect is silently refused keeps its saved state
+    monkeypatch.setattr(
+        pipewire, "run", lambda args, timeout=5.0: (0, "", "") if args[:2] == ["pw-link", "-d"] else real(args, timeout)
+    )
+    restore = route("restore")
+    assert (restore["outcome"], restore["reason"]) == ("unknown", "readback_mismatch")
+    assert pipewire.state_path().exists()
 
 
 def test_failed_or_timed_out_pw_link_is_unknown_not_an_error(pw, monkeypatch):

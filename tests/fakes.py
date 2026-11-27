@@ -183,6 +183,7 @@ class FakeGrid:
                 {
                     "typeId": spec["typeId"],
                     "outcome": "applied",
+                    "verification": "native_readback",
                     "moduleId": iid,
                     "actualPosition": {"x": spec["x"] + self.shift, "y": spec["y"]},
                 }
@@ -190,6 +191,7 @@ class FakeGrid:
             added.append(self.row(self.mods[iid], False))
         return {
             "outcome": "applied" if cap >= len(p["modules"]) else "not_applied",
+            **({"verification": "native_readback"} if cap >= len(p["modules"]) else {}),
             "modules": entries,
             "modulesAdded": added,
         }
@@ -199,7 +201,7 @@ class FakeGrid:
         if m["customName"] != p["expectedCustomName"]:
             raise bridge_error("target_changed", "name changed")
         m["customName"] = m["name"] = p["customName"]
-        return {"outcome": "applied", "operation": "rename"}
+        return {"outcome": "applied", "verification": "native_readback", "operation": "rename"}
 
     def h_modules_move(self, p):
         m = self.mods[p["moduleId"]]
@@ -213,12 +215,17 @@ class FakeGrid:
             ):
                 raise bridge_error("overlap", "occupied anchor")
         m["x"], m["y"] = p["x"], p["y"]
-        return {"outcome": "applied", "operation": "move", "actualPosition": {"x": p["x"], "y": p["y"]}}
+        return {
+            "outcome": "applied",
+            "verification": "native_readback",
+            "operation": "move",
+            "actualPosition": {"x": p["x"], "y": p["y"]},
+        }
 
     def h_modules_delete(self, p):
         self.mods.pop(p["moduleId"])
         self.conns = {k: v for k, v in self.conns.items() if p["moduleId"] not in (k[0], v[0])}
-        return {"outcome": "applied", "operation": "delete", "removed": True}
+        return {"outcome": "applied", "verification": "native_readback", "operation": "delete", "removed": True}
 
     def h_parameters_set(self, p):
         entries = []
@@ -230,7 +237,14 @@ class FakeGrid:
                 if [values.f32(x) for x in par["value"][:n]] != [values.f32(x) for x in w["expectedValues"]]:
                     raise bridge_error("target_changed", "stale")
                 par["value"][: len(w["values"])] = [values.f32(x) for x in w["values"]]
-                entries.append({"moduleId": w["moduleId"], "parameterId": w["parameterId"], "outcome": "applied"})
+                entries.append(
+                    {
+                        "moduleId": w["moduleId"],
+                        "parameterId": w["parameterId"],
+                        "outcome": "applied",
+                        "verification": "native_readback",
+                    }
+                )
                 continue
             if (par["kind"], par["value"]) != (w["expectedKind"], w["expectedValue"]):
                 raise bridge_error("target_changed", "stale")
@@ -248,10 +262,11 @@ class FakeGrid:
                     "moduleId": w["moduleId"],
                     "parameterId": w["parameterId"],
                     "outcome": "applied",
+                    "verification": "native_readback",
                     "display": par["display"],
                 }
             )
-        return {"outcome": "applied", "written": len(entries), "writes": entries}
+        return {"outcome": "applied", "verification": "native_readback", "written": len(entries), "writes": entries}
 
     def h_transport_get(self, p):
         return {**self.transport}
@@ -273,7 +288,13 @@ class FakeGrid:
         if any(self.voicing[k] != v for k, v in p["expected"].items()):
             raise bridge_error("target_changed", "stale voicing")
         self.voicing.update(p["set"])
-        return {"outcome": "applied", "supported": True, "voicing": dict(self.voicing), "changedUnrequested": []}
+        return {
+            "outcome": "applied",
+            "verification": "native_readback",
+            "supported": True,
+            "voicing": dict(self.voicing),
+            "changedUnrequested": [],
+        }
 
     def h_connections_set(self, p):
         entries = []
@@ -286,8 +307,13 @@ class FakeGrid:
                 self.conns[key] = (c["source"]["moduleId"], c["source"]["portKey"])
             else:
                 self.conns.pop(key, None)
-            entries.append({"outcome": "applied"})
-        return {"outcome": "applied", "written": len(entries), "connections": entries}
+            entries.append({"outcome": "applied", "verification": "native_readback"})
+        return {
+            "outcome": "applied",
+            "verification": "native_readback",
+            "written": len(entries),
+            "connections": entries,
+        }
 
 
 TRACK = "12345678-1234-1234-1234-123456789abc"
@@ -437,6 +463,7 @@ class RecipeGrid:
             }
             return {
                 "outcome": "applied",
+                "verification": "native_readback",
                 "modulesRemoved": [{"moduleId": module_id, "typeId": removed["typeId"]}],
                 "moduleCount": len(self.modules),
             }
@@ -497,6 +524,7 @@ class RecipeGrid:
             row.pop("parameters")
             return {
                 "outcome": "applied",
+                "verification": "native_readback",
                 "moduleId": module_id,
                 "modulesAdded": [row],
                 "moduleCount": len(self.modules),
@@ -516,6 +544,7 @@ class RecipeGrid:
                         "moduleId": entry["moduleId"],
                         "parameterId": entry["parameterId"],
                         "outcome": "applied" if changed else "already_matched",
+                        "verification": "native_readback",
                         "previousValue": current["value"],
                         "value": entry["value"],
                     }
@@ -523,6 +552,7 @@ class RecipeGrid:
                 current["value"] = entry["value"]
             return {
                 "outcome": "applied",
+                "verification": "native_readback",
                 "written": len(results),
                 "writes": results,
             }
@@ -536,12 +566,14 @@ class RecipeGrid:
                 self.cables[edit["targetModuleId"], edit["targetPortKey"]] = edit["source"]
             return {
                 "outcome": "applied",
+                "verification": "native_readback",
                 "written": len(edits),
                 "connections": [
                     {
                         "targetModuleId": edit["targetModuleId"],
                         "targetPortKey": edit["targetPortKey"],
                         "outcome": "applied",
+                        "verification": "native_readback",
                     }
                     for edit in edits
                 ],
@@ -722,7 +754,7 @@ class FakeBridge:
             self.solo[params["target"]["id"]] = params["solo"]
         elif method == "tracks.set":
             return unknown_result("deadline", "boom")
-        return {"outcome": "applied"}
+        return {"outcome": "applied", "verification": "api_readback"}
 
 
 async def execute_cli(argv, stdin="", pretty=False):

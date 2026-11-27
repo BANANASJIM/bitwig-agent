@@ -4,7 +4,6 @@ import com.google.gson.JsonObject;
 import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.HostModule;
 import dev.bitwigagent.core.HostOperation;
-import dev.bitwigagent.core.Outcome;
 import dev.bitwigagent.core.Params;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Results;
@@ -41,7 +40,7 @@ public final class JobsModule implements HostModule {
 
     /** A write that outlived its wait: {outcome: unknown, reason: deadline, message, job, next}. */
     public static JsonObject deadline(String id, String message) {
-        JsonObject result = Results.outcome(Outcome.UNKNOWN);
+        JsonObject result = Results.unknown();
         result.addProperty("reason", Reason.DEADLINE.wire());
         result.addProperty("message", message);
         result.addProperty("job", id);

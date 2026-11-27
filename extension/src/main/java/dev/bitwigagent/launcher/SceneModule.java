@@ -165,10 +165,9 @@ public final class SceneModule implements HostModule {
     // ---- writes ----
 
     private JsonObject result(Outcome outcome, Reason reason) {
-        JsonObject out = Results.outcome(outcome);
+        JsonObject out = Results.outcome(outcome, Verification.API_READBACK);
         if (reason != null) out.addProperty("reason", reason.wire());
         out.addProperty("scope", "scene_bank");
-        if (outcome == Outcome.APPLIED) Verification.API_READBACK.put(out);
         out.addProperty("sceneCount", window.sceneCount());
         return out;
     }
@@ -193,8 +192,7 @@ public final class SceneModule implements HostModule {
                     return window.sceneCount() == before + count;
                 },
                 () -> {
-                    JsonObject out = Results.outcome(Outcome.APPLIED);
-                    Verification.API_READBACK.put(out);
+                    JsonObject out = Results.outcome(Outcome.APPLIED, Verification.API_READBACK);
                     out.addProperty("sceneCountBefore", before);
                     out.addProperty("sceneCount", before + count);
                     JsonArray refs = new JsonArray();

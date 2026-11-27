@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import PurePath, PurePosixPath, PureWindowsPath
@@ -36,9 +37,36 @@ class Verification(StrEnum):
     NATIVE_READBACK = "native_readback"
     API_READBACK = "api_readback"
     FILE_READBACK = "file_readback"
+    SYSTEM_READBACK = "system_readback"
 
 
 SUCCEEDED = frozenset({Outcome.ALREADY_MATCHED, Outcome.APPLIED, Outcome.SENT})
+
+
+def _has_outcome(node: Any) -> bool:
+    if isinstance(node, dict):
+        return "outcome" in node or any(_has_outcome(v) for v in node.values())
+    return isinstance(node, list) and any(_has_outcome(v) for v in node)
+
+
+def leaf_rule_holds(node: Any) -> bool:
+    """Every applied object with no outcome-bearing child names its verification (ack's release is the one exception)."""
+    if isinstance(node, list):
+        return all(leaf_rule_holds(v) for v in node)
+    if not isinstance(node, dict):
+        return True
+    if not all(leaf_rule_holds(v) for v in node.values()):
+        return False
+    leaf = node.get("outcome") == Outcome.APPLIED and not any(_has_outcome(v) for v in node.values())
+    return not leaf or "verification" in node or "released" in node
+
+
+def shared_verification(entries: Iterable[Mapping[str, Any]]) -> Verification | None:
+    """The leaf rule for a result composed of others: the one verification all its applied entries name, else none."""
+    seen = {
+        Verification(e["verification"]) for e in entries if e.get("outcome") == Outcome.APPLIED and "verification" in e
+    }
+    return seen.pop() if len(seen) == 1 else None
 
 
 class ErrorCode(StrEnum):

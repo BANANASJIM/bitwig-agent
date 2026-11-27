@@ -83,6 +83,7 @@ public final class TrackLifecycleModuleTest {
                         && result.get("trackCountBefore").getAsInt() == 2
                         && result.get("trackCountAfter").getAsInt() == 1,
                 "deleted once, verified");
+        assertEquals("api_readback", result.get("verification").getAsString());
         HostFixture silent = new HostFixture();
         TrackLifecycleModule other = lifecycle(silent);
         HostOperation nothing = silent.submit(other, "tracks.delete", delete(HostFixture.B, "Track 1"));

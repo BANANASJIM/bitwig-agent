@@ -319,7 +319,7 @@ public final class RemoteModule implements HostModule, ParameterResolver.RemoteP
         }
         JsonElement asked = new JsonPrimitive(requested);
         if (source.controlValuesFresh[slot] && Math.abs(current - requested) <= HostLimits.TOLERANCE) {
-            op.result.complete(result(ref, asked, current, Outcome.ALREADY_MATCHED, null));
+            op.result.complete(result(ref, asked, current, Outcome.ALREADY_MATCHED, null, Verification.API_READBACK));
             return;
         }
         if (nativeValues == null || source.controlValuesFresh[slot]) {
@@ -351,8 +351,13 @@ public final class RemoteModule implements HostModule, ParameterResolver.RemoteP
         scheduler.check(op);
         snapshot.require(op);
         if (held != null && Math.abs(held - requested) <= HostLimits.TOLERANCE) {
-            JsonObject result = result(ref, new JsonPrimitive(requested), held, Outcome.ALREADY_MATCHED, null);
-            Verification.NATIVE_READBACK.put(result);
+            JsonObject result = result(
+                    ref,
+                    new JsonPrimitive(requested),
+                    held,
+                    Outcome.ALREADY_MATCHED,
+                    null,
+                    Verification.NATIVE_READBACK);
             op.result.complete(result);
             return;
         }
@@ -385,31 +390,27 @@ public final class RemoteModule implements HostModule, ParameterResolver.RemoteP
                     double seen = control.value().get();
                     op.result.complete(Errors.withInspect(
                             observed
-                                    ? applied(result(ref, asked, seen, Outcome.APPLIED, null))
+                                    ? result(ref, asked, seen, Outcome.APPLIED, null, Verification.API_READBACK)
                                     : result(
                                             ref,
                                             asked,
                                             fresh ? seen : null,
                                             Outcome.UNKNOWN,
-                                            fresh ? Reason.READBACK_MISMATCH : Reason.NOT_OBSERVED),
+                                            fresh ? Reason.READBACK_MISMATCH : Reason.NOT_OBSERVED,
+                                            Verification.API_READBACK),
                             op.inspect));
                 });
     }
 
-    private static JsonObject applied(JsonObject result) {
-        Verification.API_READBACK.put(result);
-        return result;
-    }
-
     private static JsonObject result(
-            JsonObject ref, JsonElement requested, Double observed, Outcome outcome, Reason reason) {
-        JsonObject result = Results.outcome(outcome);
+            JsonObject ref, JsonElement requested, Double observed, Outcome outcome, Reason reason, Verification how) {
+        JsonObject result = Results.outcome(outcome, how);
         if (reason != null) result.addProperty("reason", reason.wire());
         result.add("ref", ref);
         JsonObject fields = new JsonObject();
         fields.add(
                 "value",
-                Results.field(requested, observed == null ? null : new JsonPrimitive(observed), outcome, reason));
+                Results.field(requested, observed == null ? null : new JsonPrimitive(observed), outcome, reason, how));
         result.add("fields", fields);
         return result;
     }
