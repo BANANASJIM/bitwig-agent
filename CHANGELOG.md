@@ -50,6 +50,8 @@ The Python package and the Java extension are released as a matched pair: update
 - Equal `tracks.set` writes after a group or insert, and equal display-form volume, pan and send writes, are `already_matched` (#143, #146).
 - `tracks.sends.set` with a level plus `enabled:true` is `applied` (#143).
 - A batch stop whose entry has no top-level `next` uses the kept `error.next`, and the MCP batch `timeoutMs` refusal carries `entries`, one per call (#146).
+- A composed call (`devices.insert {params}`, `modulators.insert {params, map}`, `chains.insert {insert}`, `clips.import {to}`) never names an `unknown` step among the calls to finish or resend: `next` says to inspect it first. The `chains.insert` fill entry is `fill` (was `insert`), and once filled the `chain` entry's `ref` is the renamed chain, like the top-level `ref`.
+- The `unsafe_state` recovery text names only fields `transport.set` takes; `clipLauncherAutomationWriteEnabled` is read only, and `transport.set` refuses it as an unknown field (`invalid_params`).
 
 ## [0.5.0] - 2026-11-27
 
