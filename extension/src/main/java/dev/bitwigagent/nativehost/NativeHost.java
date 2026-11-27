@@ -129,6 +129,8 @@ public final class NativeHost {
         }
 
         private Class<?> owner(String key) throws ClassNotFoundException {
+            // Before entry(): a closed gate may never have loaded the members table.
+            requireAvailable();
             return type(entry(members, key).getAsJsonObject().get("owner").getAsString());
         }
 

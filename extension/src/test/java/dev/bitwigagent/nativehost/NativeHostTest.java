@@ -117,6 +117,14 @@ public final class NativeHostTest {
             assertTrue(
                     gate != null && gate.startsWith("Loaded host JAR SHA-256"),
                     "a gate refusal carries its own message, not the exception class: " + gate);
+            // Lookups through a member's owner class must hit the gate before the (unloaded) name table.
+            for (Executable closed : List.<Executable>of(
+                    () -> other.access().exactMethod("app.isDocumentThread", boolean.class, false),
+                    () -> other.access().exactConstant("app.none", host)))
+                assertEquals(
+                        "host_mismatch",
+                        assertThrows(RpcException.class, closed).reason.wire(),
+                        "a closed gate is the gate error, not a NullPointerException");
         } finally {
             Files.delete(jar);
         }
