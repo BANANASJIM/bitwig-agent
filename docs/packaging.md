@@ -60,11 +60,11 @@ Changes to the system package do not update an already-copied user extension. Us
 
 The separate [`aur.yml` workflow](https://github.com/BANANASJIM/bitwig-agent/blob/main/.github/workflows/aur.yml) runs on a published GitHub release or explicit manual dispatch, **not** on each main-branch push: its immutable release sources must already exist. It checks tag/Python/recipe version agreement, then builds and rebuilds as an unprivileged user inside a digest-pinned disposable official Arch container. It checks `.SRCINFO`, rejects namcap errors, installs with documentation extraction enabled, verifies owned files and exercises the matching installed Python/MCP consumer plus the explicit user-extension copy. The release run verifies real published downloads; updating main afterward cannot repair a stale recipe in an existing tag. It never uploads to AUR, installs Bitwig or changes a real user's extension directory. Consult actual workflow output; configured checks are not proof of success.
 
-Version `0.2.0` replaces the private 6.1.3 adapter with the exact 6.1.4 bindings and includes the stop/seek and track-selection fixes. This host-compatibility change uses a new minor version; it is not dual-version support. The older `0.1.2` artifacts and pinned recipe remain unchanged. Never replace their bytes or relax the loaded-JAR gate to accommodate a host upgrade.
+Version `0.5.0` maps the exact Bitwig 6.1.4 and 6.1.7 bindings ([supported versions](../README.md#supported-bitwig-versions)). Older artifacts and pinned recipes remain unchanged. Never replace their bytes or relax the loaded-JAR gate to accommodate a host upgrade.
 
 ## Build once, promote the same artifacts
 
-The maintainer builds the Python wheel, Python sdist and Java extension from one reviewed source/version snapshot. Java building requires the maintainer's own licensed host JAR (pixi supplies JDK 25); public CI is not supplied with the proprietary JAR. The extension targets Java 11 bytecode but its Bitwig 6.1.4 loader superclass requires JDK 25 to read during building/checking.
+The maintainer builds the Python wheel, Python sdist and Java extension from one reviewed source/version snapshot. Java building requires the maintainer's own licensed host JAR (pixi supplies JDK 25); public CI is not supplied with the proprietary JAR. The extension targets Java 11 bytecode but its Bitwig loader superclass requires JDK 25 to read during building/checking.
 
 1. Update matching versions and installation links, resolve the lockfile, and run the applicable [verification layers](../VERIFICATION.md). Record which layers actually ran.
 2. Build wheel and sdist with `pixi run dist`, and the extension with every supported host JAR: `BITWIG_HOST_JARS=<dir of <version>.jar> pixi run python scripts/build.py --release`.
@@ -88,7 +88,7 @@ sha256sum dist/bitwig_agent-X.Y.Z-py3-none-any.whl dist/bitwig_agent-X.Y.Z.tar.g
 - `SHA256SUMS` has exactly three unique **bare asset filenames**; strip the local `dist/` and `build/` prefixes.
 - Finalize the [Arch recipe](https://github.com/BANANASJIM/bitwig-agent/tree/main/packaging/aur) and regenerate `.SRCINFO` **before tagging**; validate it in an isolated Arch environment. `packaging/` is excluded from the sdist, so updating its hashes does not require rebuilding it.
 - Publish the recipe through the separate AUR Git repository's `master` branch ([maintenance](#maintaining-the-recipe)); confirm the public package version and maintainer before announcing helper-based installation.
-- Run `publish-pypi.yml` on the version tag with `publish=false` first. Only an explicitly authorized publication with the configured `pypi` environment may use `publish=true` ([prerequisites](#external-accountenvironment-prerequisites)).
+- Create the GitHub Release as a **draft**, attach all four assets, verify them, and only then publish it: publishing the release automatically starts `publish-pypi.yml` (and `aur.yml`), and its publish job waits for the `pypi` environment approval. Approve only when explicitly authorized ([prerequisites](#external-accountenvironment-prerequisites)). A manual `publish=false` run on the tag remains available for validation only.
 - Neither a pending PyPI publisher nor an AUR recipe establishes public package availability; retain GitHub release assets as an alternative installation source.
 
 ## PyPI Trusted Publishing
@@ -103,7 +103,7 @@ Run validation-only from the release tag:
 gh workflow run publish-pypi.yml --ref vX.Y.Z -f publish=false
 ```
 
-The separate publish job runs only for explicit `publish=true`, uses GitHub environment **`pypi`**, and receives `id-token: write` there for short-lived OIDC credentials. The validation job has read-only permissions. No long-lived PyPI API token should be introduced. The publication job promotes the validated Python artifacts instead of checking out and rebuilding project source.
+The separate publish job runs on `release: published` or an explicit `publish=true` dispatch (never on `publish=false`), is gated by the `pypi` approval, uses GitHub environment **`pypi`**, and receives `id-token: write` there for short-lived OIDC credentials. The validation job has read-only permissions. No long-lived PyPI API token should be introduced. The publication job promotes the validated Python artifacts instead of checking out and rebuilding project source.
 
 ### External account/environment prerequisites
 
