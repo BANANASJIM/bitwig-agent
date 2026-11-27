@@ -596,6 +596,16 @@ public final class HostBridgeTest {
         assertTrue(
                 !tracks.getAsJsonObject("window").get("complete").getAsBoolean(),
                 "a track count beyond the window cannot be declared complete");
+        JsonObject mixed = tracks.getAsJsonArray("tracks").get(0).getAsJsonObject();
+        assertEquals("-12 dB", mixed.getAsJsonObject("volume").get("display").getAsString(), "volume column");
+        assertEquals(.5, mixed.getAsJsonObject("pan").get("value").getAsDouble(), "pan column");
+        assertFalse(mixed.get("mute").getAsBoolean()
+                || mixed.get("solo").getAsBoolean()
+                || mixed.get("arm").getAsBoolean());
+        assertEquals(
+                JsonParser.parseString("[{\"name\":\"Reverb\",\"display\":\"-18 dB\",\"enabled\":true}]"),
+                mixed.get("sends"),
+                "existing sends only, by name, display and enabled");
         JsonObject devices = call(host, bridge, "devices.list", list(track()));
         assertEquals(2, devices.getAsJsonArray("devices").size(), "only existing devices listed");
         for (JsonElement row : devices.getAsJsonArray("devices"))

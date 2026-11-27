@@ -98,7 +98,6 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
         register(remotes);
         ProjectModule projectModule = new ProjectModule(scheduler, application, project, projectState, natives, holds);
         register(new DiscoveryModule(host, application, transport, window, projectState, specs, holds, domains));
-        register(new TrackListModule(window, trackRefs));
         register(new DeviceListModule(window, trackRefs, chains));
         register(new DeviceChainModule(scheduler, window, trackRefs, sources, chains, transportSafety));
         register(new ActionModule(scheduler, application, projectState, selection));
@@ -108,6 +107,7 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
         register(transportModule);
         MixModule mix = new MixModule(host, scheduler, window, trackRefs, selection);
         register(mix);
+        register(new TrackListModule(window, trackRefs, mix));
         register(new TrackLifecycleModule(
                 scheduler, window, trackRefs, application, transportSafety, selection, natives, holds, mix, null));
         register(new DeviceModule(scheduler, sources, chains, selection));
@@ -120,8 +120,9 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
                 scheduler, window, trackRefs, project, transportSafety, natives, holds, null, launcher);
         NoteModule notes = new NoteModule(launcher, new NativeNotes(natives, null));
         register(notes);
-        ArrangerModule arranger =
-                new ArrangerModule(scheduler, window, trackRefs, projectState, transportSafety, natives, holds, null);
+        MarkerModule markers = new MarkerModule(host, transport, scheduler, transportSafety, holds);
+        ArrangerModule arranger = new ArrangerModule(
+                scheduler, window, trackRefs, projectState, transportSafety, natives, holds, markers, transport, null);
         register(new ClipModule(
                 launcher,
                 trackRefs,
@@ -129,7 +130,7 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
                 new LauncherSettingsModule(scheduler, window, transportSafety, natives, holds),
                 arranger));
         register(new SceneModule(scheduler, window, transportSafety, lock, launcherTargets, project));
-        register(new MarkerModule(host, transport, scheduler, transportSafety, holds));
+        register(markers);
         register(new MeterModule(scheduler, window, trackRefs, transportSafety));
         register(arranger);
         register(new AutomationModule(scheduler, window, parameterResolver, transportSafety, natives, holds));
