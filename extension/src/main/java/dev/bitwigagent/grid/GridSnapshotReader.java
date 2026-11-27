@@ -713,6 +713,16 @@ public final class GridSnapshotReader implements ParameterResolver.ModuleOwners 
         return target(source);
     }
 
+    /** The native device behind a root device, with its Grid graph when it has one (Remote Controls take any device). */
+    NativeTarget bindDevice(DeviceSources.Source source, Runnable check) {
+        a.documentThread();
+        check.run();
+        DeviceSources.Native.Capture capture = targets.capture(source, () -> {});
+        Object graph = a.read(Field.GRAPH, capture.device);
+        if (graph != null) a.requireModelThread(graph);
+        return new NativeTarget(capture, graph);
+    }
+
     void requireModelThread(Object model) {
         a.requireModelThread(model);
     }
@@ -736,7 +746,7 @@ public final class GridSnapshotReader implements ParameterResolver.ModuleOwners 
         targets.guard(binding.ownership, () -> {});
         if (a.read(Field.GRAPH, binding.target) != binding.graph)
             throw Errors.notApplied(Reason.TARGET_CHANGED, "The device's Grid graph changed during the read.");
-        a.requireModelThread(binding.graph);
+        if (binding.graph != null) a.requireModelThread(binding.graph);
     }
 
     static final class NativeTarget {

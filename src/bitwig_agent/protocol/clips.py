@@ -672,7 +672,9 @@ CLIPS_IMPORT_ARRANGER = (
     "launcher clip left behind. Needs an empty slot on the track (else limit_reached: add a scene) and what "
     "clips.copy needs: a stopped transport, recording/automation-write off and a settled project. Returns ref and "
     "clip of the arranger clip and file {name, seconds}: the name a clip made from the file gets and "
-    "the audio's length (null for MIDI, or without the optional audio extra), to compare with the clip."
+    "the audio's length (null for MIDI, or without the optional audio extra), to compare with the clip. Bitwig may "
+    "rename the track after the file once the call returns, so track refs in the result can carry the old name: "
+    "a later write with it is target_changed with current; re-read with tracks.list."
 )
 CLIPS_SET_DESCRIPTION = (
     "Set the supplied fields of ONE existing clip; each fields entry has its own outcome and expect compares bare "

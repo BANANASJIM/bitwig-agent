@@ -21,7 +21,6 @@ import dev.bitwigagent.host.EnumOptions;
 import dev.bitwigagent.host.TrackRefs;
 import dev.bitwigagent.host.TrackWindow;
 import dev.bitwigagent.host.TransportSafety;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
 import java.util.function.BooleanSupplier;
@@ -458,9 +457,7 @@ public final class ClipModule implements HostModule {
     }
 
     private void importFile(HostOperation op, JsonObject p) {
-        Path path = Params.absoluteFilePath(p, "path");
-        if (!Files.isRegularFile(path) || !Files.isReadable(path))
-            throw Errors.notApplied(Reason.INVALID_FILE, "Import requires a readable regular local file.");
+        Path path = Params.readableFile(Params.absoluteFilePath(p, "path"), "Import");
         MidiImportPreflight.validate(path);
         state.targets.enterSlot(op, p.getAsJsonObject("to"), false, at -> {
             LauncherState.Target target = state.target(at);

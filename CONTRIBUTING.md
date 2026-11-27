@@ -1,6 +1,6 @@
 # Contributing
 
-Keep changes focused on helping agents complete real Bitwig tasks. Domain operations belong in their existing modules; transport, validation and native bindings remain separate. Do not add automatic retries or GUI fallback for uncertain writes.
+Participation follows the [Code of Conduct](CODE_OF_CONDUCT.md). Keep changes focused on helping agents complete real Bitwig tasks. Domain operations belong in their existing modules; transport, validation and native bindings remain separate. Do not add automatic retries or GUI fallback for uncertain writes.
 
 ## Source setup
 
@@ -91,7 +91,7 @@ The tools decide formatting, types, duplicate code, the `protocol/` import direc
 
 ## Changes and bug reports
 
-Pull requests follow [the template](.github/pull_request_template.md): why, a before/after diagram, what changes for users, evidence, risks. Write for a human reader; leave exhaustive detail to the code and tests. Evidence must be reproducible: link the CI run or give the command and its key output; never pipe a check through `tail` or similar without preserving its exit status.
+Pull requests follow [the template](.github/pull_request_template.md): why, a before/after diagram, what changes for users, evidence, risks. Record user-visible changes under `Unreleased` in [CHANGELOG.md](CHANGELOG.md). Write for a human reader; leave exhaustive detail to the code and tests. Evidence must be reproducible: link the CI run or give the command and its key output; never pipe a check through `tail` or similar without preserving its exit status.
 
 - Describe the observable behavior, affected methods and checks actually run. Add a deterministic regression test for a consumer-visible bug when practical.
 - Keep MCP and CLI schemas consistent with Java validation and [PROTOCOL.md](PROTOCOL.md).
@@ -104,7 +104,7 @@ For security-sensitive issues, use the private route in [SECURITY.md](SECURITY.m
 
 ## Contributing a platform name table
 
-Private features are natively tested on Linux only. Bitwig obfuscates `bitwig.jar` separately per platform (for 6.1.7 the Linux, Windows and macOS jars differ, and so do their member names), so Windows or macOS support needs a name table generated from that platform's jar. Generate it with the steps in [Mapping a new Bitwig release](#mapping-a-new-bitwig-release), from the Linux table of the same version (`names_<version>.json` in `src/bitwig_agent/shared/`) and that platform's `bitwig.jar` for a supported version; running the native smoke on that platform is the contributor's.
+Private features are natively tested on Linux only, and each platform's `bitwig.jar` is obfuscated separately, so Windows and macOS support needs a name table made from that platform's jar. The [name table guide](docs/name-tables.md) covers the steps (built on [Mapping a new Bitwig release](#mapping-a-new-bitwig-release)), what to submit, how it is reviewed and a prompt for your coding agent.
 
 ## Releases
 

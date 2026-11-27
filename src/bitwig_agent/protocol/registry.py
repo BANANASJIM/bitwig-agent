@@ -28,6 +28,7 @@ from bitwig_agent.protocol import (
 )
 from bitwig_agent.protocol.annotations import resolve
 from bitwig_agent.protocol.base import ToolSpec
+from bitwig_agent.protocol.capabilities import CAPABILITIES, PARTIAL, check_capabilities
 
 _DOMAINS = (
     project,
@@ -168,6 +169,7 @@ def _collect() -> dict[str, ToolSpec]:
     writes = [name for name, spec in specs.items() if (spec.records or spec.views) and changes_content(name, spec)]
     if writes:
         raise ValueError(f"Only reads declare a record list or a text view: {writes}")
+    check_capabilities(specs, CAPABILITIES, PARTIAL)
     return with_inspect(specs, INSPECT)
 
 

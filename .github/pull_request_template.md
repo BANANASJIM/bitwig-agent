@@ -28,6 +28,10 @@ Reproducible evidence only: a CI run link, or a command with its key output or a
 - Native E2E on an isolated test instance, if host behaviour or native bindings changed: script, log path, pass/fail derived from the recorded responses
 - Refactors: the invariant check that proves behaviour is unchanged (for example, a before/after schema dump hash)
 
+## Checklist
+
+- [ ] CHANGELOG.md Unreleased updated (user-visible changes)
+
 ## Risks and follow-ups
 
 Only what a reviewer needs to know.
