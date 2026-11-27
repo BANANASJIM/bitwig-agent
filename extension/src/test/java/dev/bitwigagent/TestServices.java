@@ -7,6 +7,7 @@ import dev.bitwigagent.automation.AutomationModule;
 import dev.bitwigagent.core.Holds;
 import dev.bitwigagent.core.HostOperation;
 import dev.bitwigagent.core.MethodSpecs;
+import dev.bitwigagent.core.PortHandle;
 import dev.bitwigagent.core.Scheduler;
 import dev.bitwigagent.device.ChainModule;
 import dev.bitwigagent.device.DeviceChainModule;
@@ -25,7 +26,6 @@ import dev.bitwigagent.grid.GridAdapter;
 import dev.bitwigagent.grid.GridModule;
 import dev.bitwigagent.host.DeviceSources;
 import dev.bitwigagent.host.LauncherStructureLock;
-import dev.bitwigagent.host.NativeRuntime;
 import dev.bitwigagent.host.ProjectState;
 import dev.bitwigagent.host.SelectionLease;
 import dev.bitwigagent.host.TrackRefs;
@@ -43,6 +43,7 @@ import dev.bitwigagent.launcher.SceneWindowLease;
 import dev.bitwigagent.mix.MeterModule;
 import dev.bitwigagent.mix.MixModule;
 import dev.bitwigagent.mix.TrackLifecycleModule;
+import dev.bitwigagent.nativehost.NativePorts;
 import dev.bitwigagent.project.ContextModule;
 import dev.bitwigagent.project.KeySignatureModule;
 import dev.bitwigagent.project.ProjectModule;
@@ -64,7 +65,7 @@ public final class TestServices {
     public final TransportSafety transportSafety;
     public final TrackRefs trackRefs;
     public final DeviceSources sources;
-    final NativeRuntime natives;
+    final NativePorts natives;
     /** The simulated native document behind {@link #chains}. */
     public final FakeChains nativeChains;
 
@@ -91,8 +92,8 @@ public final class TestServices {
         transportSafety = new TransportSafety(transport);
         trackRefs = new TrackRefs(window);
         sources = new DeviceSources(window, trackRefs);
-        natives = new NativeRuntime(host, scheduler);
-        chains = new NativeChains(scheduler, sources, natives, nativeChains);
+        natives = new NativePorts(host, scheduler);
+        chains = new NativeChains(scheduler, sources, PortHandle.of(nativeChains));
         selection = new SelectionLease();
         lock = new LauncherStructureLock(selection, holds);
     }
@@ -110,11 +111,10 @@ public final class TestServices {
                 trackRefs,
                 projectState,
                 transportSafety,
-                natives,
+                port(access, natives.arranger()),
                 holds,
                 marker(),
-                transport,
-                access);
+                transport);
     }
 
     public AutomationModule automation(AutomationModule.Access access) {
@@ -124,9 +124,8 @@ public final class TestServices {
                 window,
                 parameterResolver(parameters(remotes), remotes),
                 transportSafety,
-                natives,
-                holds,
-                access);
+                port(access, natives.automation()),
+                holds);
     }
 
     public DeviceModule device() {
@@ -154,7 +153,7 @@ public final class TestServices {
     }
 
     public GridModule grid(GridAdapter adapter) {
-        return new GridModule(scheduler, sources, transportSafety, natives, adapter);
+        return new GridModule(scheduler, sources, transportSafety, port(adapter, natives.grid()));
     }
 
     /** The scene window lease and the refs resolved through it, shared by every launcher module of one test. */
@@ -181,7 +180,7 @@ public final class TestServices {
 
     /** {@code access} null: the bindings are tried on the test host, which fails closed to the public setters. */
     public NoteModule notes(NativeNotes.Access access) {
-        return new NoteModule(launcherState(), new NativeNotes(natives, access));
+        return new NoteModule(launcherState(), new NativeNotes(port(access, natives.noteWrites())));
     }
 
     public ClipModule clips(LauncherSettingsModule.Access settings, ArrangerModule.Access arranger) {
@@ -198,7 +197,8 @@ public final class TestServices {
     }
 
     public LauncherSettingsModule launcherSettings(LauncherSettingsModule.Access access) {
-        return new LauncherSettingsModule(scheduler, window, transportSafety, natives, holds, access);
+        return new LauncherSettingsModule(
+                scheduler, window, transportSafety, port(access, natives.launcherSettings()), holds);
     }
 
     public MarkerModule marker() {
@@ -223,15 +223,23 @@ public final class TestServices {
 
     public TrackLifecycleModule trackLifecycle(MixModule mix, TrackLifecycleModule.GroupAccess access) {
         return new TrackLifecycleModule(
-                scheduler, window, trackRefs, application, transportSafety, selection, natives, holds, mix, access);
+                scheduler,
+                window,
+                trackRefs,
+                application,
+                transportSafety,
+                selection,
+                port(access, natives.trackGroup()),
+                holds,
+                mix);
     }
 
-    public ModulatorEditModule modulatorEdits(ModulatorEditor editor) {
-        return new ModulatorEditModule(scheduler, sources, transportSafety, natives, editor);
+    public ModulatorEditModule modulatorEdits(ModulatorEditor.Access access) {
+        return new ModulatorEditModule(scheduler, sources, transportSafety, port(access, natives.modulatorEdits()));
     }
 
     public ModulatorModule modulator(ModulatorAdapter adapter, ModulatorEditModule edits) {
-        return new ModulatorModule(scheduler, sources, natives, adapter, edits);
+        return new ModulatorModule(scheduler, sources, port(adapter, natives.modulators()), edits);
     }
 
     public ParameterModule parameters(RemoteModule remotes, ModulatorEditModule edits) {
@@ -248,28 +256,42 @@ public final class TestServices {
     }
 
     public ProjectModule projectModule(ProjectModule.SaveAsAccess access) {
-        return new ProjectModule(scheduler, application, project, projectState, natives, holds, access);
+        return new ProjectModule(scheduler, application, project, projectState, port(access, natives.saveAs()), holds);
     }
 
     public KeySignatureModule keySignature(KeySignatureModule.Access access) {
-        return new KeySignatureModule(scheduler, project, transportSafety, natives, holds, access);
+        return new KeySignatureModule(scheduler, project, transportSafety, port(access, natives.keySignature()), holds);
     }
 
     public RenderModule render(RenderModule.Access access) {
-        return new RenderModule(scheduler, window, trackRefs, project, transportSafety, natives, holds, access);
+        return new RenderModule(
+                scheduler, window, trackRefs, project, transportSafety, port(access, natives.render()), holds);
     }
 
     public RenderModule render(RenderModule.Access access, RenderModule.LauncherContent launcher) {
         return new RenderModule(
-                scheduler, window, trackRefs, project, transportSafety, natives, holds, access, launcher);
+                scheduler,
+                window,
+                trackRefs,
+                project,
+                transportSafety,
+                port(access, natives.render()),
+                holds,
+                launcher);
     }
 
     public RoutingModule routing(MethodSpecs specs, RoutingModule.Access access) {
-        return new RoutingModule(scheduler, window, trackRefs, sources, transportSafety, natives, holds, specs, access);
+        return new RoutingModule(
+                scheduler, window, trackRefs, sources, transportSafety, port(access, natives.routing()), holds, specs);
     }
 
     public SceneModule scene() {
         return new SceneModule(scheduler, window, transportSafety, lock, launcherTargets(), project);
+    }
+
+    /** A test's fake port, or with none the production handle, which fails closed on the simulated host. */
+    private static <P> PortHandle<P> port(P fake, PortHandle<P> handle) {
+        return fake == null ? handle : PortHandle.of(fake);
     }
 
     public TransportModule transportModule() {

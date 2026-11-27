@@ -384,7 +384,7 @@ public final class GridModuleNameWriterTest {
             Throwable nativeError = f.failure.getCause();
             assertTrue(
                     nativeError instanceof RpcException
-                            && NativeHost.isInvocationFailure(nativeError)
+                            && Errors.isHostCallFailure(nativeError)
                             && nativeError.getCause() instanceof InvocationTargetException
                             && nativeError.getCause().getCause() == cause,
                     "shared quarantine preserves translated reflection boundary and original native throwable identity");

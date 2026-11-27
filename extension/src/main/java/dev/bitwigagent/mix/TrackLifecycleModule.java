@@ -8,18 +8,17 @@ import dev.bitwigagent.core.HostLimits;
 import dev.bitwigagent.core.HostModule;
 import dev.bitwigagent.core.HostOperation;
 import dev.bitwigagent.core.Outcome;
+import dev.bitwigagent.core.PortHandle;
 import dev.bitwigagent.core.Positions;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.SafetyObservation;
 import dev.bitwigagent.core.Scheduler;
 import dev.bitwigagent.core.Verification;
-import dev.bitwigagent.host.NativeRuntime;
 import dev.bitwigagent.host.SelectionLease;
 import dev.bitwigagent.host.TrackRefs;
 import dev.bitwigagent.host.TrackWindow;
 import dev.bitwigagent.host.TransportSafety;
-import dev.bitwigagent.nativehost.NativeTrackGroupAccess;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 
@@ -45,11 +44,10 @@ public final class TrackLifecycleModule implements HostModule {
     private final Application application;
     private final TransportSafety transportSafety;
     private final SelectionLease selection;
-    private final NativeRuntime natives;
+    private final PortHandle<GroupAccess> groupAccess;
     private final Holds holds;
     private final MixModule mix;
     private HostOperation inserting;
-    private GroupAccess groupAccess;
 
     public TrackLifecycleModule(
             Scheduler scheduler,
@@ -58,20 +56,18 @@ public final class TrackLifecycleModule implements HostModule {
             Application application,
             TransportSafety transportSafety,
             SelectionLease selection,
-            NativeRuntime natives,
+            PortHandle<GroupAccess> groupAccess,
             Holds holds,
-            MixModule mix,
-            GroupAccess groupAccess) {
+            MixModule mix) {
         this.scheduler = scheduler;
         this.window = window;
         this.trackRefs = trackRefs;
         this.application = application;
         this.transportSafety = transportSafety;
         this.selection = selection;
-        this.natives = natives;
+        this.groupAccess = groupAccess;
         this.holds = holds;
         this.mix = mix;
-        this.groupAccess = groupAccess;
     }
 
     @Override
@@ -231,15 +227,7 @@ public final class TrackLifecycleModule implements HostModule {
             proxies.add(window.bank().getItemAt(node.slot));
             ordered.add(node.id);
         }
-        if (groupAccess == null) {
-            try {
-                groupAccess = new NativeTrackGroupAccess(natives.get(op).access());
-            } catch (ReflectiveOperationException error) {
-                throw Errors.notApplied(
-                        Reason.NATIVE_UNAVAILABLE, "Exact track group descriptors unavailable: " + error.getMessage());
-            }
-        }
-        GroupAccess access = groupAccess;
+        GroupAccess access = groupAccess.get(op);
         String name = p.has("name") ? p.get("name").getAsString() : null;
         // The native operation selects the new group: hold the selection lease like other selection-moving calls.
         selection.acquire(op);

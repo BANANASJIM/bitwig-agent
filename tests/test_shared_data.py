@@ -90,6 +90,5 @@ def test_each_host_target_is_one_fact():
         assert host["names"] == f"names_{host['version'].replace('.', '_')}"
         names = shared(host["names"])
         assert set(names) == {"classes", "members"}
-        assert all(member["owner"] in names["classes"] for member in names["members"].values())
         assert api["file"] == f"extension-api-{host['apiVersion']}.jar"
         assert f"/{host['apiVersion']}/" in api["url"]

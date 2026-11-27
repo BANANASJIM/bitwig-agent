@@ -10,6 +10,7 @@ import dev.bitwigagent.core.HostLimits;
 import dev.bitwigagent.core.HostModule;
 import dev.bitwigagent.core.HostOperation;
 import dev.bitwigagent.core.Outcome;
+import dev.bitwigagent.core.PortHandle;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Refs;
 import dev.bitwigagent.core.Results;
@@ -19,12 +20,10 @@ import dev.bitwigagent.core.ValueInput;
 import dev.bitwigagent.core.Verification;
 import dev.bitwigagent.device.ParameterResolver;
 import dev.bitwigagent.host.DeviceSources;
-import dev.bitwigagent.host.NativeRuntime;
 import dev.bitwigagent.host.RequestSnapshot;
 import dev.bitwigagent.host.TrackEpochs;
 import dev.bitwigagent.host.TrackWindow;
 import dev.bitwigagent.host.TransportSafety;
-import dev.bitwigagent.nativehost.NativeAutomationAccess;
 import java.util.*;
 import java.util.function.Function;
 
@@ -101,10 +100,9 @@ public final class AutomationModule implements HostModule {
     private final TrackWindow window;
     private final ParameterResolver resolver;
     private final TransportSafety transportSafety;
-    private final NativeRuntime natives;
+    private final PortHandle<Access> access;
     private final Holds holds;
     private final TrackEpochs epochs;
-    private Access access;
     private static final String PENDING = "automation.pending", QUARANTINE = "automation.quarantine";
 
     public AutomationModule(
@@ -112,26 +110,14 @@ public final class AutomationModule implements HostModule {
             TrackWindow window,
             ParameterResolver resolver,
             TransportSafety transportSafety,
-            NativeRuntime natives,
+            PortHandle<Access> access,
             Holds holds) {
-        this(scheduler, window, resolver, transportSafety, natives, holds, null);
-    }
-
-    public AutomationModule(
-            Scheduler scheduler,
-            TrackWindow window,
-            ParameterResolver resolver,
-            TransportSafety transportSafety,
-            NativeRuntime natives,
-            Holds holds,
-            Access access) {
         this.scheduler = scheduler;
         this.window = window;
         this.resolver = resolver;
         this.transportSafety = transportSafety;
-        this.natives = natives;
-        this.holds = holds;
         this.access = access;
+        this.holds = holds;
         this.epochs = new TrackEpochs(window);
     }
 
@@ -270,7 +256,7 @@ public final class AutomationModule implements HostModule {
         String id = track.channelId().get();
         RequestSnapshot snapshot = resolved.snapshot();
         SafetyObservation safety = write ? transportSafety.stopped(op) : null;
-        if (access == null) access = NativeAutomationAccess.bind(natives.get(op).access());
+        Access bridge = access.get(op);
         long epoch = epochs.get(index);
         Runnable check = () -> {
             scheduler.check(op);
@@ -287,7 +273,6 @@ public final class AutomationModule implements HostModule {
                     QUARANTINE,
                     "An automation point write on track " + id + " has an unknown outcome until read back.");
         };
-        Access bridge = access;
         double[] range = range(p);
         holds.inFlight(PENDING, "A native automation operation on track " + id + " is running.");
         try {

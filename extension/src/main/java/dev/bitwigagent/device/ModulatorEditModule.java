@@ -5,17 +5,14 @@ import dev.bitwigagent.core.BoundedJson;
 import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.HostModule;
 import dev.bitwigagent.core.HostOperation;
+import dev.bitwigagent.core.PortHandle;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Refs;
 import dev.bitwigagent.core.RpcException;
 import dev.bitwigagent.core.Scheduler;
 import dev.bitwigagent.core.ValueInput;
 import dev.bitwigagent.host.DeviceSources;
-import dev.bitwigagent.host.NativeRuntime;
 import dev.bitwigagent.host.TransportSafety;
-import dev.bitwigagent.nativehost.NativeGridAdapter;
-import dev.bitwigagent.nativehost.NativeHost;
-import dev.bitwigagent.nativehost.NativeModulatorEditAccess;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Consumer;
@@ -31,26 +28,18 @@ public final class ModulatorEditModule implements HostModule {
     private final Scheduler scheduler;
     private final DeviceSources sources;
     private final TransportSafety transportSafety;
-    private final NativeRuntime natives;
+    private final PortHandle<ModulatorEditor.Access> edits;
     private ModulatorEditor editor;
-    private String unavailable;
-
-    public ModulatorEditModule(
-            Scheduler scheduler, DeviceSources sources, TransportSafety transportSafety, NativeRuntime natives) {
-        this(scheduler, sources, transportSafety, natives, null);
-    }
 
     public ModulatorEditModule(
             Scheduler scheduler,
             DeviceSources sources,
             TransportSafety transportSafety,
-            NativeRuntime natives,
-            ModulatorEditor injected) {
+            PortHandle<ModulatorEditor.Access> edits) {
         this.scheduler = scheduler;
         this.sources = sources;
         this.transportSafety = transportSafety;
-        this.natives = natives;
-        editor = injected;
+        this.edits = edits;
     }
 
     @Override
@@ -67,19 +56,7 @@ public final class ModulatorEditModule implements HostModule {
 
     /** Lazily bound, so a binding failure surfaces as native_unavailable on use and in the status section. */
     ModulatorEditor editor(HostOperation op) {
-        if (editor != null) return editor;
-        if (unavailable != null) throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, unavailable);
-        NativeHost.Access bindings = natives.get(op).access();
-        if (bindings.gateError() != null)
-            throw Errors.notApplied(
-                    Reason.NATIVE_UNAVAILABLE, "Exact runtime gate is unavailable: " + bindings.gateError());
-        try {
-            NativeGridAdapter grid = new NativeGridAdapter(natives.get(op).access());
-            editor = new ModulatorEditor(new NativeModulatorEditAccess(bindings, grid));
-        } catch (ReflectiveOperationException | RuntimeException | LinkageError error) {
-            unavailable = "Device-modulator edit bindings unavailable: " + NativeHost.diagnostic(error);
-            throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, unavailable);
-        }
+        if (editor == null) editor = new ModulatorEditor(edits.get(op));
         return editor;
     }
 

@@ -12,7 +12,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-from remap import classfile, inventory
+from remap import classfile, inventory, table
 from remap.__main__ import main, run
 from remap.bytecode import tokens
 
@@ -337,3 +337,104 @@ def test_inventory_descriptors():
         == "(ILjava/lang/Object;)[Ljava/lang/String;"
     )
     assert inventory.field_desc("") == ""
+
+
+NAMES: table.Table = {
+    "classes": {"host": "com.acme.Host", "b": "b", "c": "c", "d": "d"},
+    "members": {
+        "host.run": {"owner": "host", "name": "aB", "desc": "()V"},
+        "host.field": {"owner": "host", "name": "eF", "desc": "Lb;"},
+        "b.world": {"owner": "b", "name": "gH", "desc": "()V"},
+        "d.inherited": {"owner": "d", "name": "iJ", "desc": "(I)I"},
+        "c.decided": None,
+    },
+}
+
+
+def test_a_name_table_maps_to_the_next_jar_by_owner_name_and_descriptor(jars):
+    names = jars / "names_old.json"
+    names.write_text(table.render(NAMES))
+    args = [str(jars / "old.jar"), str(jars / "new.jar"), "--from-table", str(names), "--out", str(jars / "new.json")]
+    assert main([*args, "--report", str(jars / "names.md")]) == 0
+    assert json.loads((jars / "new.json").read_text()) == {
+        "classes": {"b": "q", "c": "r", "d": "s", "host": "com.acme.Host"},
+        "members": {
+            "b.world": {"owner": "b", "name": "yy", "desc": "()V"},
+            "c.decided": None,
+            "d.inherited": {"owner": "d", "name": "vv", "desc": "(I)I"},
+            "host.field": {"owner": "host", "name": "wR", "desc": "Lq;"},
+            "host.run": {"owner": "host", "name": "xQ", "desc": "()V"},
+        },
+    }
+    assert "## Totals by status" in (jars / "names.md").read_text()
+    back = jars / "back.json"
+    assert (
+        main([str(jars / "new.jar"), str(jars / "old.jar"), "--from-table", str(jars / "new.json"), "--out", str(back)])
+        == 0
+    )
+    assert json.loads(back.read_text()) == json.loads(names.read_text()), "mapping back restores the source table"
+
+
+def test_a_key_not_mapped_exact_or_confident_fails_the_table(jars, capsys):
+    names = jars / "names_old.json"
+    names.write_text(
+        table.render({"classes": {"f": "f"}, "members": {"f.x": {"owner": "f", "name": "xA", "desc": "()V"}}})
+    )
+    out = jars / "new.json"
+    assert main([str(jars / "old.jar"), str(jars / "new.jar"), "--from-table", str(names), "--out", str(out)]) == 1
+    assert "member f.x: uncertain" in capsys.readouterr().err
+    assert not out.exists()
+    for incomplete, message in (("--from-table", "--from-table requires --out"), ("--harness", "--harness requires")):
+        with pytest.raises(SystemExit):
+            main([str(jars / "old.jar"), str(jars / "new.jar"), incomplete, str(names)])
+        assert message in capsys.readouterr().err
+
+
+def test_verify_resolves_every_member_and_records_the_hashes(jars, capsys):
+    names, record = jars / "names_old.json", jars / "verified.json"
+    names.write_text(table.render(NAMES))
+    assert table.main(["verify", str(names), str(jars / "old.jar"), "--record", str(record)]) == 0
+    assert json.loads(record.read_text())["names_old"] == {
+        "jarSha256": classfile.sha256(jars / "old.jar"),
+        "tableSha256": table.file_sha256(names),
+    }
+    wrong = json.loads(names.read_text())
+    wrong["members"]["host.run"]["desc"] = "(I)V"
+    wrong["classes"]["gone"] = "e.Gone"
+    names.write_text(table.render(wrong))
+    assert table.main(["verify", str(names), str(jars / "old.jar")]) == 1
+    err = capsys.readouterr().err
+    assert "member host.run: aB(I)V does not resolve on its owner" in err
+    assert "class gone: e.Gone is not in the jar" in err
+    with pytest.raises(SystemExit, match=r"host\.run does not resolve"):
+        table.symbols(wrong, classfile.read_jar(jars / "old.jar"))
+
+
+def test_table_shape_and_lookup_kinds(tmp_path):
+    bad: table.Table = {
+        "classes": {"k": "k"},
+        "members": {
+            "k.fields": {"owner": "k", "name": "x"},
+            "k.owner": {"owner": "nope", "name": "x", "desc": "()V"},
+            "k.desc": {"owner": "k", "name": "x", "desc": "(Lk)V"},
+            "k.fine": {"owner": "k", "name": "x", "desc": "([[Ljava/lang/String;J)[I"},
+        },
+    }
+    assert table.shape_errors(bad) == [
+        "member k.fields: fields ['name', 'owner'], expected owner, name, desc",
+        "member k.owner: unknown owner 'nope' or empty name",
+        "member k.desc: malformed descriptor '(Lk)V'",
+    ]
+    jar = classfile.read_jar(write_jar(tmp_path / "k.jar", [Spec("k", methods=[(0x2, "hid", "()V", [RETURN])])]))
+    names: table.Table = {
+        "classes": {"k": "k", "gone": "gone"},
+        "members": {
+            "k.hid": {"owner": "k", "name": "hid", "desc": "()V"},
+            "gone.x": {"owner": "gone", "name": "x", "desc": "()V"},
+        },
+    }
+    hierarchy = table.Hierarchy(jar)
+    hidden = table.symbol(names, "k.hid", hierarchy)
+    assert hidden is not None
+    assert hidden.kind == "DECLARED"
+    assert table.symbol(names, "gone.x", hierarchy) is None

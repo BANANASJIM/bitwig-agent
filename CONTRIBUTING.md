@@ -44,14 +44,30 @@ The default checks do not launch Bitwig. See [VERIFICATION.md](VERIFICATION.md) 
 
 ## Mapping a new Bitwig release
 
-Native bindings use obfuscated host names that change with every Bitwig release and platform. `scripts/remap` maps the bound symbols from one `bitwig.jar` to another (a new release, or the same release on another platform) offline: it parses class files as data and never loads or runs host code.
+Native bindings use obfuscated host names that change with every Bitwig release and platform. Binding code names them only by semantic keys; each `host.json` entry selects a name table, `src/bitwig_agent/shared/names_<version>.json`: `classes` maps a key to a host class, `members` maps a key to `{owner, name, desc}`, where `owner` is a class key and `desc` the member's JVM descriptor in that jar. `NativeHost` also requires the types the code binds a member with to equal its `desc`. `scripts/remap` maps the table from one `bitwig.jar` to another (a new release, or the same release on another platform) offline: it parses class files as data and never loads or runs host code. Use absolute paths (the tasks run from the repository root).
 
-```sh
-pixi run remap -- OLD/bitwig.jar NEW/bitwig.jar --harness run.txt --extra extra.tsv \
-    --map map.json --report map.md --classes classmap.json
-```
+1. Generate the new table from the latest maintained one. New keys are found and natively checked on the latest version first and mapped back to the previous one the same way (swap the jars); a key that does not map back is decided by a person, as an explicit `null` for that version, never left out.
 
-Use absolute paths (the task runs from the repository root). The symbol inventory is a harness log plus a hand-written list of symbols the harness cannot see; both formats are described in `scripts/remap/inventory.py`. Each member is matched inside its own declaring class, because obfuscated names are not consistent across classes. Every symbol gets a status (`exact`, `confident`, `uncertain`, `unmapped`), its evidence and a body comparison (`identical`, `renamed-only`, `no-body`, `changed`); the report lists everything that is not `exact`, changed bodies and structural checks. `--no-order` repeats the run without declaration-order anchoring as a control. The report contains symbol names and jar hashes only. Never commit a Bitwig jar or decompiled code: the tests build tiny synthetic class files instead.
+   ```sh
+   pixi run remap -- LATEST/bitwig.jar NEW/bitwig.jar --from-table src/bitwig_agent/shared/names_6_1_7.json \
+       --out src/bitwig_agent/shared/names_<new>.json --report build/remap-<new>.md
+   ```
+
+   Any key not mapped `exact` or `confident` fails the run and writes no table; read the report before going on.
+2. Verify the table on its jar and record that check (offline CI compares the table and jar hashes with the record):
+
+   ```sh
+   PYTHONPATH=scripts pixi run python -m remap.table verify src/bitwig_agent/shared/names_<new>.json \
+       NEW/bitwig.jar --record tests/fixtures/names_verified.json
+   ```
+
+3. Add the `host.json` entry (`version`, `apiVersion`, `jarSha256`, `names`) and the entry's `extension/src/host/<version>/BitwigAgentGridInsertion_<version>.java`, with the override names from the new table.
+4. Bind every native port on the new jar, the bindings resolved on first use included: `pixi run test-java --host-jar NEW/bitwig.jar` (the jar joins only the test classpath; no host code runs). `BITWIG_HOST_JARS=NEW/bitwig.jar pixi run test tests/test_names_tables.py` repeats step 2's resolution check.
+5. Native smoke on the test instance, then fix only the ports that fail; a structural change gets a new adapter, chosen for that entry in the port's method of `nativehost.NativePorts`.
+
+A table's key that was added after an entry shipped is resolved where it is first used (`nativehost.LazyBinding`), not in its adapter's constructor, so an older entry without it fails only that feature with `native_unavailable`.
+
+The older harness mode maps symbols from a harness log plus a hand-written list of symbols the harness cannot see (`--harness run.txt --extra extra.tsv --map map.json --report map.md`); both formats are described in `scripts/remap/inventory.py`. Each member is matched inside its own declaring class, because obfuscated names are not consistent across classes. Every symbol gets a status (`exact`, `confident`, `uncertain`, `unmapped`), its evidence and a body comparison (`identical`, `renamed-only`, `no-body`, `changed`); the report lists everything that is not `exact`, changed bodies and structural checks. `--no-order` repeats the run without declaration-order anchoring as a control. The report contains symbol names and jar hashes only. Never commit a Bitwig jar or decompiled code: the tests build tiny synthetic class files instead.
 
 ## Code style
 
@@ -88,7 +104,7 @@ For security-sensitive issues, use the private route in [SECURITY.md](SECURITY.m
 
 ## Contributing a platform name table
 
-Private features are natively tested on Linux only. Bitwig obfuscates `bitwig.jar` separately per platform (for 6.1.7 the Linux, Windows and macOS jars differ, and so do their member names), so Windows or macOS support needs a name table generated from that platform's jar. The remapping tool currently lives outside this repository; an in-repo tool and runbook are planned. A contributor needs that platform's `bitwig.jar` for a supported version, the matching Linux name table in `src/bitwig_agent/shared/`, (`names_<version>.json`), and the ability to run the native smoke on that platform.
+Private features are natively tested on Linux only. Bitwig obfuscates `bitwig.jar` separately per platform (for 6.1.7 the Linux, Windows and macOS jars differ, and so do their member names), so Windows or macOS support needs a name table generated from that platform's jar. Generate it with the steps in [Mapping a new Bitwig release](#mapping-a-new-bitwig-release), from the Linux table of the same version (`names_<version>.json` in `src/bitwig_agent/shared/`) and that platform's `bitwig.jar` for a supported version; running the native smoke on that platform is the contributor's.
 
 ## Releases
 

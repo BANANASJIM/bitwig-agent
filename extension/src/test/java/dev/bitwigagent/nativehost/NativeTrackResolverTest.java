@@ -7,6 +7,8 @@ import static org.junit.jupiter.api.Assertions.*;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import dev.bitwigagent.HostFixture;
+import dev.bitwigagent.core.HostOperation;
+import dev.bitwigagent.core.PortHandle;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.RpcException;
 import dev.bitwigagent.core.SharedData;
@@ -21,9 +23,11 @@ import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
 /**
- * Binds the track resolver and every access class built on it against the classpath host jar. With the inspected
- * jar of a host.json version each exact descriptor must resolve offline; with any other jar the bindings must fail closed with the
- * host_mismatch reason. No native host runs and no bound method is invoked. The kind and identity checks every
+ * Binds every port of {@link NativePorts}, the bindings they resolve on first use, and the access classes built on the
+ * track resolver against the classpath host jar. With the inspected jar of a host.json entry each exact descriptor must
+ * resolve offline and match the name table's (the compat layer's check that every port constructs on every shipped
+ * entry: run once per entry jar, e.g. {@code BITWIG_API_JAR}); with any other jar the bindings must fail closed with
+ * the host_mismatch reason. No native host runs and no bound method is invoked. The kind and identity checks every
  * access class shares are exercised directly.
  */
 public final class NativeTrackResolverTest {
@@ -56,15 +60,13 @@ public final class NativeTrackResolverTest {
         String names = inspected.get("names").getAsString();
         NativeHost runtime = new NativeHost(isolatedHost(jar, names), version, () -> {});
         assertTrue(runtime.access().gateError() == null, "inspected jar passes the exact version and SHA-256 gate");
+        NativePorts ports = new NativePorts(op -> runtime);
+        HostOperation op = new HostOperation(Long.MAX_VALUE);
+        for (PortHandle<?> port : ports.all()) assertNotNull(port.get(op), "every port binds");
+        assertNotNull(((NativeAutomationAccess) ports.automation().get(op)).text(), "display text binds on first use");
+        assertNotNull(((NativeChainAccess) ports.chains().get(op)).layers(), "layer bindings bind on first use");
         bind(runtime, NativeTrackResolver::new);
         bind(runtime, NativeDeviceTargetAccess::new);
-        bind(runtime, NativeArrangerAccess::new);
-        bind(runtime, NativeAutomationAccess::new);
-        bind(runtime, NativeTrackGroupAccess::new);
-        bind(runtime, NativeRoutingAccess::new);
-        bind(runtime, NativeRenderAccess::new);
-        bind(runtime, NativeLauncherSettingsAccess::new);
-        bind(runtime, NativeChainAccess::new);
         bind(runtime, NativeClipTiming::new);
         bind(runtime, NativeGridBooleanPanelAccess::new);
         bind(runtime, NativeGridConnectionAccess::new);
@@ -73,14 +75,10 @@ public final class NativeTrackResolverTest {
         bind(runtime, NativeGridParameterWriter::new);
         bind(runtime, NativeGridTopologyContext::new);
         bind(runtime, NativeLauncherClip::new);
-        bind(runtime, NativeNoteWriteAccess::new);
-        bind(runtime, NativeProjectSaveAsAccess::new);
         bind(runtime, NativeReadContextAccess::new);
-        bind(runtime, NativeRemotePageAccess::new);
         bind(runtime, NativeStepArrayAccess::new);
         bind(runtime, NativeStringPanelAccess::new);
         bind(runtime, NativeVoicingAccess::new);
-        bind(runtime, access -> new NativeModulatorEditAccess(access, new NativeGridAdapter(access)));
     }
 
     @Test

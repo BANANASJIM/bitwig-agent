@@ -8,14 +8,13 @@ import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.HostModule;
 import dev.bitwigagent.core.HostOperation;
 import dev.bitwigagent.core.Params;
+import dev.bitwigagent.core.PortHandle;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Refs;
 import dev.bitwigagent.core.RpcException;
 import dev.bitwigagent.core.Scheduler;
 import dev.bitwigagent.host.DeviceSources;
-import dev.bitwigagent.host.NativeRuntime;
 import dev.bitwigagent.host.TransportSafety;
-import dev.bitwigagent.nativehost.NativeGridAdapter;
 import java.util.Set;
 import java.util.UUID;
 
@@ -37,24 +36,16 @@ public final class GridModule implements HostModule {
     private final Scheduler scheduler;
     private final DeviceSources sources;
     private final TransportSafety transportSafety;
-    private final NativeRuntime natives;
-    private GridAdapter adapter;
-
-    public GridModule(
-            Scheduler scheduler, DeviceSources sources, TransportSafety transportSafety, NativeRuntime natives) {
-        this(scheduler, sources, transportSafety, natives, null);
-    }
+    private final PortHandle<GridAdapter> adapter;
 
     public GridModule(
             Scheduler scheduler,
             DeviceSources sources,
             TransportSafety transportSafety,
-            NativeRuntime natives,
-            GridAdapter adapter) {
+            PortHandle<GridAdapter> adapter) {
         this.scheduler = scheduler;
         this.sources = sources;
         this.transportSafety = transportSafety;
-        this.natives = natives;
         this.adapter = adapter;
     }
 
@@ -194,9 +185,7 @@ public final class GridModule implements HostModule {
     @Override
     public void status(HostOperation operation, JsonObject out, boolean full) {
         if (!full) return;
-        if (adapter == null)
-            adapter = new NativeGridAdapter(natives.get(operation).access());
-        out.add("grid", adapter.capabilities());
+        out.add("grid", adapter.get(operation).capabilities());
     }
 
     private static boolean graphMode(JsonObject p) {
@@ -246,7 +235,7 @@ public final class GridModule implements HostModule {
     @Override
     public void dispatch(HostOperation op, String method, JsonObject p) {
         scheduler.check(op);
-        if (adapter == null) adapter = new NativeGridAdapter(natives.get(op).access());
+        GridAdapter adapter = this.adapter.get(op);
         final boolean moving = method.equals("grid.modules.move");
         final boolean connection = method.equals("grid.connections.set");
         final boolean inserting = method.equals("grid.modules.insert");
@@ -409,7 +398,7 @@ public final class GridModule implements HostModule {
     public void ackTopology(HostOperation op, String device) {
         scheduler.check(op);
         String trackId = device.substring(0, device.indexOf('/'));
-        if (adapter == null) adapter = new NativeGridAdapter(natives.get(op).access());
+        GridAdapter adapter = this.adapter.get(op);
         java.util.List<DeviceSources.RootReadTicket> targets = sources.rootReads(trackId);
         adapter.execute(() -> {
             try {

@@ -1,5 +1,7 @@
 package dev.bitwigagent.nativehost;
 
+import static dev.bitwigagent.arranger.ArrangerNotes.EPS;
+
 import com.google.gson.*;
 import dev.bitwigagent.arranger.ArrangerModule;
 import dev.bitwigagent.arranger.ArrangerNotes;
@@ -25,7 +27,6 @@ import java.util.*;
  * selection is read or passed.
  */
 public final class NativeArrangerAccess implements ArrangerModule.Access {
-    public static final double EPS = 1e-6;
     private final NativeHost.Access a;
     private final NativeReadContext context;
     private final NativeTrackResolver resolver;
@@ -37,15 +38,6 @@ public final class NativeArrangerAccess implements ArrangerModule.Access {
     private final Object copyMode;
 
     /** The exact bindings, or native_unavailable when a descriptor does not match the loaded host. */
-    public static NativeArrangerAccess bind(NativeHost.Access a) {
-        try {
-            return new NativeArrangerAccess(a);
-        } catch (ReflectiveOperationException | LinkageError error) {
-            throw Errors.notApplied(
-                    Reason.NATIVE_UNAVAILABLE, "Exact arranger bindings unavailable: " + NativeHost.diagnostic(error));
-        }
-    }
-
     NativeArrangerAccess(NativeHost.Access a) throws ReflectiveOperationException {
         this.a = a;
         context = new NativeReadContext(new NativeReadContextAccess(a));

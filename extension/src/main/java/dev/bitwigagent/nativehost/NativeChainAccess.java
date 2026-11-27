@@ -52,7 +52,7 @@ public final class NativeChainAccess implements NativeChains.Access {
     private final Method vst2, vst3, clap, vst2Plugins, vst3Plugins, clapPlugins, pluginFile;
     private final Constructor<?> point, filePayload, file;
     private final Object copy, noModifiers, copyModifier;
-    private Layers layers;
+    private final LazyBinding<Layers> layers = new LazyBinding<>("Native layer binding unavailable: ");
 
     public NativeChainAccess(NativeHost.Access a) throws ReflectiveOperationException {
         this.a = a;
@@ -372,16 +372,8 @@ public final class NativeChainAccess implements NativeChains.Access {
     }
 
     /** The {@link Layers} binding, resolved on the first call that needs it. */
-    private Layers layers() {
-        if (layers == null) {
-            try {
-                layers = new Layers();
-            } catch (ReflectiveOperationException | LinkageError error) {
-                throw Errors.notApplied(
-                        Reason.NATIVE_UNAVAILABLE, "Native layer binding unavailable: " + NativeHost.diagnostic(error));
-            }
-        }
-        return layers;
+    Layers layers() {
+        return layers.get(Layers::new);
     }
 
     /** Exact descriptors for layer mixers, Selectors and new chains. */

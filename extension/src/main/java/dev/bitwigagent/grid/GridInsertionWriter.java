@@ -12,7 +12,6 @@ import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.RpcException;
 import dev.bitwigagent.core.Verification;
 import dev.bitwigagent.host.DeviceSources;
-import dev.bitwigagent.nativehost.NativeHost;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
@@ -559,8 +558,7 @@ public final class GridInsertionWriter {
                                     ? (Exception) error
                                     : new Exception("Insertion preplacement gate failed", error));
                     normalHandling = true; // Record normal delivered cleanup BEFORE any outward notification.
-                    if (!(error instanceof RpcException) || NativeHost.isInvocationFailure(error))
-                        adapterFailure(error);
+                    if (!(error instanceof RpcException) || Errors.isHostCallFailure(error)) adapterFailure(error);
                     return true;
                 } catch (Throwable cleanupError) {
                     adapterFailure(cleanupError);
@@ -743,7 +741,7 @@ public final class GridInsertionWriter {
 
     static boolean settlementMismatch(Throwable error) {
         return error instanceof RpcException
-                && !NativeHost.isInvocationFailure(error)
+                && !Errors.isHostCallFailure(error)
                 && MISMATCH_CODES.stream().anyMatch(((RpcException) error)::is);
     }
 

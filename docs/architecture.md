@@ -42,10 +42,10 @@ The main sources are under [`extension/src/main/java/dev/bitwigagent`](https://g
 |---|---|
 | (root) | Composition only: `BitwigAgentExtension`, its definition and `HostBridge` wire services, modules and adapters |
 | `rpc` | `RpcServer`: framing, bounds, admission; imports only `core` |
-| `core` | Shared mechanisms: `MethodSpecs`, `SchemaValidator`, `Refs`, `Errors`/`ErrorCode`/`Reason`/`Outcome`, `Params`, `Results`, `Batch`, `Scheduler`, `HostOperation`, `HostModule`, `Holds`, value/match/position rules, display solving |
-| `host` | Shared host observations and services: `TrackWindow`, `TrackRefs`, `ProjectState`, `TransportSafety`, `SelectionLease`, `LauncherStructureLock`, `NativeRuntime`, `DeviceSources`, `RequestSnapshot`, `NativeReadContext` |
+| `core` | Shared mechanisms: `MethodSpecs`, `SchemaValidator`, `Refs`, `Errors`/`ErrorCode`/`Reason`/`Outcome`, `Params`, `Results`, `Batch`, `Scheduler`, `HostOperation`, `HostModule`, `PortHandle`, `Holds`, value/match/position rules, display solving |
+| `host` | Shared host observations and services: `TrackWindow`, `TrackRefs`, `ProjectState`, `TransportSafety`, `SelectionLease`, `LauncherStructureLock`, `DeviceSources`, `RequestSnapshot`, `NativeReadContext` |
 | `grid`, `device`, `launcher`, `arranger`, `mix`, `project`, `render`, `routing`, `automation`, `transport`, `actions`, `recovery` | Domain modules and their host-free rules, one package per domain |
-| `nativehost` | Version-gated native bindings: the only package that reflects into the host; host names come from the selected version's name table |
+| `nativehost` | Version-gated native bindings: the only package that reflects into the host; host names come from the selected version's name table; `NativePorts` builds every adapter |
 
 Tests mirror these packages. Domain packages mirror the Python `protocol/` modules, grouped as `device` (devices, chains, parameters, modulators), `launcher` (launcher, scenes, clips, notes), `arranger` (arranger, markers), `mix` (tracks, meters) and `project` (status, context, project).
 
@@ -53,7 +53,6 @@ Java `core` holds the extension's shared protocol mechanisms; Python `core` is t
 
 Known couplings (follow-up; `tests/test_java_packages.py` is tightened once they are gone):
 
-- Domain packages still name `nativehost.Native*` classes directly instead of going only through their ports.
 - `nativehost` still builds JSON and calls domain rules (for example `NativeRoutingAccess`); `NativeAutomationAccess` only reads and writes points.
 - `core.HostOperation` implements `rpc.RpcServer.Expiring`.
 - `core.Results` takes `host.ProjectState.Readiness`.
@@ -69,7 +68,7 @@ Known couplings (follow-up; `tests/test_java_packages.py` is tightened once they
   - `ProjectState` owns project readiness, the modified flag and the audio engine.
   - `TransportSafety` owns the single rule set for recording, automation-write and playing state.
   - `SelectionLease` owns the editor selection that launcher cursor operations bind, and `LauncherStructureLock` says what pins launcher slot rows.
-  - `NativeRuntime` is the lazy shared gate to the native bindings.
+  - `nativehost.NativePorts` is the one place native adapters are built: a `core.PortHandle` per port (the domain module's `Access` interface), which binds on first use and keeps the binding or its `native_unavailable` refusal; a cancelled request is not kept. Domain packages never import `nativehost` (`tests/test_java_packages.py`); tests pass `PortHandle.of(fake)`.
   - `Holds` owns every unresolved or in-flight write: `status` lists them, writes in the domain are refused while one stands, and `AckModule` (`ack`) releases an unresolved one. `JobsModule` (`jobs.get`) reports the long jobs that in-flight holds stand for.
 - `HostOperation` tracks deadlines and turns a failure after dispatch into an unknown result. Host API work crosses the scheduler boundary rather than running on the network thread.
 - The device domain is split by what it proves. `DeviceListModule` lists a track's or a chain's devices; `DeviceChainModule` lists chains and owns the observed-delta verification of `devices.insert`/`delete`/`move` for a root chain and for a layer chain (`DeviceChainEdit` is the pure rule set); `DeviceModule` reads, bypasses and selects one device; `RemoteModule` owns each root device's own Remote Controls page (`devices.remote.get`, the internal page switch and the control write that `parameters.set` routes to it); `ParameterModule` lists and writes direct parameters.
@@ -84,7 +83,7 @@ Known couplings (follow-up; `tests/test_java_packages.py` is tightened once they
 - `ModulatorModule` answers `modulators.list`/`get` from `ModulatorEditor` (typed rows with refs) and `ModulatorSnapshotReader` (bounded, nonloading string-panel rows). They share root target/read-context machinery, not Grid write authority.
 - `ModulatorEditModule` (RPC boundary), `ModulatorEditor` (ref resolution, `expect`, dispatch, readback) and `NativeModulatorEditAccess` (descriptors) own device-modulator edits, including the control writes `parameters.set` routes to them. They reuse the Grid parameter reader for typed values and Grid targets, and the Grid parameter/topology context checks, but not Grid write authority or topology quarantine.
 
-`NativeTrackResolver` maps a public track proxy to its native track model and identity for the render and automation accessors. `NativeHost` is lazy and shared through `NativeRuntime`. It selects the `shared/host.json` entry for the exact host version, checks the loaded JAR CodeSource/hash/ClassLoader against it, and resolves every binding through that entry's name table (`shared/names_<version>.json`: semantic keys such as `app.singleton` mapped to obfuscated host classes and members) before private dispatch. Binding code names host symbols only by those keys. Native target/read-context helpers corroborate ownership and lifecycle. Grid and modulator availability remains independently reported; successful read binding does not enable a writer.
+`NativeTrackResolver` maps a public track proxy to its native track model and identity for the render and automation accessors. `NativeHost` is the gate `NativePorts` opens on the first request that needs native access. It selects the `shared/host.json` entry for the exact host version, checks the loaded JAR CodeSource/hash/ClassLoader against it, and resolves every binding through that entry's name table (`shared/names_<version>.json`: semantic keys such as `app.singleton` mapped to obfuscated host classes and to members with their JVM descriptors) before private dispatch. Binding code names host symbols only by those keys, and an exact method or constant binds only when the code's types are the table's descriptor. A key an entry lacks fails only the features that use it; keys added after an entry shipped are resolved on first use (`LazyBinding`), not in an adapter's constructor. Native target/read-context helpers corroborate ownership and lifecycle. Grid and modulator availability remains independently reported; successful read binding does not enable a writer.
 
 Each supported host has one unnamed-package insertion class, `extension/src/host/<version>/BitwigAgentGridInsertion_<version>.java`, compiled against that version's jar (the build checks the jar's SHA-256 against `host.json`). The unnamed package is intentional: the native superclass is in that package and the loader expects the exact per-version class name. It is a narrow insertion boundary, not another transport, planner or generic transaction framework.
 

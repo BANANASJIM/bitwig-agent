@@ -35,8 +35,8 @@ import java.util.function.Function;
 public final class NativeAutomationAccess implements AutomationModule.Access {
     private final NativeHost.Access a;
     private NativeGridAdapter gridAdapter;
-    private NativeChainAccess chainAccess;
-    private Text text;
+    private final LazyBinding<NativeChainAccess> chains = new LazyBinding<>("Native chain binding unavailable: ");
+    private final LazyBinding<Text> text = new LazyBinding<>("Automation display bindings unavailable: ");
     private final NativeReadContext context;
     private final NativeTrackResolver resolver;
     private final Class<?> parameterType, rangeType, pointType, projectType;
@@ -56,18 +56,6 @@ public final class NativeAutomationAccess implements AutomationModule.Access {
     private final Object hold, linear;
 
     /** The exact bindings, or native_unavailable when a descriptor does not match the loaded host. */
-    public static NativeAutomationAccess bind(NativeHost.Access a) {
-        try {
-            return new NativeAutomationAccess(a);
-        } catch (ReflectiveOperationException | LinkageError error) {
-            throw unavailable("Exact automation bindings unavailable: ", error);
-        }
-    }
-
-    private static RpcException unavailable(String what, Throwable error) {
-        return Errors.notApplied(Reason.NATIVE_UNAVAILABLE, what + NativeHost.diagnostic(error));
-    }
-
     NativeAutomationAccess(NativeHost.Access a) throws ReflectiveOperationException {
         this.a = a;
         context = new NativeReadContext(new NativeReadContextAccess(a));
@@ -178,15 +166,8 @@ public final class NativeAutomationAccess implements AutomationModule.Access {
         return set;
     }
 
-    private Text text() {
-        if (text == null) {
-            try {
-                text = new Text();
-            } catch (ReflectiveOperationException | LinkageError error) {
-                throw unavailable("Automation display bindings unavailable: ", error);
-            }
-        }
-        return text;
+    Text text() {
+        return text.get(Text::new);
     }
 
     @Override
@@ -330,14 +311,7 @@ public final class NativeAutomationAccess implements AutomationModule.Access {
     }
 
     private NativeChainAccess chains() {
-        if (chainAccess == null) {
-            try {
-                chainAccess = new NativeChainAccess(a);
-            } catch (ReflectiveOperationException | LinkageError error) {
-                throw unavailable("Native chain binding unavailable: ", error);
-            }
-        }
-        return chainAccess;
+        return chains.get(() -> new NativeChainAccess(a));
     }
 
     @Override

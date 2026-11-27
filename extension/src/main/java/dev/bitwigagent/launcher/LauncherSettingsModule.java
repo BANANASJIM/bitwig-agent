@@ -7,14 +7,13 @@ import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.Holds;
 import dev.bitwigagent.core.HostLimits;
 import dev.bitwigagent.core.HostOperation;
+import dev.bitwigagent.core.PortHandle;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.SafetyObservation;
 import dev.bitwigagent.core.Scheduler;
 import dev.bitwigagent.host.LauncherStructureLock;
-import dev.bitwigagent.host.NativeRuntime;
 import dev.bitwigagent.host.TrackWindow;
 import dev.bitwigagent.host.TransportSafety;
-import dev.bitwigagent.nativehost.NativeLauncherSettingsAccess;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicLongArray;
 import java.util.function.Consumer;
@@ -39,10 +38,9 @@ public final class LauncherSettingsModule {
     private final Scheduler scheduler;
     private final TrackWindow window;
     private final TransportSafety transportSafety;
-    private final NativeRuntime natives;
+    private final PortHandle<Access> port;
     private final Holds holds;
     private final AtomicLongArray epochs = new AtomicLongArray(HostLimits.TRACKS);
-    private Access access;
     private static final String PENDING = LauncherStructureLock.SETTINGS_PENDING,
             QUARANTINE = LauncherStructureLock.SETTINGS;
     private static final String PENDING_HOLD = "A clips.set settings write is pending.",
@@ -52,24 +50,13 @@ public final class LauncherSettingsModule {
             Scheduler scheduler,
             TrackWindow window,
             TransportSafety transportSafety,
-            NativeRuntime natives,
+            PortHandle<Access> port,
             Holds holds) {
-        this(scheduler, window, transportSafety, natives, holds, null);
-    }
-
-    public LauncherSettingsModule(
-            Scheduler scheduler,
-            TrackWindow window,
-            TransportSafety transportSafety,
-            NativeRuntime natives,
-            Holds holds,
-            Access access) {
         this.scheduler = scheduler;
         this.window = window;
         this.transportSafety = transportSafety;
-        this.natives = natives;
+        this.port = port;
         this.holds = holds;
-        this.access = access;
         for (int i = 0; i < HostLimits.TRACKS; i++) {
             final int index = i;
             Track t = window.at(i);
@@ -106,14 +93,7 @@ public final class LauncherSettingsModule {
         if (!slot.hasContent().get() || slot.sceneIndex().get() != scene)
             throw Errors.notApplied(Reason.NOT_READY, "The slot proxy does not show the scene yet.");
         SafetyObservation safety = write ? transportSafety.stopped(op) : null;
-        if (access == null)
-            try {
-                access = new NativeLauncherSettingsAccess(natives.get(op).access());
-            } catch (ReflectiveOperationException e) {
-                throw Errors.notApplied(
-                        Reason.NATIVE_UNAVAILABLE,
-                        "Exact launcher settings descriptors unavailable: " + e.getMessage());
-            }
+        Access access = port.get(op);
         long epoch = epochs.get(index);
         holds.inFlight(PENDING, PENDING_HOLD);
         Runnable check = () -> {

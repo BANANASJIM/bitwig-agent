@@ -22,16 +22,6 @@ public final class NativeProjectSaveAsAccess implements ProjectModule.SaveAsAcce
     private final Method application, target, window, save, projectsRoot, saving;
 
     /** The exact bindings, or native_unavailable when a descriptor does not match the loaded host. */
-    public static NativeProjectSaveAsAccess bind(NativeHost.Access a) {
-        try {
-            return new NativeProjectSaveAsAccess(a);
-        } catch (ReflectiveOperationException | LinkageError error) {
-            throw Errors.notApplied(
-                    Reason.NATIVE_UNAVAILABLE,
-                    "Exact project save bindings unavailable: " + NativeHost.diagnostic(error));
-        }
-    }
-
     NativeProjectSaveAsAccess(NativeHost.Access a) throws ReflectiveOperationException {
         this.a = a;
         Class<?> app = a.type("app");
@@ -124,7 +114,7 @@ public final class NativeProjectSaveAsAccess implements ProjectModule.SaveAsAcce
                     }
                     if (signature.equals(failed)) {
                         Throwable error = (Throwable) args[0];
-                        done.failed(error == null ? "unknown error" : NativeHost.diagnostic(error), false);
+                        done.failed(error == null ? "unknown error" : Errors.diagnostic(error), false);
                         return null;
                     }
                     switch (signature) {

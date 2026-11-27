@@ -1,16 +1,13 @@
 package dev.bitwigagent.device;
 
-import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.HostOperation;
+import dev.bitwigagent.core.PortHandle;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.RpcException;
 import dev.bitwigagent.grid.GridRemotePageWriter;
 import dev.bitwigagent.host.DeviceSources;
-import dev.bitwigagent.host.NativeRuntime;
-import dev.bitwigagent.nativehost.NativeRemotePageAccess;
 import java.util.List;
 import java.util.function.Consumer;
-import java.util.function.Function;
 
 /**
  * What a Remote Controls slot holds, read from the native document: the page shown at an index of the device's visible
@@ -19,27 +16,13 @@ import java.util.function.Function;
  * name, an empty slot, an unavailable binding) is no answer rather than a guess.
  */
 public final class NativeRemoteValues implements RemoteModule.NativeValues {
-    private final Function<HostOperation, GridRemotePageWriter.Access> binding;
+    private final PortHandle<GridRemotePageWriter.Access> pages;
     private final NativeChains chains;
-    private GridRemotePageWriter.Access pages;
 
-    NativeRemoteValues(Function<HostOperation, GridRemotePageWriter.Access> binding, NativeChains chains) {
-        this.binding = binding;
+    /** {@code pages}: the native Remote Controls page model, bound on first use. */
+    public NativeRemoteValues(PortHandle<GridRemotePageWriter.Access> pages, NativeChains chains) {
+        this.pages = pages;
         this.chains = chains;
-    }
-
-    /** The 6.1.4 Remote Controls page model, bound on first use. */
-    public static NativeRemoteValues on(NativeRuntime natives, NativeChains chains) {
-        return new NativeRemoteValues(
-                op -> {
-                    try {
-                        return new NativeRemotePageAccess(natives.get(op).access());
-                    } catch (ReflectiveOperationException | LinkageError error) {
-                        throw Errors.notApplied(
-                                Reason.NATIVE_UNAVAILABLE, "Native Remote Controls binding unavailable.");
-                    }
-                },
-                chains);
     }
 
     @Override
@@ -52,10 +35,8 @@ public final class NativeRemoteValues implements RemoteModule.NativeValues {
             int slot,
             Consumer<Double> done,
             Consumer<RuntimeException> failed) {
-        GridRemotePageWriter.Access access;
         try {
-            if (pages == null) pages = binding.apply(op);
-            access = pages;
+            GridRemotePageWriter.Access access = pages.get(op);
             chains.async(
                     op,
                     device.ref(),

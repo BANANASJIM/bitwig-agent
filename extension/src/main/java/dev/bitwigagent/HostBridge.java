@@ -28,7 +28,6 @@ import dev.bitwigagent.device.RemoteModule;
 import dev.bitwigagent.grid.GridModule;
 import dev.bitwigagent.host.DeviceSources;
 import dev.bitwigagent.host.LauncherStructureLock;
-import dev.bitwigagent.host.NativeRuntime;
 import dev.bitwigagent.host.ProjectState;
 import dev.bitwigagent.host.SelectionLease;
 import dev.bitwigagent.host.TrackRefs;
@@ -47,6 +46,7 @@ import dev.bitwigagent.mix.MeterModule;
 import dev.bitwigagent.mix.MixModule;
 import dev.bitwigagent.mix.TrackLifecycleModule;
 import dev.bitwigagent.mix.TrackListModule;
+import dev.bitwigagent.nativehost.NativePorts;
 import dev.bitwigagent.project.ContextModule;
 import dev.bitwigagent.project.DiscoveryModule;
 import dev.bitwigagent.project.KeySignatureModule;
@@ -85,27 +85,29 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
         transportSafety = new TransportSafety(transport);
         TrackRefs trackRefs = new TrackRefs(window);
         DeviceSources sources = new DeviceSources(window, trackRefs);
-        NativeRuntime natives = new NativeRuntime(host, scheduler);
-        NativeChains chains = new NativeChains(scheduler, sources, natives, null);
+        NativePorts natives = new NativePorts(host, scheduler);
+        NativeChains chains = new NativeChains(scheduler, sources, natives.chains());
         SelectionLease selection = new SelectionLease();
         Holds holds = new Holds();
         LauncherStructureLock lock = new LauncherStructureLock(selection, holds);
         RemoteModule remotes = new RemoteModule(host, scheduler, window, sources, transportSafety);
-        ModulatorEditModule modulatorEdits = new ModulatorEditModule(scheduler, sources, transportSafety, natives);
+        ModulatorEditModule modulatorEdits =
+                new ModulatorEditModule(scheduler, sources, transportSafety, natives.modulatorEdits());
         ParameterModule parameters = new ParameterModule(
                 scheduler, sources, chains, trackRefs, window, transportSafety, remotes, modulatorEdits);
         register(parameters);
         ParameterResolver parameterResolver = new ParameterResolver(sources, trackRefs, window, parameters, remotes);
-        remotes.nativeValues = NativeRemoteValues.on(natives, chains);
+        remotes.nativeValues = new NativeRemoteValues(natives.remotePages(), chains);
         register(remotes);
-        ProjectModule projectModule = new ProjectModule(scheduler, application, project, projectState, natives, holds);
+        ProjectModule projectModule =
+                new ProjectModule(scheduler, application, project, projectState, natives.saveAs(), holds);
         register(new DiscoveryModule(host, application, transport, window, projectState, specs, holds, domains));
         register(new DeviceListModule(window, trackRefs, chains));
         register(new DeviceChainModule(scheduler, window, trackRefs, sources, chains, transportSafety));
         register(new ChainModule(scheduler, chains, transportSafety));
         register(new ActionModule(scheduler, application, projectState, selection));
         register(projectModule);
-        register(new KeySignatureModule(scheduler, project, transportSafety, natives, holds, null));
+        register(new KeySignatureModule(scheduler, project, transportSafety, natives.keySignature(), holds));
         TransportModule transportModule =
                 new TransportModule(transport, application, scheduler, transportSafety, projectState);
         register(transportModule);
@@ -113,7 +115,15 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
         register(mix);
         register(new TrackListModule(window, trackRefs, mix));
         register(new TrackLifecycleModule(
-                scheduler, window, trackRefs, application, transportSafety, selection, natives, holds, mix, null));
+                scheduler,
+                window,
+                trackRefs,
+                application,
+                transportSafety,
+                selection,
+                natives.trackGroup(),
+                holds,
+                mix));
         register(new DeviceModule(scheduler, sources, chains, selection));
         LauncherTargets launcherTargets =
                 new LauncherTargets(window, trackRefs, new SceneWindowLease(window, scheduler));
@@ -121,29 +131,39 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
                 new LauncherState(host, scheduler, window, transportSafety, selection, lock, holds, launcherTargets);
         register(new LauncherModule(launcher, trackRefs, application, transport));
         RenderModule render = new RenderModule(
-                scheduler, window, trackRefs, project, transportSafety, natives, holds, null, launcher);
-        NoteModule notes = new NoteModule(launcher, new NativeNotes(natives, null));
+                scheduler, window, trackRefs, project, transportSafety, natives.render(), holds, launcher);
+        NoteModule notes = new NoteModule(launcher, new NativeNotes(natives.noteWrites()));
         register(notes);
         MarkerModule markers = new MarkerModule(host, transport, scheduler, transportSafety, holds);
         ArrangerModule arranger = new ArrangerModule(
-                scheduler, window, trackRefs, projectState, transportSafety, natives, holds, markers, transport, null);
+                scheduler,
+                window,
+                trackRefs,
+                projectState,
+                transportSafety,
+                natives.arranger(),
+                holds,
+                markers,
+                transport);
         register(new ClipModule(
                 launcher,
                 trackRefs,
                 notes,
-                new LauncherSettingsModule(scheduler, window, transportSafety, natives, holds),
+                new LauncherSettingsModule(scheduler, window, transportSafety, natives.launcherSettings(), holds),
                 arranger));
         register(new SceneModule(scheduler, window, transportSafety, lock, launcherTargets, project));
         register(markers);
         register(new MeterModule(scheduler, window, trackRefs, transportSafety));
         register(arranger);
-        register(new AutomationModule(scheduler, window, parameterResolver, transportSafety, natives, holds));
-        register(new RoutingModule(scheduler, window, trackRefs, sources, transportSafety, natives, holds, specs));
+        register(new AutomationModule(
+                scheduler, window, parameterResolver, transportSafety, natives.automation(), holds));
+        register(new RoutingModule(
+                scheduler, window, trackRefs, sources, transportSafety, natives.routing(), holds, specs));
         register(render);
         register(new ContextModule(scheduler, window, projectState, transportSafety, transportModule, mix, launcher));
-        GridModule grid = new GridModule(scheduler, sources, transportSafety, natives);
+        GridModule grid = new GridModule(scheduler, sources, transportSafety, natives.grid());
         register(grid);
-        register(new ModulatorModule(scheduler, sources, natives, null, modulatorEdits));
+        register(new ModulatorModule(scheduler, sources, natives.modulators(), modulatorEdits));
         register(modulatorEdits);
         register(new AckModule(holds, grid));
         register(new JobsModule(render, projectModule));

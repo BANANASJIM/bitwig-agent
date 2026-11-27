@@ -2,6 +2,8 @@
 """Run the JUnit 5 tests in one JVM; simulated host only, never native Bitwig.
 
 Compiles against BITWIG_API_JAR when set, else the pinned public extension API.
+--host-jar adds an installed bitwig.jar to the test classpath, never to compilation: the native binding test then
+binds every port on that jar offline (no host code runs), which checks a host.json entry's name table against its jar.
 Dependencies come from extension/deps.toml, checksum-verified; requires a JDK.
 """
 
@@ -29,6 +31,7 @@ JUNIT_HEAP = "-Xmx1g"
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--jacoco", type=Path, help="record coverage of dev.bitwigagent classes to this .exec file")
+    parser.add_argument("--host-jar", type=Path, help="a host.json entry's bitwig.jar to bind the native ports on")
     args = parser.parse_args()
     missing = [name for name in CORE_TESTS if not (TEST_ROOT / name).is_file()]
     if missing:
@@ -48,7 +51,8 @@ def main() -> None:
     sources = [*build.verification_sources(), *sorted(TEST_ROOT.rglob("*.java"))]
     build.compile_java(sources, classes, [gson, api, junit, *jqwik], build.lint_flag(api))
     build.write_resources(classes)
-    classpath = os.pathsep.join(map(str, [classes, gson, api, *jqwik]))
+    host = [args.host_jar.resolve()] if args.host_jar else []
+    classpath = os.pathsep.join(map(str, [classes, gson, api, *jqwik, *host]))
     agent = (
         [f"-javaagent:{dependency('jacoco-agent')}=destfile={args.jacoco.resolve()},includes=dev.bitwigagent.*"]
         if args.jacoco
