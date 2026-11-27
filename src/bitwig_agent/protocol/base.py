@@ -37,6 +37,7 @@ class Verification(StrEnum):
     NATIVE_READBACK = "native_readback"
     API_READBACK = "api_readback"
     FILE_READBACK = "file_readback"
+    SYSTEM_READBACK = "system_readback"
 
 
 SUCCEEDED = frozenset({Outcome.ALREADY_MATCHED, Outcome.APPLIED, Outcome.SENT})

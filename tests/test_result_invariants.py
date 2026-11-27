@@ -57,15 +57,13 @@ CHECKED: dict[str, Callable[..., object]] = {
     "grid.probe": test_grid_probe.test_probe_reroutes_records_and_restores_exactly,
     "grid.render": test_grid_render.test_fixture_pages_completely_and_renders_wellformed_svg,
     "audio.capture": test_audio_pipewire.test_capture_from_start_orders_transport_and_reports_levels,
+    "audio.route": test_audio_pipewire.test_route_outcomes,
 }
-# Known gaps: an applied result without a verification, pending a protocol decision.
-KNOWN_GAPS = {"audio.route": "a PipeWire relink reports applied with no verification value that fits it"}
 
 
 def test_every_client_side_write_has_an_example_checked_for_the_leaf_rule():
     # grid.render is read-only toward Bitwig, but it writes its image file and reports that outcome
     writes = {name for name, spec in TOOLS.items() if not spec.host and not spec.read_only} | {"grid.render"}
-    assert writes == CHECKED.keys() | KNOWN_GAPS.keys()
-    assert not CHECKED.keys() & KNOWN_GAPS.keys()
+    assert writes == CHECKED.keys()
     for method, test in CHECKED.items():
         assert "leaf_rule_holds(" in inspect.getsource(test), method
