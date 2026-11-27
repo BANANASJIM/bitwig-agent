@@ -43,6 +43,11 @@ SKIPS: dict[tuple[str, str, str], str] = {
         "accept",
     ): "per-kind id caps (clap 256, vst3 32) make the shared 4096 unreachable; rejects still run",
     (
+        "devices.replace",
+        "insert.id",
+        "accept",
+    ): "the same Insert object as devices.insert: per-kind id caps make the shared 4096 unreachable",
+    (
         "clips.insert",
         "notes.0.beat",
         "accept",
@@ -226,6 +231,7 @@ FIXUPS = {
     ("grid.parameters.set", "display"): drop("value"),
     ("transport.set", "timeSignature"): lambda p, v: p.__setitem__("timeSignature", "3/4"),
     ("devices.insert", "insert.path"): file_insert,
+    ("devices.replace", "insert.path"): file_insert,
     ("clips.import", "path"): lambda p, v: p.__setitem__("path", as_path(v)),
     ("clips.set", "expect"): lambda p, v: p.__setitem__("expect", {"name": "Hook"}),
     ("project.saveAs", "path"): project_path,

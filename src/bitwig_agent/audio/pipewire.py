@@ -64,7 +64,7 @@ async def require_engine(bridge: Any, timeout_ms: int) -> None:
 # Seams for tests: no real subprocess or sleeping there.
 def run(args: list[str], timeout: float = RUN_TIMEOUT) -> tuple[int, str, str]:
     try:
-        done = subprocess.run(args, capture_output=True, text=True, timeout=timeout, check=False)
+        done = subprocess.run(args, capture_output=True, text=True, encoding="utf-8", timeout=timeout, check=False)
     except subprocess.TimeoutExpired as exc:
         raise bridge_error("deadline", f"{args[0]} did not finish within {timeout:g}s") from exc
     except OSError as exc:

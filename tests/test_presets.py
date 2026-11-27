@@ -48,7 +48,7 @@ def library(tmp_path):
     (user / "Presets" / "Reverb" / "Big Hall.bwpreset").write_bytes(
         _plain("Convolution", "audio_to_audio", "Reverb", "Ada")
     )
-    (user / "Presets" / "Notes.txt").write_text("not a preset")
+    (user / "Presets" / "Notes.txt").write_text("not a preset", encoding="utf-8")
     packages = tmp_path / "installed-packages" / "5.0"
     (packages / "Bitwig" / "Essentials" / "Presets" / "Convolution").mkdir(parents=True)
     (packages / "Bitwig" / "Essentials" / "Presets" / "Convolution" / "Warm Room.bwpreset").write_bytes(

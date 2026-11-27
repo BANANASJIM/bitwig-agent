@@ -197,10 +197,11 @@ public final class RenderModuleTest {
         assertRpcError(
                 "invalid_target", () -> RenderPlan.export(dir.resolve("missing"), "Mix", 1, List.of("wav"), false));
         Path locked = Files.createDirectory(dir.resolve("locked"));
-        assertTrue(locked.toFile().setWritable(false), "directory made read-only");
-        if (!Files.isWritable(locked))
+        // Windows ignores the read-only flag on directories, so the refusal is asserted only where it is enforced.
+        if (locked.toFile().setWritable(false) && !Files.isWritable(locked)) {
             assertRpcError("invalid_target", () -> RenderPlan.export(locked, "Mix", 1, List.of("wav"), false));
-        assertTrue(locked.toFile().setWritable(true), "directory writable again for cleanup");
+        }
+        locked.toFile().setWritable(true);
     }
 
     @Test

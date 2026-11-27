@@ -26,7 +26,7 @@ def sources() -> list[Path]:
 
 @pytest.mark.parametrize("path", sources(), ids=lambda p: p.relative_to(BASE).as_posix())
 def test_package_declaration_matches_directory(path):
-    declared = re.search(r"^package ([\w.]+);", path.read_text(), re.M)
+    declared = re.search(r"^package ([\w.]+);", path.read_text(encoding="utf-8"), re.M)
     assert declared
     assert declared.group(1) == ".".join(("dev", "bitwigagent", *path.parent.relative_to(BASE).parts))
 
@@ -42,10 +42,12 @@ def test_root_package_is_composition_and_each_host_has_only_its_loader_class():
 @pytest.mark.parametrize("path", sources(), ids=lambda p: p.relative_to(BASE).as_posix())
 def test_only_nativehost_reflects_into_the_host(path):
     if package(path) != "nativehost":
-        assert not NATIVE.search(path.read_text()), f"{path.name} binds host internals outside nativehost"
+        assert not NATIVE.search(path.read_text(encoding="utf-8")), (
+            f"{path.name} binds host internals outside nativehost"
+        )
 
 
 @pytest.mark.parametrize("path", sorted((BASE / "rpc").glob("*.java")), ids=lambda p: p.name)
 def test_rpc_imports_only_core(path):
-    for match in INTERNAL_IMPORT.finditer(path.read_text()):
+    for match in INTERNAL_IMPORT.finditer(path.read_text(encoding="utf-8")):
         assert match.group(1) == "core.", f"{path.name} imports dev.bitwigagent.{match.group(1)}"
