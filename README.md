@@ -12,7 +12,7 @@
 [Quickstart](#quickstart) · [Documentation](https://github.com/BANANASJIM/bitwig-agent/blob/main/docs/README.md) · [Agent skill](https://github.com/BANANASJIM/bitwig-agent/tree/main/skills/bitwig-agent) · [Contributing](https://github.com/BANANASJIM/bitwig-agent/blob/main/CONTRIBUTING.md)
 
 > **Experimental — use a disposable project and keep backups.**
-> **`0.5.0` supports Bitwig 6.1.4 and 6.1.7 for private Grid/modulator access**, each with an exact loaded host-JAR check; other versions fail closed. Older releases keep their own boundary ([supported versions](#supported-bitwig-versions)). `0.5.0` speaks protocol 0.5 with no 0.4 compatibility: read the [migration guide](https://github.com/BANANASJIM/bitwig-agent/blob/main/docs/migration-0.5.md). Update Python and the extension together. Read the [bounded native evidence](https://github.com/BANANASJIM/bitwig-agent/blob/main/VERIFICATION.md) and [safety boundaries](#safety-and-compatibility).
+> **`0.5.0` supports Bitwig 6.1.4 and 6.1.7 for private Grid/modulator access**, each with an exact loaded host-JAR check; other versions fail closed. Older releases keep their own boundary ([supported versions](#supported-bitwig-versions)). `0.5.0` speaks protocol 0.5 with no 0.4 compatibility. Update Python and the extension together. Read the [bounded native evidence](https://github.com/BANANASJIM/bitwig-agent/blob/main/VERIFICATION.md) and [safety boundaries](#safety-and-compatibility).
 
 ## Quickstart
 
@@ -114,7 +114,6 @@ Features built on Bitwig's public Controller API are supported on Linux, Windows
 | Installation, upgrades or connection help | [Installation](https://github.com/BANANASJIM/bitwig-agent/blob/main/INSTALL.md) |
 | Operations, targeting and Grid recipes | [Usage](https://github.com/BANANASJIM/bitwig-agent/blob/main/USAGE.md) · [Protocol](https://github.com/BANANASJIM/bitwig-agent/blob/main/PROTOCOL.md) |
 | How the Python and Java bridge works | [Architecture](https://github.com/BANANASJIM/bitwig-agent/blob/main/docs/architecture.md) |
-| Upgrading from 0.4 (renamed methods, fields, entry points) | [Migration to 0.5](https://github.com/BANANASJIM/bitwig-agent/blob/main/docs/migration-0.5.md) |
 | Production guidance, screenshots and A/B workflow | [Agent skill](https://github.com/BANANASJIM/bitwig-agent/tree/main/skills/bitwig-agent) |
 | Tests and evidence boundaries | [Verification](https://github.com/BANANASJIM/bitwig-agent/blob/main/VERIFICATION.md) |
 | Development and releases | [Contributing](https://github.com/BANANASJIM/bitwig-agent/blob/main/CONTRIBUTING.md) · [Packaging](https://github.com/BANANASJIM/bitwig-agent/blob/main/docs/packaging.md) |

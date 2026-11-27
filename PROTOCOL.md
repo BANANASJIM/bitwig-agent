@@ -5,7 +5,6 @@ This is the implementation reference, not a tutorial or a host-acceptance report
 **Contents**
 
 - [Results, errors and recovery](#results-errors-and-recovery)
-- [Migrating from 0.4](docs/migration-0.5.md)
 - [Discovery and direct parameters](#core-discovery-and-direct-parameters)
 - [One-hop layer devices](#one-hop-layer-devices)
 - [Host Actions](#host-actions)
@@ -459,7 +458,7 @@ Root targeting uses the public observed index/name and native owning-track corro
 
 `grid.catalog` and `grid.get` are hidden read-only Grid methods (agents use `grid.describe` and `grid.export`; Grid availability is the `grid` section of `status` with `detail:"full"`). Their schemas come from the same strict Python catalog used by CLI and MCP: extra fields, explicit nulls, numeric strings and boolean-as-integer values are rejected. The standard client `timeoutMs` option remains envelope metadata, not a Grid parameter. No implicit selected-device target is accepted.
 
-The `0.2.0` native compatibility gate accepts only Bitwig **6.1.4** with loaded host JAR SHA-256 `77a50264156a9f79c925fa85e0456720ce157bfa10e2503d6049e2f733af4ba6`; the older `0.1.2` release retains its separate 6.1.3 gate. Matching a filename or an unrelated installed JAR is insufficient. `status` with `detail:"full"` reports (in its `grid` section) the actual gate/binding result and separates catalog, structure and typed-parameter coverage; it does not promise full coverage merely because the host version matches. Unsupported or unresolved bindings fail closed rather than trying guessed reflection names, GUI selection, installation or automatic fallback.
+The native compatibility gate accepts only the Bitwig versions `src/bitwig_agent/shared/host.json` lists (**6.1.4** and **6.1.7**), each with its exact loaded host JAR SHA-256. Matching a filename or an unrelated installed JAR is insufficient. `status` with `detail:"full"` reports (in its `grid` section) the actual gate/binding result and separates catalog, structure and typed-parameter coverage; it does not promise full coverage merely because the host version matches. Unsupported or unresolved bindings fail closed rather than trying guessed reflection names, GUI selection, installation or automatic fallback.
 
 `grid.catalog` filters native MODULE names (case, spaces, hyphens and punctuation ignored; every whitespace-separated query word must occur in the name, so `lowpass` and `low pass` find `Low-pass`) and returns deterministically ordered `{typeId, name}` entries with a `window` reporting `total`, `offset`, `limit` and `complete`. When nothing matches, up to five nearest names (edit-distance ratio on the normalized names) come back as `suggestions: [{typeId, name}]`. An empty query includes all mapped MODULE entries; it is not a device/preset catalog. Type UUIDs identify module types, not instances in a patch. `devices.catalog` remains the separate factory-device file discovery API.
 

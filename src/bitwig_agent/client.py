@@ -54,8 +54,7 @@ def _flag_extension_mismatch(result: dict[str, Any]) -> None:
 
 def supported_bitwig() -> list[str]:
     """The Bitwig versions this package supports, from `shared/host.json`."""
-    host: Any = shared("host")
-    return [entry["version"] for entry in (host if isinstance(host, list) else [host])]
+    return [entry["version"] for entry in shared("host")]
 
 
 def _reject_constant(value: str) -> None:
