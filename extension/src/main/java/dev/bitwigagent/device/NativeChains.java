@@ -10,7 +10,6 @@ import dev.bitwigagent.core.RpcException;
 import dev.bitwigagent.core.Scheduler;
 import dev.bitwigagent.host.DeviceSources;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
 import java.util.function.Consumer;
@@ -28,7 +27,7 @@ public final class NativeChains {
     static final int MAX_ITEMS = 256;
 
     /** The document-thread operations on chains and the devices in them; one binding per host version. */
-    public interface Access {
+    public interface Access extends DirectParameters.Lookup {
         void execute(Runnable work);
 
         void documentThread();
@@ -52,13 +51,6 @@ public final class NativeChains {
 
         /** The type as the controller API names it: instrument, audio-effect, note-effect or note-detector. */
         String deviceType(Object device);
-
-        String[] parameterIds(Object device);
-
-        /** The device's direct parameter with this id, or null. */
-        Object parameter(Object device, String id);
-
-        String parameterName(Object parameter);
 
         double value(Object parameter);
 
@@ -293,13 +285,7 @@ public final class NativeChains {
                 device = root;
                 owner = rootRef;
             }
-            String id = ref.get("id").getAsString();
-            Object parameter = Arrays.asList(a.parameterIds(device)).contains(id) ? a.parameter(device, id) : null;
-            if (parameter == null) throw Errors.targetNotFound(ref, "The device has no such parameter now.");
-            String name = a.parameterName(parameter);
-            JsonObject current = Refs.parameter(owner, id, name == null || name.isEmpty() ? null : name);
-            if (!Refs.matches(ref, current, true)) throw Refs.parameterChanged(ref, current);
-            return parameter;
+            return DirectParameters.resolve(a, device, owner, ref);
         }
     }
 

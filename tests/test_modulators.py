@@ -184,13 +184,16 @@ def test_map_is_an_upsert_whose_omitted_fields_stay_omitted():
     assert validate_call("modulators.unmap", base)[0] == base
 
 
-def test_map_targets_take_only_grid_and_modulator_parameters():
+def test_map_targets_take_device_grid_and_modulator_parameters_on_the_source_device():
     base = {"source": SOURCE, "amount": 0.5}
     device_parameter = {"kind": "parameter", "owner": PARENT, "id": "CONTENTS/GAIN"}
+    assert validate_call("modulators.map", {**base, "target": device_parameter})[0]["target"] == device_parameter
+    other_device = {**device_parameter, "owner": {**PARENT, "index": 1}}
+    with pytest.raises(ValueError, match="same device"):
+        validate_call("modulators.map", {**base, "target": other_device})
     track_parameter = {"kind": "parameter", "owner": TRACK_REF, "id": "volume"}
-    for target in (device_parameter, track_parameter):
-        with pytest.raises(ValueError, match=r"does not take a parameter owned by"):
-            validate_call("modulators.map", {**base, "target": target})
+    with pytest.raises(ValueError, match=r"does not take a parameter owned by"):
+        validate_call("modulators.map", {**base, "target": track_parameter})
 
 
 def test_unmap_is_annotated_as_a_removal_and_the_catalog_is_describe():

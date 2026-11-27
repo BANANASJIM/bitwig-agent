@@ -45,8 +45,9 @@ public final class NativeChainAccess implements NativeChains.Access {
     private final DeviceSources.Native roots;
     private final Class<?> container, aliasedOwner, parameterType, displayed;
     private final Method chainsOf, listed, chainList, chainDevices, chainId, chainName, chainIndex, value;
-    private final Method deviceName, deviceType, enumId, enabled, parameterIds, parameter;
-    private final Method parameterName, read, write, writable, display;
+    private final Method deviceName, deviceType, enumId, enabled;
+    private final Method read, write, writable, display;
+    private final NativeDirectParameters direct;
     private final Method document, begin, delete, end, ancestor, deviceSelection, selection, select;
     private final Method insertAt, payloadOf, devicesPayload, applicationResource, application;
     private final Method vst2, vst3, clap, vst2Plugins, vst3Plugins, clapPlugins, pluginFile;
@@ -79,9 +80,7 @@ public final class NativeChainAccess implements NativeChains.Access {
         enumId = a.exactMethod("model.enumValue.id", String.class, false);
         parameterType = a.type("parameter.target");
         enabled = a.exactMethod("device.base.enabled", a.type("parameter.onOff"), false);
-        parameterIds = a.exactMethod("device.base.parameterIds", String[].class, false);
-        parameter = a.exactMethod("device.base.parameter", parameterType, false, String.class);
-        parameterName = a.exactMethod("parameter.target.name", String.class, false);
+        direct = new NativeDirectParameters(a);
         read = a.exactMethod("parameter.target.read", double.class, false);
         write = a.exactMethod("parameter.target.write", void.class, false, double.class);
         writable = a.exactMethod("parameter.target.writable", boolean.class, false);
@@ -196,18 +195,17 @@ public final class NativeChainAccess implements NativeChains.Access {
 
     @Override
     public String[] parameterIds(Object device) {
-        String[] ids = (String[]) a.invoke(parameterIds, device);
-        return ids == null ? new String[0] : ids;
+        return direct.parameterIds(device);
     }
 
     @Override
     public Object parameter(Object device, String id) {
-        return a.invoke(parameter, device, id);
+        return direct.parameter(device, id);
     }
 
     @Override
     public String parameterName(Object parameter) {
-        return (String) a.invoke(parameterName, parameter);
+        return direct.parameterName(parameter);
     }
 
     @Override

@@ -22,7 +22,7 @@ from bitwig_agent.protocol.base import (
     omitted,
 )
 from bitwig_agent.protocol.limits import LONG_TIMEOUT_MS, REMOTE_PAGE_SLOTS
-from bitwig_agent.protocol.refs import DeviceRef, RemotePageRef, RemoteSlotParameterRef
+from bitwig_agent.protocol.refs import DeviceRef, GridParameterRef, RemotePageRef, RemoteSlotParameterRef
 
 DEVICE = {"kind": "device", "track": {"kind": "track", "id": TRACK, "name": "G"}, "index": 0, "name": "Grid"}
 TARGET = {"target": DEVICE}
@@ -508,7 +508,7 @@ class GridVoicingSetArgs(GridDeviceArgs):
 
 class RemoteSlot(StrictModel):
     parameter: RemoteSlotParameterRef = Field(
-        description="A parameter ref owned by a gridModule of the target device (grid.export refs[name] with the parameter id)."
+        description="A parameter ref of the target device itself (parameters.list) or, on a Grid device, of one of its modules (grid.export refs[name] with the parameter id)."
     )
     label: str = omitted(
         max_length=256,
@@ -516,7 +516,8 @@ class RemoteSlot(StrictModel):
     )
 
 
-class RemoteDefineArgs(GridDeviceArgs):
+class RemoteDefineArgs(StatusArgs):
+    target: DeviceRef = Field(description="The root device: a device ref from devices.list.")
     name: str = Field(
         min_length=1,
         max_length=256,
@@ -528,9 +529,13 @@ class RemoteDefineArgs(GridDeviceArgs):
 
     @model_validator(mode="after")
     def validate_distinct(self) -> Self:
-        pairs = [(s.parameter.owner.id.lower(), s.parameter.id) for s in self.slots if s is not None]
+        pairs = [
+            (s.parameter.owner.id.lower() if isinstance(s.parameter, GridParameterRef) else "", s.parameter.id)
+            for s in self.slots
+            if s is not None
+        ]
         if len(pairs) != len(set(pairs)):
-            raise ValueError("slots must not repeat a module/parameter pair")
+            raise ValueError("slots must not repeat a parameter")
         return self
 
 
@@ -545,9 +550,9 @@ LONG = f"timeoutMs up to {LONG_TIMEOUT_MS} (verification reads the whole graph).
 SAFE = "Needs a stopped, nonrecording, nonautomation state, a complete bounded graph of at most 1024 modules, and a device ref target from devices.list. "
 VALUE_SAFE = "Needs recording and automation write off (a playing transport is fine), a complete bounded graph of at most 1024 modules, and a device ref target from devices.list. "
 REMOTE_DEFINE_DESCRIPTION = (
-    "Set one named user Remote Controls page on a Grid device (e.g. a Macros page whose knobs drive Value modules): the page of that name is changed to these slots, or created when there is none. slots: up to "
+    "Set one named user Remote Controls page on a root device (e.g. a Macros page of a synth's own parameters, or of Value modules on a Grid device): the page of that name is changed to these slots, or created when there is none. slots: up to "
     + str(REMOTE_PAGE_SLOTS)
-    + " entries, slot k = entry k, each {parameter: a parameter ref owned by a gridModule of the target device (grid.export refs, scalar parameters only), label?: knob label} or null for an empty slot. A label left out is Bitwig's default for a new mapping and keeps an existing label. Slots left out are cleared. Defining a page that already holds exactly these slots is already_matched; changing a slot is applied. Pages go in the device's preset-page list, the one the UI's Add New Page uses (stored with the device and its preset; device pages cannot hold Grid module parameters); a same-named device, module or plugin page is target_exists. Each native step (create page, name, map/clear slot) is its own undo step, ungrouped; the result carries the page's ref and reads back every slot. Needs recording and automation write off (a playing transport is fine) and a licensed device. Inspect an unknown outcome with devices.remote.get; never retry it. Version-gated (status detail full, grid.remotePages)."
+    + " entries, slot k = entry k, each {parameter: a parameter ref of the target device (parameters.list) or of one of its Grid modules (grid.export refs, scalar parameters only), label?: knob label} or null for an empty slot. A label left out is Bitwig's default for a new mapping and keeps an existing label. Slots left out are cleared. Defining a page that already holds exactly these slots is already_matched; changing a slot is applied. Pages go in the device's preset-page list, the one the UI's Add New Page uses (stored with the device and its preset; device pages cannot hold Grid module parameters); a same-named device, module or plugin page is target_exists. Each native step (create page, name, map/clear slot) is its own undo step, ungrouped; the result carries the page's ref and reads back every slot. Needs recording and automation write off (a playing transport is fine) and a licensed device. Inspect an unknown outcome with devices.remote.get; never retry it. Version-gated (status detail full, grid.remotePages)."
 )
 REMOTE_DELETE_DESCRIPTION = "Delete one preset Remote Controls page by its ref (one devices.remote.define made, or one added by hand with Add New Page). Device, module and plugin pages are refused (unsupported_scope); a page that is gone is target_not_found, another page at that index target_changed. One native undo step; the result verifies the page is gone and lists the remaining page names. Same safety and version gate as devices.remote.define."
 UNK = "Never retry an unknown outcome: inspect with grid.export. A native setter/callback failure, or an insertion whose later graph check disagreed, holds topology edits on that one device only (other devices and project.save keep working): its writes are refused unresolved until you inspect with grid.export and ack its id grid:<device> (status holds list it; ack re-checks the graph first); no Bitwig restart."
@@ -733,7 +738,7 @@ SPECS: dict[str, ToolSpec] = {
             },
         ),
         annotations=SET,
-        summary="Set a Remote Controls page of a Grid device from parameter refs.",
+        summary="Set a Remote Controls page of a device from its own or its Grid modules' parameter refs.",
         requires=NOT_RECORDING,
     ),
     "devices.remote.delete": ToolSpec(

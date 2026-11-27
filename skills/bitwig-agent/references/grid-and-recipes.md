@@ -30,15 +30,15 @@ Spec syntax, value forms, units and limits are in `bitwig-agent help grid.apply`
 Many controls have no input port (envelope times, step counts, oscillator timbre, drive, pulse width). Vary them with a modulator instead of more modules.
 
 1. `modulators describe` picks a type and explains its controls (offline).
-2. One `modulators insert` creates, shapes and maps it: `--to="$DEVICE" --typeName=LFO --params='{"Rate":-0.60206}' --map='[{"target":'"$CUTOFF"',"amount":0.3}]'`. `params` keys are the control names `modulators get` shows (`describe` titles may differ); `map[].target` is a parameter ref from `grid export` on the same device. The result has the modulator `ref` and one entry per step. Write a control in the raw unit `modulators get` reports: LFO `Rate` is log10(Hz) with no display unit (0 is 1 Hz, 0.30103 is 2 Hz, -0.60206 is 0.25 Hz), so write the raw value, not `{display:"0.25 Hz"}`.
+2. One `modulators insert` creates, shapes and maps it: `--to="$DEVICE" --typeName=LFO --params='{"Rate":-0.60206}' --map='[{"target":'"$CUTOFF"',"amount":0.3}]'`. `params` keys are the control names `modulators get` shows (`describe` titles may differ); `map[].target` is a parameter ref on the same device, from `grid export` or `parameters list`. The result has the modulator `ref` and one entry per step. Write a control in the raw unit `modulators get` reports: LFO `Rate` is log10(Hz) with no display unit (0 is 1 Hz, 0.30103 is 2 Hz, -0.60206 is 0.25 Hz), so write the raw value, not `{display:"0.25 Hz"}`.
 3. If a step failed, the modulator exists: finish with what `next` names (`parameters set` on its controls, `modulators map --source=<ref>`), never `modulators insert` again. A misspelt or shared name lists `candidates` and no configure step runs (the inserted modulator still exists).
-4. Later changes: `modulators map` again changes the amount (`modulators unmap` removes it; its `--help` says what an omitted field keeps), `parameters set` on a control ref from `modulators list`. Polarity is a parameter of the modulator, not of the mapping.
+4. Later changes: `modulators map` again changes the amount (`modulators unmap` removes it; its `--help` says what an omitted field keeps), `parameters set` on a control ref from `modulators list`. Polarity is a parameter of the modulator, not of the mapping. Inserting a second modulator of the same type renames the first (`LFO` becomes `LFO 1`): read `modulators list` again, an old ref is `target_changed`.
 
 Modulator topology edits need a stopped, non-recording transport; `parameters set` on a modulator control may run while playing. After `unknown`, inspect `modulators list`; never repeat.
 
 ## Macro knobs
 
-`devices remote define` sets a named Remote Controls page whose knobs drive chosen scalar Grid parameters (refs from the export). It is an upsert; `devices remote delete` removes the page. Pages live in the device's preset-page list, which is what the UI's Add New Page creates.
+`devices remote define` sets a named Remote Controls page whose knobs drive chosen scalar Grid parameters (refs from the export) or the device's own parameters (refs from `parameters list`), on any root device. It is an upsert; `devices remote delete` removes the page. Pages live in the device's preset-page list, which is what the UI's Add New Page creates.
 
 ## Debug silent patches
 
