@@ -59,6 +59,38 @@ def test_level_flags_clipping_and_tolerates_streamed_header(tmp_path):
     assert r["durationSeconds"] == pytest.approx(0.2, abs=0.001)
 
 
+def test_level_beat_windows_and_reference_delta(tmp_path):
+    beat = RATE // 2  # 120 bpm
+    tone = [0.5 * math.sin(2 * math.pi * 440 * i / RATE) for i in range(4 * beat)]
+    ref, ducked = tmp_path / "ref.wav", tmp_path / "ducked.wav"
+    write_wav(ref, tone)
+    write_wav(ducked, [v * (0.25 if i // beat % 2 == 0 else 1.0) for i, v in enumerate(tone)])
+    r = run_analyze(ducked, mode="level", bpm=120, windowBeats=1, reference=str(ref))
+    assert r["windowBeats"] == 1
+    assert [w["beat"] for w in r["windows"]] == [0, 1, 2, 3]
+    assert [w["deltaDb"] for w in r["windows"]] == pytest.approx([-12.04, 0, -12.04, 0], abs=0.05)
+    assert r["summary"] == pytest.approx({"meanDeltaDb": -6.02, "minDeltaDb": -12.04, "maxDeltaDb": 0}, abs=0.05)
+    skipped = run_analyze(ducked, mode="level", bpm=120, windowBeats=2, reference=str(ref), skipSeconds=0.5)
+    assert [w["beat"] for w in skipped["windows"]] == [1, 3]
+    assert skipped["windows"][0]["deltaDb"] == pytest.approx(10 * math.log10((1 + 0.25**2) / 2), abs=0.05)
+    bands = run_analyze(ducked, mode="bands", bpm=120, windowBeats=1)
+    assert [w["beat"] for w in bands["windows"]] == [0, 1, 2, 3]
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        {"mode": "level", "windowBeats": 1},
+        {"mode": "level", "bpm": 120, "windowBeats": 1, "windowSeconds": 0.5},
+        {"mode": "onsets", "bpm": 120, "windowBeats": 1},
+        {"mode": "bands", "reference": "/tmp/r.wav"},
+    ],
+)
+def test_window_beats_and_reference_rules(args):
+    with pytest.raises(ValueError, match=r"(windowBeats|reference) applies"):
+        validate_call("audio.analyze", {"path": "/tmp/a.wav", **args})
+
+
 def test_onsets_and_skip(tmp_path):
     p = tmp_path / "o.wav"
     write_wav(p, notes([60] * 4))
