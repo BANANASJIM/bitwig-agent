@@ -2,7 +2,11 @@ package dev.bitwigagent.automation;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
 import dev.bitwigagent.core.RangeEdit;
+import dev.bitwigagent.core.Reason;
+import dev.bitwigagent.core.RpcException;
 import java.util.*;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
@@ -172,5 +176,66 @@ final class AutomationRangePropertyTest {
             if (outside && !listedBeats.contains(n.point.beat)) assertTrue(present.contains(n));
         }
         for (Native n : edit.kept) assertTrue(present.contains(n));
+    }
+
+    @Property
+    void anyRawRequestIsRefusedAsInvalidOrPlannedAndReplayable(
+            @ForAll("rawLanes") List<AutomationModule.Point> lane,
+            @ForAll("rawBeats") List<Double> beats,
+            @ForAll("rawBeats") List<Double> bounds,
+            @ForAll double value,
+            @ForAll boolean ranged) {
+        JsonObject p = new JsonObject();
+        JsonArray points = new JsonArray();
+        double start = bounds.isEmpty() ? 0 : bounds.get(0),
+                end = bounds.isEmpty() ? 64 : bounds.get(bounds.size() - 1);
+        for (double beat : beats) {
+            if (ranged && (beat < start || beat > end)) continue;
+            JsonObject point = new JsonObject();
+            point.addProperty("beat", beat);
+            point.addProperty("value", Math.abs(value % 1));
+            points.add(point);
+        }
+        p.add("points", points);
+        if (ranged) {
+            JsonObject range = new JsonObject();
+            range.addProperty("start", start);
+            range.addProperty("end", end);
+            p.add("range", range);
+        }
+        List<AutomationModule.Request> listed;
+        try {
+            listed = AutomationModule.points(p);
+        } catch (RpcException refused) {
+            assertTrue(refused.reason == Reason.INVALID_PARAMS && !refused.unknown);
+            return;
+        }
+        double[] range = AutomationModule.range(p);
+        List<AutomationModule.Point> after = new AutomationModule.Edit<>(natives(lane), lane, listed, range).desired;
+        assertTrue(new AutomationModule.Edit<>(natives(after), after, listed, range).change.isEmpty());
+    }
+
+    /** Arbitrary doubles, and beats a hair off the quarter grid so that distinct raw beats share a grid point. */
+    @Provide
+    Arbitrary<List<Double>> rawBeats() {
+        Arbitrary<Double> nearGrid = Combinators.combine(
+                        Arbitraries.integers().between(0, 16),
+                        Arbitraries.doubles().between(-1e-6, 1e-6).ofScale(12))
+                .as((k, jitter) -> Math.max(0, k / 4.0 + jitter));
+        return Arbitraries.oneOf(List.of(Arbitraries.doubles().between(0, 64).ofScale(12), nearGrid))
+                .list()
+                .ofMaxSize(12)
+                .uniqueElements()
+                .map(list -> list.stream().sorted().collect(Collectors.toList()));
+    }
+
+    @Provide
+    Arbitrary<List<AutomationModule.Point>> rawLanes() {
+        return Combinators.combine(
+                        rawBeats(), Arbitraries.doubles().between(0, 1).ofScale(12))
+                .as((beats, value) -> beats.stream()
+                        .map(beat -> new AutomationModule.Point(beat, value, true, 0))
+                        .distinct()
+                        .collect(Collectors.toList()));
     }
 }

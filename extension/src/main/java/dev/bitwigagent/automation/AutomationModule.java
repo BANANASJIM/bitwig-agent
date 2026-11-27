@@ -198,25 +198,26 @@ public final class AutomationModule implements HostModule {
     /** The whole lane as a range: {@code range:"all"}. */
     public static final double[] ALL = {Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY};
 
-    /** What the schema cannot say: the range is ordered. {@code "all"} is {@link #ALL}. */
+    /** What the schema cannot say: the range is ordered. Bounds snap to the beat grid; {@code "all"} is {@link #ALL}. */
     static double[] range(JsonObject p) {
         if (!p.has("range")) return null;
         if (p.get("range").isJsonPrimitive()) return ALL;
         JsonObject r = p.getAsJsonObject("range");
-        double start = r.get("start").getAsDouble(), end = r.get("end").getAsDouble();
+        double start = Point.beat(r.get("start").getAsDouble()),
+                end = Point.beat(r.get("end").getAsDouble());
         if (start > end) throw Errors.invalid("range.start must not exceed range.end");
         return new double[] {start, end};
     }
 
-    /** Requested points: strictly increasing beats, inside range when one is given. */
+    /** Requested points: beats strictly increasing and inside range when one is given, both on the beat grid. */
     static List<Request> points(JsonObject p) {
         double[] range = range(p);
         List<Request> out = new ArrayList<>();
         for (JsonElement item : p.getAsJsonArray("points")) {
             JsonObject n = item.getAsJsonObject();
-            double beat = n.get("beat").getAsDouble();
+            double beat = Point.beat(n.get("beat").getAsDouble());
             if (!out.isEmpty() && beat <= out.get(out.size() - 1).beat)
-                throw Errors.invalid("point beats must be strictly increasing");
+                throw Errors.invalid("point beats must be strictly increasing on the 2^-20 beat grid");
             if (range != null && (beat < range[0] || beat > range[1]))
                 throw Errors.invalid("every point must lie inside range");
             out.add(new Request(

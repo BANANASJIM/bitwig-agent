@@ -60,6 +60,14 @@ public final class AutomationModuleTest {
         JsonObject everything = set(new JsonArray());
         everything.addProperty("range", "everything");
         bad("automation.points.set", everything);
+        JsonObject snapped = set(points(point(1.0000001, 0.5, "hold")));
+        snapped.add("range", range(1.0000001, 2));
+        accepted("automation.points.set", snapped);
+        assertEquals(
+                1.0,
+                AutomationModule.points(snapped).get(0).beat,
+                "a beat inside range snaps inside the snapped range");
+        bad("automation.points.set", set(points(point(1, 0.5, "hold"), point(1.0000003, 0.5, "hold"))));
         JsonObject allGet = get("pan");
         allGet.addProperty("range", "all");
         bad("automation.points.get", allGet);
