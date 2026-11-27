@@ -12,16 +12,13 @@ from bitwig_agent.audio import pipewire
 
 from . import sandbox
 
-MONITOR_CLEAN = re.compile(r"monitor stopped .* links: dump=0 poll=0;")
+MONITOR_CLEAN = re.compile(r"monitor stopped .* outside \S+: dump=0 poll=0; pw-dump exited early: no;")
 SILENT_OUTCOMES = ("applied", "already_matched")
 
 
 def sha256(path: Path) -> str:
-    digest = hashlib.sha256()
     with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(1 << 20), b""):
-            digest.update(block)
-    return digest.hexdigest()
+        return hashlib.file_digest(handle, "sha256").hexdigest()
 
 
 def snapshot(roots: list[Path]) -> list[str]:
@@ -88,7 +85,7 @@ def checks(run: Path) -> list[tuple[bool, str]]:
         ),
         (
             bool(MONITOR_CLEAN.search(_text(run / "monitor.log"))),
-            "audio monitor stopped with no Bitwig->alsa_output link",
+            f"audio monitor saw no Bitwig link outside {pipewire.SINK} and pw-dump ran throughout",
         ),
         (data.get("strayLinks") == [], f"links after launch only to {pipewire.SINK}: stray {data.get('strayLinks')}"),
         (_silent(run / "silent-route.json"), "audio route --mode=silent read back silent"),

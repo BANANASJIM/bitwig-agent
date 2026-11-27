@@ -4,7 +4,7 @@
 # fixtures and run evidence.
 
 state_root = "~/bitwig-hosts"
-display = ":1"     # a dedicated X display for the test instance (for example a nested Xwayland), never the desktop's
+display = ":1"     # a dedicated X display for the test instance (for example a nested Xwayland), never :0 or the display you run pixi from
 port = 61174       # BITWIG_AGENT_PORT of the test instance; a desktop Bitwig keeps the default 61172
 # A disposable project directory (<name>/<name>.bwproject); native-init copies it to <state_root>/fixtures/<name>.
 fixture_seed = "~/bitwig-hosts/seed/BWA Test"

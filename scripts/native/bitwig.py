@@ -59,17 +59,29 @@ def processes() -> list[Process]:
     return found
 
 
+def session_alive(session: int) -> bool:
+    """Whether any process of the session still exists."""
+    for stat in PROC.glob("[0-9]*/stat"):
+        try:
+            if session_of(stat.read_text(encoding="utf-8")) == session:
+                return True
+        except FileNotFoundError:  # the process exited during the scan
+            continue
+    return False
+
+
 def alive(pid: int) -> bool:
     return (PROC / str(pid)).exists()
 
 
-def cli(args: list[str], port: int, log: Path | None = None) -> subprocess.CompletedProcess[str]:
-    """Run the bitwig-agent CLI against port; with log, append the command, exit status and output."""
+def cli(args: list[str], port: int, run: Path | None = None) -> subprocess.CompletedProcess[str]:
+    """Run the bitwig-agent CLI against port; within a run, append the call to its cli.log and keep the
+    CLI's client-side state (the audio route's saved links) in the run directory, never the user's."""
     command = ["bitwig-agent", *args]
-    env = {**os.environ, "BITWIG_AGENT_PORT": str(port)}
+    env = {**os.environ, "BITWIG_AGENT_PORT": str(port), **({"XDG_CACHE_HOME": str(run)} if run else {})}
     done = subprocess.run(command, env=env, capture_output=True, text=True, encoding="utf-8", check=False)
-    if log:
-        with log.open("a", encoding="utf-8") as handle:
+    if run:
+        with (run / "cli.log").open("a", encoding="utf-8") as handle:
             handle.write(f"$ {shlex.join(command)}  # {time.strftime('%H:%M:%S')} port={port} rc={done.returncode}\n")
             handle.write(done.stdout + done.stderr + "\n")
     return done
@@ -81,12 +93,12 @@ def dismiss_modal(display: str) -> None:
     subprocess.run(command, env={**os.environ, "DISPLAY": display}, capture_output=True, check=False)
 
 
-def quit_bitwig(process: Process, log: Path | None) -> str:
+def quit_bitwig(process: Process, run: Path | None) -> str:
     """Save the disposable copy and Quit; TERM after QUIT_SECONDS. Returns clean, term or alive."""
     dismiss_modal(process.display)
     # Quit alone did not exit within 30 s on 2026-11-27 (likely a save prompt), so save first.
-    cli(["project", "save"], process.port, log)
-    cli(["actions", "invoke", "--actionId=Quit", "--discardUnsavedChanges=true"], process.port, log)
+    cli(["project", "save"], process.port, run)
+    cli(["actions", "invoke", "--actionId=Quit", "--discardUnsavedChanges=true"], process.port, run)
     if wait_until(lambda: not alive(process.pid), QUIT_SECONDS):
         return "clean"
     os.kill(process.pid, signal.SIGTERM)

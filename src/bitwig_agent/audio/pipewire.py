@@ -130,17 +130,22 @@ def save_state(previous: dict[str, list[str]]) -> None:
     os.replace(handle.name, path)
 
 
-def parse_links(text: str) -> list[tuple[str, str]]:
-    """(output port, input port) pairs from `pw-link -l`, for Bitwig output ports only."""
-    links, port = [], None
+def all_links(text: str) -> list[tuple[str, str]]:
+    """Every (output port, input port) pair in `pw-link -l` output."""
+    links, port = [], ""
     for line in text.splitlines():
         if not line.strip():
             continue
         if not line[0].isspace():
             port = line.strip()
-        elif port in OUT_PORTS and line.strip().startswith("|->"):
+        elif line.strip().startswith("|->"):
             links.append((port, line.strip()[3:].strip()))
     return links
+
+
+def parse_links(text: str) -> list[tuple[str, str]]:
+    """(output port, input port) pairs from `pw-link -l`, for Bitwig output ports only."""
+    return [(out, target) for out, target in all_links(text) if out in OUT_PORTS]
 
 
 def current_links() -> list[tuple[str, str]]:

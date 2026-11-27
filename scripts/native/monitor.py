@@ -1,14 +1,13 @@
-"""Record every PipeWire link from a Bitwig node to an alsa_output.* node until SIGTERM or SIGINT.
+"""Record every PipeWire link between Bitwig and anything but the silent sink until SIGTERM or SIGINT.
 
 Two independent sources: `pw-dump --monitor` (an event stream that sees even short-lived links) and
-a `pw-link -l` poll every 50 ms. Prints one summary line when stopped. GUARD_TARGET overrides the
-target node prefix, only for a positive control (GUARD_TARGET=bwtest must report the silent links).
+a `pw-link -l` poll every 50 ms; both apply audio.outside_sink. It prints "monitor started" only once
+the first pw-dump snapshot is applied, and its summary line says whether pw-dump exited early.
 
   PYTHONPATH=scripts python -m native.monitor LABEL >> monitor.log
 """
 
 import json
-import os
 import signal
 import subprocess
 import sys
@@ -17,17 +16,16 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-TARGET = os.environ.get("GUARD_TARGET", "alsa_output")
+from bitwig_agent.audio import pipewire
+
+from . import audio
+
 POLL_SECONDS = 0.05
-NAME_KEYS = ("node.name", "application.name", "application.process.binary", "client.name")
+STARTED = "monitor started"
 
 
 def stamp() -> str:
     return time.strftime("%H:%M:%S") + f".{int(time.time() * 1000) % 1000:03d}"
-
-
-def is_bitwig(props: dict[str, Any]) -> bool:
-    return any("bitwig" in str(props.get(key, "")).lower() for key in NAME_KEYS)
 
 
 def split_dump(buffer: str) -> tuple[list[dict[str, Any]], str]:
@@ -43,30 +41,18 @@ def split_dump(buffer: str) -> tuple[list[dict[str, Any]], str]:
     return objects, buffer
 
 
-def bad_polls(listing: str, target: str) -> list[str]:
-    """`pw-link -l` lines linking a Bitwig output to a target port."""
-    bad, port = [], ""
-    for line in listing.splitlines():
-        if not line.startswith(" "):
-            port = line
-        elif "|->" in line and "bitwig" in port.lower() and target in line:
-            bad.append(f"{port} {line.strip()}")
-    return bad
-
-
 @dataclass
 class Graph:
-    """The PipeWire nodes and links seen so far, and the Bitwig links to the target among them."""
+    """The PipeWire nodes and links seen so far, and the Bitwig links outside the sink among them."""
 
-    target: str
-    nodes: dict[Any, dict[str, Any]] = field(default_factory=dict)
+    nodes: dict[Any, str] = field(default_factory=dict)
     links: dict[Any, dict[str, Any]] = field(default_factory=dict)
     seen: set[str] = field(default_factory=set)
     bad: dict[Any, str] = field(default_factory=dict)
     events: int = 0
 
     def apply(self, objects: list[dict[str, Any]]) -> list[str]:
-        """Update from pw-dump objects; returns the target links not reported before."""
+        """Update from pw-dump objects; returns the links outside the sink not reported before."""
         for obj in objects:
             self.events += 1
             oid, info = obj.get("id"), obj.get("info")
@@ -74,17 +60,16 @@ class Graph:
                 self.nodes.pop(oid, None)
                 self.links.pop(oid, None)
             elif obj.get("type", "").endswith("Node"):
-                self.nodes.setdefault(oid, {}).update(info.get("props") or {})
+                self.nodes[oid] = (info.get("props") or {}).get("node.name", self.nodes.get(oid, ""))
             elif obj.get("type", "").endswith("Link"):
                 self.links[oid] = {**self.links.get(oid, {}), **info}
         fresh = []
         for lid, info in self.links.items():
-            out, sink = self.nodes.get(info.get("output-node-id"), {}), self.nodes.get(info.get("input-node-id"), {})
-            if not is_bitwig(out):
-                continue
-            self.seen.add(f"{out.get('node.name')} -> {sink.get('node.name')}")
-            if str(sink.get("node.name", "")).startswith(self.target) and lid not in self.bad:
-                self.bad[lid] = f"pw-dump link {lid}: {out.get('node.name')} -> {sink.get('node.name')}"
+            out, sink = self.nodes.get(info.get("output-node-id"), ""), self.nodes.get(info.get("input-node-id"), "")
+            if "bitwig" in f"{out} {sink}".lower():
+                self.seen.add(f"{out} -> {sink}")
+            if audio.outside_sink(out, sink) and lid not in self.bad:
+                self.bad[lid] = f"pw-dump link {lid}: {out} -> {sink}"
                 fresh.append(self.bad[lid])
         return fresh
 
@@ -94,16 +79,14 @@ class Monitor:
     """Both link sources of one monitored run, and their summary."""
 
     label: str
-    target: str = TARGET
-    graph: Graph = field(init=False)
+    graph: Graph = field(default_factory=Graph)
     polled: list[str] = field(default_factory=list)
     polls: int = 0
+    dump_exited: bool = False
     lock: threading.Lock = field(default_factory=threading.Lock)
     stop: threading.Event = field(default_factory=threading.Event)
+    ready: threading.Event = field(default_factory=threading.Event)  # the first pw-dump snapshot is applied
     started: float = field(default_factory=time.time)
-
-    def __post_init__(self) -> None:
-        self.graph = Graph(self.target)
 
     def report(self, line: str) -> None:
         print(f"[{self.label}] BAD {stamp()} {line}", flush=True)
@@ -117,23 +100,26 @@ class Monitor:
                 with self.lock:
                     for line in self.graph.apply(objects):
                         self.report(line)
+                self.ready.set()
+        self.dump_exited = not self.stop.is_set()
 
     def poll(self) -> None:
         while not self.stop.is_set():
-            command = ["pw-link", "-l"]
-            listing = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", check=False).stdout
+            listing = pipewire.run(["pw-link", "-l"])[1]
             self.polls += 1
-            for line in bad_polls(listing, self.target):
-                self.polled.append(line)
-                self.report(f"pw-link: {line}")
+            for out, target in audio.stray_links(listing):
+                self.polled.append(f"{out} |-> {target}")
+                self.report(f"pw-link: {self.polled[-1]}")
             self.stop.wait(POLL_SECONDS)
 
     def summary(self) -> str:
         with self.lock:
             return (
                 f"[{self.label}] {stamp()} monitor stopped after {time.time() - self.started:.1f}s: "
-                f"pw-dump events={self.graph.events} pw-link polls={self.polls} bitwig->{self.target} links: "
-                f"dump={len(self.graph.bad)} poll={len(self.polled)}; bitwig links seen: {sorted(self.graph.seen) or 'none'}"
+                f"pw-dump events={self.graph.events} pw-link polls={self.polls} bitwig links outside "
+                f"{pipewire.SINK}: dump={len(self.graph.bad)} poll={len(self.polled)}; "
+                f"pw-dump exited early: {'yes' if self.dump_exited else 'no'}; "
+                f"bitwig links seen: {sorted(self.graph.seen) or 'none'}"
             )
 
 
@@ -142,8 +128,9 @@ def main() -> None:
     dump = subprocess.Popen(["pw-dump", "--monitor", "--no-colors"], stdout=subprocess.PIPE, text=True)
     threading.Thread(target=monitor.read_dump, args=(dump.stdout,), daemon=True).start()
     poller = threading.Thread(target=monitor.poll, daemon=True)
-    print(f"[{monitor.label}] {stamp()} monitor started", flush=True)
     poller.start()
+    if monitor.ready.wait(10):
+        print(f"[{monitor.label}] {stamp()} {STARTED}", flush=True)
 
     def finish(*_: object) -> None:
         monitor.stop.set()

@@ -46,10 +46,14 @@ def _path(value: str) -> Path:
     return Path(value).expanduser()
 
 
-def parse(data: dict[str, Any]) -> Config:
+def parse(data: dict[str, Any], caller_display: str) -> Config:
+    """The configuration; refuses a test display that is :0 or the caller's own display."""
+    display = data["display"]
+    if display.partition(".")[0] in {":0", caller_display.partition(".")[0]}:
+        raise SystemExit(f"refusing display {display}: the test instance needs its own display, not :0 or yours")
     return Config(
         state_root=_path(data["state_root"]),
-        display=data["display"],
+        display=display,
         port=int(data["port"]),
         fixture_seed=_path(data["fixture_seed"]),
         hosts={
@@ -63,4 +67,4 @@ def load() -> Config:
     if not path.is_file():
         raise SystemExit(f"No harness config at {path}: copy native-hosts.example.toml there and edit it")
     with path.open("rb") as handle:
-        return parse(tomllib.load(handle))
+        return parse(tomllib.load(handle), os.environ.get("DISPLAY", ""))

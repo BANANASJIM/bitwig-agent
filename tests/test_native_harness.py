@@ -62,7 +62,7 @@ def test_parse_expands_home_and_derives_paths(monkeypatch):
         "fixture_seed": "~/seed/BWA Test",
         "hosts": {"6.1.4": {"root": "/opt/bitwig-studio", "prefs_seed": "~/seed/prefs"}},
     }
-    parsed = config.parse(data)
+    parsed = config.parse(data, ":0")
     host = parsed.host("6.1.4")
     assert parsed.port == 61174
     assert host.prefs_seed == Path("/home/someone/seed/prefs")
@@ -71,6 +71,13 @@ def test_parse_expands_home_and_derives_paths(monkeypatch):
     assert parsed.runs == Path("/home/someone/hosts/runs")
     with pytest.raises(SystemExit, match=re.escape("Unknown host '6.1.9'; configured: 6.1.4")):
         parsed.host("6.1.9")
+
+
+@pytest.mark.parametrize(("display", "caller"), [(":0", ""), (":0.0", ":1"), (":2", ":2.0"), (":2.0", ":2")])
+def test_parse_refuses_the_desktop_or_the_callers_display(display, caller):
+    data = {"state_root": "/s", "display": display, "port": 1, "fixture_seed": "/s/P", "hosts": {}}
+    with pytest.raises(SystemExit, match=f"refusing display {re.escape(display)}"):
+        config.parse(data, caller)
 
 
 def test_load_reads_the_selected_file_and_refuses_a_missing_one(tmp_path, monkeypatch):
@@ -85,7 +92,7 @@ def test_example_config_parses():
     with (config.ROOT / "native-hosts.example.toml").open("rb") as handle:
         import tomllib  # noqa: PLC0415 - only this test reads TOML directly
 
-        parsed = config.parse(tomllib.load(handle))
+        parsed = config.parse(tomllib.load(handle), "")
     assert set(parsed.hosts) == {entry["version"] for entry in doctor.shared("host")}
 
 
@@ -127,7 +134,7 @@ def test_environment_selects_the_test_display_port_and_jack_guard():
     assert env == {
         "DISPLAY": ":1",
         "PATH": "/bin",
-        "PIPEWIRE_PROPS": sandbox.PIPEWIRE_PROPS,
+        "PIPEWIRE_PROPS": "{ jack.self-connect-mode=ignore-all jack.other-connect-mode=ignore node.autoconnect=false }",
         "BITWIG_AGENT_PORT": "61174",
     }
 
@@ -151,14 +158,16 @@ def test_stray_links_flags_any_bitwig_peer_but_the_sink_in_both_directions():
         "Bitwig Studio:out1\n  |-> bwtest:playback_FL\n"
         "Bitwig Studio:out2\n  |-> alsa_output.pci:playback_FR\n"
         "alsa_output.pci:playback_FR\n  |<- Bitwig Studio:out2\n"
-        "Bitwig Studio:in1\n  |<- alsa_input.usb:capture_FL\n"
+        "alsa_input.usb:capture_FL\n  |-> Bitwig Studio:in1\n"
         "Firefox:output_FL\n  |-> alsa_output.pci:playback_FL\n"
     )
     assert audio.stray_links(listing) == [
-        "Bitwig Studio:in1 <-> alsa_input.usb:capture_FL",
-        "Bitwig Studio:out2 <-> alsa_output.pci:playback_FR",
+        ("Bitwig Studio:out2", "alsa_output.pci:playback_FR"),
+        ("alsa_input.usb:capture_FL", "Bitwig Studio:in1"),
     ]
     assert audio.stray_links("Bitwig Studio:out1\n  |-> bwtest:playback_FL\n") == []
+    assert not audio.outside_sink("Bitwig Studio", "Bitwig Studio")
+    assert audio.outside_sink("Bitwig Studio", "alsa_output.pci")
 
 
 class GuardPW(FakePW):
@@ -174,15 +183,17 @@ def test_connect_links_both_outputs_to_the_sink_and_reads_them_back(monkeypatch)
     pw = GuardPW(set(), sink=True)
     monkeypatch.setattr(pipewire, "run", pw.run)
     assert audio.ports_ready()
-    listing, stray = audio.connect()
-    assert stray == []
+    listing = audio.connect()
+    assert audio.stray_links(listing) == []
     assert set(pipewire.OUT_PORTS.items()) == pw.links
     assert "Bitwig Studio:out1\n  |-> bwtest:playback_FL" in listing
 
 
-def test_connect_reports_a_link_bitwig_made_itself(monkeypatch):
-    monkeypatch.setattr(pipewire, "run", GuardPW({("Bitwig Studio:out1", "alsa_output.pci:playback_FL")}).run)
-    assert audio.connect()[1] == ["Bitwig Studio:out1 <-> alsa_output.pci:playback_FL"]
+def test_disconnect_strays_removes_only_links_outside_the_sink(monkeypatch):
+    pw = GuardPW({("Bitwig Studio:out1", "alsa_output.pci:playback_FL"), ("Bitwig Studio:out2", "bwtest:playback_FR")})
+    monkeypatch.setattr(pipewire, "run", pw.run)
+    assert audio.disconnect_strays() == [("Bitwig Studio:out1", "alsa_output.pci:playback_FL")]
+    assert pw.links == {("Bitwig Studio:out2", "bwtest:playback_FR")}
 
 
 def test_connect_stops_when_the_links_cannot_be_read_back(monkeypatch):
@@ -203,50 +214,64 @@ def link(oid, out, sink):
     return {"id": oid, "type": "PipeWire:Interface:Link", "info": {"output-node-id": out, "input-node-id": sink}}
 
 
-def test_graph_reports_each_bitwig_link_to_the_target_once():
-    graph = monitor.Graph("alsa_output")
+def test_graph_reports_each_bitwig_link_outside_the_sink_once():
+    graph = monitor.Graph()
     objects = [node(1, "Bitwig Studio"), node(2, "alsa_output.pci"), node(3, "bwtest"), link(10, 1, 3)]
     assert graph.apply(objects) == []
     assert graph.apply([link(11, 1, 2)]) == ["pw-dump link 11: Bitwig Studio -> alsa_output.pci"]
     assert graph.apply([link(11, 1, 2)]) == []
+    assert graph.apply([node(4, "easyeffects_sink"), link(12, 4, 1)]) == [
+        "pw-dump link 12: easyeffects_sink -> Bitwig Studio"
+    ]
     graph.apply([{"id": 11, "info": None}, {"id": 2, "info": None}])
-    assert graph.seen == {"Bitwig Studio -> bwtest", "Bitwig Studio -> alsa_output.pci"}
-    assert list(graph.bad) == [11]
-    assert graph.events == 8
+    assert graph.seen == {
+        "Bitwig Studio -> bwtest",
+        "Bitwig Studio -> alsa_output.pci",
+        "easyeffects_sink -> Bitwig Studio",
+    }
+    assert list(graph.bad) == [11, 12]
+    assert graph.events == 10
 
 
 def test_split_dump_keeps_an_incomplete_array_for_later():
     objects, rest = monitor.split_dump('[{"id": 1}]\n[{"id": 2}, {"id": 3}]\n[{"id": 4')
     assert [o["id"] for o in objects] == [1, 2, 3]
     assert rest == '[{"id": 4'
-
-
-def test_bad_polls_matches_bitwig_outputs_to_the_target_only():
-    listing = "Bitwig Studio:out1\n  |-> alsa_output.pci:playback_FL\n  |-> bwtest:playback_FL\nFirefox:o\n  |-> alsa_output.x\n"
-    assert monitor.bad_polls(listing, "alsa_output") == ["Bitwig Studio:out1 |-> alsa_output.pci:playback_FL"]
-    assert monitor.is_bitwig({"application.process.binary": "BitwigStudio"})
     assert len(monitor.stamp()) == len("12:00:00.000")
 
 
 def test_monitor_reads_both_sources_and_summarises(monkeypatch, capsys):
-    watch = monitor.Monitor("r", "alsa_output")
+    watch = monitor.Monitor("r")
     dump = [node(1, "Bitwig Studio"), node(2, "alsa_output.pci"), link(10, 1, 2)]
     watch.read_dump(io.StringIO(json.dumps(dump, indent=2) + "\n"))
-    listing = "Bitwig Studio:out1\n  |-> alsa_output.pci:playback_FL\n"
+    assert watch.ready.is_set()
+    listing = "Bitwig Studio:out1\n  |-> alsa_output.pci:playback_FL\n  |-> bwtest:playback_FL\n"
 
-    def run(command, **kwargs):
+    def run(command, timeout=5.0):
         watch.stop.set()
-        return completed(command, 0, listing)
+        return 0, listing, ""
 
-    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(pipewire, "run", run)
     watch.poll()
     out = capsys.readouterr().out
-    assert "BAD" in out
     assert "pw-dump link 10: Bitwig Studio -> alsa_output.pci" in out
     assert "pw-link: Bitwig Studio:out1 |-> alsa_output.pci:playback_FL" in out
-    assert "pw-dump events=3 pw-link polls=1 bitwig->alsa_output links: dump=1 poll=1; " in watch.summary()
-    assert not evidence.MONITOR_CLEAN.search(watch.summary())
+    summary = watch.summary()
+    assert "pw-dump events=3 pw-link polls=1 bitwig links outside bwtest: dump=1 poll=1; " in summary
+    assert "pw-dump exited early: yes;" in summary  # the stream ended before the stop
+    assert not evidence.MONITOR_CLEAN.search(summary)
     assert evidence.MONITOR_CLEAN.search(monitor.Monitor("clean").summary())
+
+
+def test_a_pw_dump_exit_fails_the_monitor_proof():
+    watch = monitor.Monitor("r")
+    watch.read_dump(io.StringIO(""))
+    assert "dump=0 poll=0; pw-dump exited early: yes;" in watch.summary()
+    assert not evidence.MONITOR_CLEAN.search(watch.summary())
+    stopped = monitor.Monitor("r")
+    stopped.stop.set()
+    stopped.read_dump(io.StringIO(""))
+    assert evidence.MONITOR_CLEAN.search(stopped.summary())
 
 
 # processes and RPC
@@ -284,6 +309,15 @@ def test_processes_skips_a_process_that_exits_during_the_scan(tmp_path, monkeypa
     assert bitwig.processes() == []
 
 
+def test_session_alive_sees_any_process_of_the_session(tmp_path, monkeypatch):
+    monkeypatch.setattr(bitwig, "PROC", tmp_path)
+    fake_process(tmp_path, 7, session=5)
+    (tmp_path / "8").mkdir()
+    (tmp_path / "8/stat").symlink_to(tmp_path / "gone")  # exited between listing and reading
+    assert bitwig.session_alive(5)
+    assert not bitwig.session_alive(6)
+
+
 def completed(args, rc=0, out=""):
     return subprocess.CompletedProcess(args, rc, out, "")
 
@@ -292,12 +326,13 @@ def test_cli_logs_the_command_status_and_output(tmp_path, monkeypatch):
     seen: dict[str, str] = {}
 
     def run(command, **kwargs):
-        seen.update(command=command, port=kwargs["env"]["BITWIG_AGENT_PORT"])
+        env = kwargs["env"]
+        seen.update(command=command, port=env["BITWIG_AGENT_PORT"], cache=env["XDG_CACHE_HOME"])
         return completed(command, 1, '{"code":"unavailable"}\n')
 
     monkeypatch.setattr(subprocess, "run", run)
-    assert bitwig.cli(["status"], 61174, tmp_path / "cli.log").returncode == 1
-    assert seen == {"command": ["bitwig-agent", "status"], "port": "61174"}
+    assert bitwig.cli(["status"], 61174, tmp_path).returncode == 1
+    assert seen == {"command": ["bitwig-agent", "status"], "port": "61174", "cache": str(tmp_path)}
     log = (tmp_path / "cli.log").read_text(encoding="utf-8")
     assert log.startswith("$ bitwig-agent status  # ")
     assert "port=61174 rc=1\n" in log
@@ -396,7 +431,7 @@ def finished_run(run: Path, **overrides) -> Path:
     (run / "real.diff").write_text("", encoding="utf-8")
     (run / "monitor.log").write_text(
         "[r] 10:00:00.000 monitor stopped after 9.0s: pw-dump events=4 pw-link polls=9 "
-        "bitwig->alsa_output links: dump=0 poll=0; bitwig links seen: none\n",
+        "bitwig links outside bwtest: dump=0 poll=0; pw-dump exited early: no; bitwig links seen: none\n",
         encoding="utf-8",
     )
     (run / "silent-route.json").write_text(SILENT, encoding="utf-8")
@@ -434,7 +469,8 @@ def test_doctor_checks_tools_pixi_jars_and_homes(tmp_path, monkeypatch):
             "port": 61174,
             "fixture_seed": str(tmp_path / "seed/P"),
             "hosts": {"6.1.7": {"root": str(root), "prefs_seed": "x"}, "6.1.4": {"root": "/absent", "prefs_seed": "x"}},
-        }
+        },
+        "",
     )
     monkeypatch.setattr(
         doctor, "shared", lambda name: [{"version": "6.1.7", "jarSha256": evidence.sha256(root / "bin/bitwig.jar")}]
@@ -472,6 +508,8 @@ class Desktop:
         self.killed: list[tuple[int, int]] = []
         self.fds: list[int] = []
         self.bitwig_links: set[tuple[str, str]] = set()
+        self.ignores = ()  # signals the sandbox survives
+        self.monitor_starts = True
         monkeypatch.setattr(bitwig, "PROC", self.proc)
         monkeypatch.setattr(pipewire, "run", self.pw.run)
         monkeypatch.setattr(harness, "account", lambda: SimpleNamespace(pw_dir=str(self.home), pw_name="u"))
@@ -480,7 +518,7 @@ class Desktop:
         monkeypatch.setattr(bitwig, "cli", self.cli)
         monkeypatch.setattr(bitwig, "dismiss_modal", lambda display: None)
         monkeypatch.setattr(harness.time, "sleep", lambda s: None)
-        monkeypatch.setattr(os, "killpg", lambda pid, sig: self.killed.append((pid, sig)))
+        monkeypatch.setattr(os, "killpg", self.killpg)
         monkeypatch.setattr(os, "kill", self.kill)
         monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
 
@@ -494,21 +532,30 @@ class Desktop:
             mounts = "".join(f"1 1 0:1 / {t.replace(' ', chr(92) + '040')} rw - x y rw\n" for t in targets)
             fake_process(self.proc, pid + 1000, session=pid, mounts=mounts, BITWIG_AGENT_PORT=61174)
             self.pw.links |= self.bitwig_links
+            output.write_text("started\n", encoding="utf-8")
         else:
             (self.proc / str(pid)).mkdir()
             (self.proc / str(pid) / "comm").write_text("python\n", encoding="utf-8")
-        output.write_text("started\n", encoding="utf-8")
+            output.write_text(f"[r] {monitor.STARTED}\n" if self.monitor_starts else "", encoding="utf-8")
         return pid
 
-    def cli(self, args, port, log=None):
+    def killpg(self, session, sig):
+        self.killed.append((session, sig))
+        if sig not in self.ignores:
+            self.end_bitwig()
+
+    def end_bitwig(self):
+        for comm in self.proc.glob("*/comm"):
+            if comm.read_text(encoding="utf-8").strip() == bitwig.COMM:
+                shutil.rmtree(comm.parent)
+        for fd in self.fds:
+            os.close(fd)
+        self.fds.clear()
+
+    def cli(self, args, port, run=None):
         self.calls.append(args)
-        if args[:1] == ["actions"]:
-            for comm in self.proc.glob("*/comm"):
-                if comm.read_text(encoding="utf-8").strip() == bitwig.COMM:
-                    shutil.rmtree(comm.parent)
-            for fd in self.fds:
-                os.close(fd)
-            self.fds.clear()
+        if args[:1] == ["actions"] and "quit" not in self.ignores:
+            self.end_bitwig()
         return completed(args, 0, SILENT if args[:2] == ["audio", "route"] else "{}")
 
     def kill(self, pid, sig):
@@ -547,7 +594,8 @@ def prepared(tmp_path: Path, desktop: Desktop, monkeypatch) -> config.Config:
             "port": 61174,
             "fixture_seed": str(state / "seed/BWA Test"),
             "hosts": {"6.1.7": {"root": str(root), "prefs_seed": str(state / "seed/prefs")}},
-        }
+        },
+        "",
     )
     harness.init(cfg, "6.1.7")
     return cfg
@@ -570,6 +618,7 @@ def test_up_and_down_record_a_passing_run(tmp_path, desktop, monkeypatch, capsys
     extension.write_bytes(b"ext")
     monkeypatch.setenv("INIT_CWD", str(tmp_path))
     run = harness.up(cfg, "6.1.7", extension.name)
+    assert capsys.readouterr().out.endswith(f"export BWA_NATIVE_RUN={run.name}\n")
     data = evidence.read_run(run)
     assert data["extensionSha256"] == evidence.sha256(extension)
     assert data["pid"] == 1102
@@ -583,6 +632,7 @@ def test_up_and_down_record_a_passing_run(tmp_path, desktop, monkeypatch, capsys
         harness.up(cfg, "6.1.7", "")
     harness.status(cfg)
     assert "managed; missing mounts []" in capsys.readouterr().out
+    monkeypatch.setenv("BWA_NATIVE_RUN", run.name)
     assert harness.cli(["tracks", "list"]) == 0
     harness.down(cfg)
     assert desktop.killed == [(101, signal.SIGTERM)]
@@ -594,24 +644,104 @@ def test_up_and_down_record_a_passing_run(tmp_path, desktop, monkeypatch, capsys
     assert harness.proof(cfg, "") is False
 
 
-def test_up_aborts_when_bitwig_links_outside_the_sink(tmp_path, desktop, monkeypatch):
+def owned(desktop, monkeypatch, cfg):
+    run = harness.up(cfg, "6.1.7", "")
+    monkeypatch.setenv("BWA_NATIVE_RUN", run.name)
+    return run
+
+
+def test_state_changing_commands_need_the_run_id(tmp_path, desktop, monkeypatch):
+    cfg = prepared(tmp_path, desktop, monkeypatch)
+    run = owned(desktop, monkeypatch, cfg)
+    monkeypatch.setenv("BWA_NATIVE_RUN", "someone-else")
+    for command in (lambda: harness.down(cfg), lambda: harness.cli(["status"]), lambda: harness.shot(cfg)):
+        with pytest.raises(SystemExit, match="the current run is not yours"):
+            command()
+    monkeypatch.delenv("BWA_NATIVE_RUN")
+    with pytest.raises(SystemExit, match="the current run is not yours"):
+        harness.reset(cfg, "6.1.7", "")
+    assert (lock.owner() or {})["run"] == str(run)
+    assert bitwig.processes()
+
+
+@pytest.mark.parametrize("args", [["audio", "route", "--mode=restore"], ["audio", "capture", "--allowAudible=true"]])
+def test_cli_refuses_audible_routes(tmp_path, desktop, monkeypatch, args):
+    cfg = prepared(tmp_path, desktop, monkeypatch)
+    owned(desktop, monkeypatch, cfg)
+    desktop.calls.clear()
+    with pytest.raises(SystemExit, match="the test instance stays silent"):
+        harness.cli(args)
+    assert desktop.calls == []
+
+
+def test_down_keeps_a_run_that_does_not_end(tmp_path, desktop, monkeypatch, capsys):
+    cfg = prepared(tmp_path, desktop, monkeypatch)
+    run = owned(desktop, monkeypatch, cfg)
+    monkeypatch.setattr(bitwig, "QUIT_SECONDS", 0)
+    monkeypatch.setattr(harness, "LOCK_SECONDS", 0)
+    monkeypatch.setattr(bitwig, "quit_bitwig", lambda process, run: "alive")
+    with pytest.raises(SystemExit, match=re.escape("FAIL: the sandbox is still running (quit: alive")):
+        harness.down(cfg)
+    assert lock.owner() is not None
+    assert bitwig.alive(101)  # the monitor keeps recording
+    assert not (run / "real-after.tsv.gz").exists()
+    monkeypatch.setattr(bitwig, "quit_bitwig", lambda process, run: "clean")
+    with pytest.raises(SystemExit, match=re.escape("FAIL: the sandbox is still running (quit: clean, lock held)")):
+        harness.down(cfg)  # the lock is still held by the fake sandbox
+    assert lock.owner() is not None
+
+
+def test_up_aborts_on_a_stray_link_by_cutting_it_then_killing_the_sandbox(tmp_path, desktop, monkeypatch):
     cfg = prepared(tmp_path, desktop, monkeypatch)
     desktop.bitwig_links = {("Bitwig Studio:out1", "alsa_output.pci:playback_FL")}
+    desktop.ignores = (signal.SIGTERM,)
+    monkeypatch.setattr(harness, "KILL_SECONDS", 0)
     with pytest.raises(SystemExit, match="ABORTED: Bitwig linked outside bwtest"):
         harness.up(cfg, "6.1.7", "")
-    assert desktop.killed == [(102, signal.SIGTERM)]
+    assert ("Bitwig Studio:out1", "alsa_output.pci:playback_FL") not in desktop.pw.links
+    assert ["pw-link", "-d", "Bitwig Studio:out1", "alsa_output.pci:playback_FL"] in desktop.pw.calls
+    assert desktop.killed == [(102, signal.SIGTERM), (102, signal.SIGKILL)]
+    assert not bitwig.session_alive(102)
+    data = evidence.read_run(Path((lock.owner() or {})["run"]))
+    assert data["strayLinksCut"] == [["Bitwig Studio:out1", "alsa_output.pci:playback_FL"]]
+    assert data["aborted"].startswith("RuntimeError: Bitwig linked outside bwtest")
 
 
-def test_up_aborts_when_linking_to_the_sink_fails(tmp_path, desktop, monkeypatch):
+def fail(*args):
+    raise bridge_error("job_failed", "pw-link -l failed: 1")
+
+
+@pytest.mark.parametrize(
+    ("patch", "message"),
+    [
+        ((audio, "connect", fail), "pw-link -l failed"),
+        ((audio, "ports_ready", lambda: False), "no 'Bitwig Studio' output ports within 0s"),
+        ((harness, "managed", lambda session: None), "the sandboxed BitwigStudio process is gone"),
+        ((harness, "STATUS_SECONDS", 0), "the extension did not answer status on port 61174"),
+        ((harness.time, "sleep", lambda s: (_ for _ in ()).throw(KeyboardInterrupt())), "ABORTED"),
+    ],
+)
+def test_every_failure_after_launch_stops_the_sandbox(tmp_path, desktop, monkeypatch, patch, message):
     cfg = prepared(tmp_path, desktop, monkeypatch)
-
-    def fail():
-        raise bridge_error("job_failed", "pw-link -l failed: 1")
-
-    monkeypatch.setattr(audio, "connect", fail)
-    with pytest.raises(SystemExit, match="ABORTED: linking Bitwig to bwtest failed: pw-link -l failed"):
+    monkeypatch.setattr(harness, "PORTS_SECONDS", 0)
+    monkeypatch.setattr(*patch)
+    if patch[1] == "STATUS_SECONDS":
+        monkeypatch.setattr(desktop, "cli", lambda args, port, run=None: completed(args, 1))
+        monkeypatch.setattr(bitwig, "cli", desktop.cli)
+    with pytest.raises(SystemExit, match=re.escape(message)):
         harness.up(cfg, "6.1.7", "")
     assert desktop.killed == [(102, signal.SIGTERM)]
+    assert not bitwig.session_alive(102)
+
+
+def test_up_refuses_when_the_monitor_does_not_start(tmp_path, desktop, monkeypatch):
+    cfg = prepared(tmp_path, desktop, monkeypatch)
+    desktop.monitor_starts = False
+    monkeypatch.setattr(harness, "MONITOR_SECONDS", 0)
+    with pytest.raises(SystemExit, match="the link monitor did not start within 0s"):
+        harness.up(cfg, "6.1.7", "")
+    assert desktop.killed == [(101, signal.SIGTERM)]
+    assert [argv[0] for argv in desktop.spawned] == [sys.executable]
 
 
 def test_up_refuses_a_running_bitwig_a_held_lock_an_uninitialised_home_and_a_wrong_jar(tmp_path, desktop, monkeypatch):
@@ -658,6 +788,8 @@ def test_entry_point_dispatches_commands(tmp_path, desktop, monkeypatch, capsys)
     assert entry.main(["status"]) == 0
     with pytest.raises(SystemExit, match="no harness run"):
         entry.main(["cli", "status"])
+    with pytest.raises(SystemExit, match="no harness run"):
+        entry.main(["shot"])
     finished_run(tmp_path / "state/runs/r")
     assert entry.main(["proof", str(tmp_path / "state/runs/r")]) == 0
 
@@ -665,8 +797,9 @@ def test_entry_point_dispatches_commands(tmp_path, desktop, monkeypatch, capsys)
 def test_shot_captures_the_test_window_into_the_run(tmp_path, monkeypatch, quiet):
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
     lock.write_owner({"run": str(tmp_path), "port": 61174})
+    monkeypatch.setenv("BWA_NATIVE_RUN", tmp_path.name)
     monkeypatch.setattr(subprocess, "run", recorder(quiet, "4194305\n"))
-    cfg = config.parse({"state_root": "/s", "display": ":9", "port": 1, "fixture_seed": "/s/P", "hosts": {}})
+    cfg = config.parse({"state_root": "/s", "display": ":9", "port": 1, "fixture_seed": "/s/P", "hosts": {}}, "")
     assert harness.shot(cfg) == tmp_path / "shot-01.png"
     assert quiet[-1] == ["magick", "import", "-window", "4194305", str(tmp_path / "shot-01.png")]
 
