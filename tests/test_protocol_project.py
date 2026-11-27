@@ -55,3 +55,13 @@ def test_activate_engine_is_a_write_tool_without_arguments():
     assert validate_call("project.activateEngine", {})[0] == {}
     with pytest.raises(ValidationError):
         validate_call("project.activateEngine", {"force": True})
+
+
+def test_project_key_set_takes_an_option_label_or_value():
+    assert TOOLS["project.key.get"].read_only
+    assert TOOLS["project.key.set"].inspect == "project.key.get"
+    assert validate_call("project.key.get", {})[0] == {}
+    assert validate_call("project.key.set", {"root": "D", "scale": 1453})[0] == {"root": "D", "scale": 1453}
+    for bad in ({}, {"root": ""}, {"root": 2.0}, {"scale": True}, {"tonic": "D"}):
+        with pytest.raises(ValidationError):
+            validate_call("project.key.set", bad)

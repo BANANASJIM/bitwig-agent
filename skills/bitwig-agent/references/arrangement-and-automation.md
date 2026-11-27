@@ -23,6 +23,7 @@ The Launcher is for trying combinations and the Arranger for fixed placement. Ea
 
 - Before launching, check project and clip quantization, launch mode, release and Next Actions. A scene touches many tracks, and an empty slot can stop clips or record on armed tracks.
 - A launch or stop may queue to a quantization boundary, so `clips launch` and `scenes launch` return `sent`, which is not "playing". Observe the transition before dependent edits. A stopped playhead is not silence while tails ring.
+- The project key (Root Key and Scale) is `project key get` / `project key set`; write a label or value from the read's own options. It needs the native gate, and a device follows it only with Use Global Key on (note FX such as Arpeggiator, Sampler's Spectral mode).
 - Quantization defaults live on the project (`transport set`) and can be overridden per clip (`clips set`); `<path> --help` lists the fields.
 
 ## Arrange and capture
