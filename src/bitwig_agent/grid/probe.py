@@ -19,6 +19,7 @@ from bitwig_agent.audio import pipewire
 from bitwig_agent.errors import BridgeError, HostChanged, bridge_error, changed_before, unknown_result
 from bitwig_agent.grid.read import GridCall, device_target, host_call, module_names, read_graph
 from bitwig_agent.grid.safety import RECORDING_FLAGS
+from bitwig_agent.protocol.base import Verification
 from bitwig_agent.protocol.limits import MAX_TIMEOUT_MS
 
 AUDIO_OUT = "Audio Out"
@@ -297,6 +298,7 @@ async def probe(client: Any, args: dict[str, Any], timeout_ms: int) -> dict[str,
     analysis.pop("path", None)
     return {
         "outcome": "applied",
+        "verification": Verification.FILE_READBACK,
         "port": args["port"],
         "mode": args["mode"],
         "audioOut": names[chosen["instanceId"]],

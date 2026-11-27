@@ -14,6 +14,7 @@ from fakes import DEVICE, LayoutGrid, parse_arguments
 from bitwig_agent.errors import BridgeError
 from bitwig_agent.grid import render as grid_render
 from bitwig_agent.protocol import CLIENT_SIDE, validate_call
+from bitwig_agent.protocol.base import leaf_rule_holds
 
 TRACK = "12345678-1234-1234-1234-123456789abc"
 TARGET = {"target": DEVICE}
@@ -61,6 +62,8 @@ def test_fixture_pages_completely_and_renders_wellformed_svg(tmp_path):
     assert comment["parameters"][0]["value"].strip().split("\n")[0][:10] in text  # comment TEXT is drawn
     assert any(m["typeName"] == "Label" and m["customName"][:8] in text for m in FIXTURE["modules"])
     assert result["outcome"] == "applied"
+    assert result["verification"] == "file_readback"
+    assert leaf_rule_holds(result)
     assert result["bytes"] == (tmp_path / "out.svg").stat().st_size
     assert result["density"] <= 1
     assert result["boundingBox"]["width"] > 0
@@ -94,6 +97,14 @@ def test_overlaps_unconnected_sections_and_density(tmp_path):
     assert 'opacity="0.3"' in svg
     # structure first; parameters are fetched only for the Comment
     assert [p.get("moduleIds") for m, p in host.calls if p["includeParameters"]] == [["note"]]
+
+
+def test_a_file_that_does_not_read_back_as_written_is_unknown(tmp_path, monkeypatch):
+    real = grid_render._write
+    monkeypatch.setattr(grid_render, "_write", lambda path, data, overwrite: real(path, data[:-1], overwrite))
+    result = run(LayoutGrid([mod("a", "Clock", 0, 0)], []), tmp_path)
+    assert (result["outcome"], result["reason"]) == ("unknown", "readback_mismatch")
+    assert "verification" not in result
 
 
 def test_categories_come_from_one_table():

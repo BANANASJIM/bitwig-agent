@@ -56,6 +56,7 @@ public final class NativeNoteWriteTest {
         LauncherFake f = riff(16);
         JsonObject out = f.call("notes.set", eight(f));
         assertEquals("applied", out.get("outcome").getAsString());
+        assertEquals("api_readback", out.get("verification").getAsString());
         assertEquals("one_step", out.get("undo").getAsString());
         assertEquals(8, out.getAsJsonObject("summary").get("verified").getAsInt());
         assertEquals(1, f.nativeNotes.transactions, "one transaction for every note");
@@ -143,6 +144,7 @@ public final class NativeNoteWriteTest {
                 2, NoteGrid.plan(p, p.getAsJsonArray("edits"), "edits", null).size());
         JsonObject out = f.call("notes.set", p);
         assertEquals("applied", out.get("outcome").getAsString());
+        assertEquals("api_readback", out.get("verification").getAsString(), "windowed results are verified too");
         assertEquals("one_step", out.get("undo").getAsString());
         assertEquals(1, f.nativeNotes.transactions);
         JsonArray windows = out.getAsJsonArray("windows");

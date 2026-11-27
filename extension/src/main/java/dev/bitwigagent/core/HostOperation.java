@@ -41,6 +41,12 @@ public final class HostOperation {
     /** The future the transport waits on; at its deadline it may expire an operation that never dispatched. */
     private final class Result extends CompletableFuture<JsonObject> implements RpcServer.Expiring {
         @Override
+        public boolean complete(JsonObject value) {
+            assert Results.leafRuleHolds(value) : "an applied result carries verification: " + value;
+            return super.complete(value);
+        }
+
+        @Override
         public boolean expire() {
             synchronized (HostOperation.this) {
                 if (dispatched) return false;

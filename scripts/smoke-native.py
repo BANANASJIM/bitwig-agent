@@ -35,7 +35,7 @@ from mcp.types import TextContent
 
 from bitwig_agent.client import MAX_PORT
 from bitwig_agent.protocol import TOOLS
-from bitwig_agent.protocol.base import REASONS, SUCCEEDED, Outcome
+from bitwig_agent.protocol.base import REASONS, SUCCEEDED, Outcome, leaf_rule_holds
 
 
 def registry_matches(java_methods, advertised):
@@ -103,6 +103,8 @@ class NativeOutcomeGuard:
             self.stop("Malformed native result; inspect raw evidence before continuing.")
         if result.get("topologyQuarantined") is True or result.get("topologyAdmissionBlocked") is True:
             self.stop("Native topology admission is blocked; coordinator inspection is required.")
+        if not leaf_rule_holds(result):
+            self.stop("Native result is applied without a verification; the protocol rule is broken.")
         outcome = result.get("outcome")
         if outcome == Outcome.UNKNOWN or any(
             isinstance(field, dict) and field.get("outcome") == Outcome.UNKNOWN

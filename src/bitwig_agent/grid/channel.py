@@ -37,6 +37,7 @@ class Channel:
         self.client, self.target, self.timeout_ms = client, target, timeout_ms
         self.wrote = False
         self.topo_written = False
+        self.applied: list[dict[str, Any]] = []
 
     def _timeout(self, method: str) -> int:
         spec = TOOLS[method]
@@ -55,6 +56,8 @@ class Channel:
             result: dict[str, Any] = await self.client.call(method, host_params, timeout)
         except BridgeError as exc:
             raise Stop(method, {"error": exc.error}) from exc
+        if result.get("outcome") == Outcome.APPLIED:
+            self.applied.append(result)
         return result
 
     async def read(self, reader: Callable[..., Awaitable[T]], *args: Any, **kwargs: Any) -> T:

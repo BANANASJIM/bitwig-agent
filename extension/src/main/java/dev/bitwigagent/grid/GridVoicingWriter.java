@@ -114,7 +114,8 @@ public final class GridVoicingWriter {
                                 + "; inspect state before another write.",
                         changed);
         check.run();
-        JsonObject result = Results.outcome(changed ? Outcome.APPLIED : Outcome.ALREADY_MATCHED);
+        JsonObject result =
+                Results.outcome(changed ? Outcome.APPLIED : Outcome.ALREADY_MATCHED, Verification.NATIVE_READBACK);
         result.addProperty("supported", true);
         result.add("voicing", current);
         result.addProperty("mode", mode(current));
@@ -125,7 +126,6 @@ public final class GridVoicingWriter {
             if (!request.set.containsKey(field) && !before.get(field).equals(current.get(field))) side.add(field);
         result.add("changedUnrequested", side);
         result.addProperty("mutationDispatched", changed);
-        Verification.NATIVE_READBACK.put(result);
         result.addProperty("nativeMutation", changed);
         result.addProperty("nativeUndo", changed);
         result.addProperty(

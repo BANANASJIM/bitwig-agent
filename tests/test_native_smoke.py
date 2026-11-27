@@ -132,7 +132,14 @@ def test_native_uncertainty_latches_before_another_operation(envelope):
     with pytest.raises(native_smoke.NativeRunStopped):
         guard.before_call()
     with pytest.raises(native_smoke.NativeRunStopped):
+        guard.observe({"result": {"outcome": "applied", "verification": "native_readback"}})
+
+
+def test_an_applied_result_without_verification_stops_the_run():
+    guard = native_smoke.NativeOutcomeGuard()
+    with pytest.raises(native_smoke.NativeRunStopped):
         guard.observe({"result": {"outcome": "applied"}})
+    assert guard.stopped
 
 
 @pytest.mark.parametrize("reason", ["invalid_params", "target_changed"])
