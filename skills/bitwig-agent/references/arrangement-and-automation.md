@@ -28,7 +28,7 @@ The Launcher is for trying combinations and the Arranger for fixed placement. Ea
 
 ## Arrange and capture
 
-1. Stop the transport. `clips copy` and `clips insert` take `to` as a slot or a track and start beat; `--help` shows both forms. Read the whole arrangement with `arranger list` (no target: every track's clips by start, with `bar`, markers, tempo and time signature) before placing sections.
+1. Stop the transport. `clips copy` and `clips insert` take `to` as a slot or a track and start beat; `--help` shows both forms. Read the whole arrangement with `arranger list` (no target: every track's clips in track order, by start within a track, with `bar`, markers, tempo and time signature) before placing sections.
 2. Overlaps are refused, not overwritten: lay sections end to end and read the lane back.
 3. Before capturing a launcher performance check the recording start, existing material, record arms, automation writing and the alias-capture option.
 4. Afterwards read the arranger clips and return tracks to Arranger control before judging the linear arrangement. `markers insert` makes form and export range explicit.
@@ -43,7 +43,7 @@ verse  bars 9-24   Drums A, Bass A, Pad
 drop   bars 25-32  Drums B, Bass B, Pad
 ```
 
-Then send it as one `batch`, one call per line, positions in beats (4/4: bar 9 is beat 32). Clip refs come from `launcher list`, track refs from `tracks list`:
+Then send it as one `batch`, one call per line, positions in beats (4/4: bar 9 is beat 32). Clip refs come from `launcher list`, track refs from `tracks list`. `clips.copy` only copies onto the clip's own track (another track is `unsupported_scope`), so each `to.track` must be the track that holds its `from` clip; a section on another track needs a clip made there (`clips.insert`):
 
 ```sh
 bitwig-agent batch <<'EOF'

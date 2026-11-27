@@ -246,7 +246,7 @@ public final class MixModule implements HostModule {
                         }
                         solve.original = result.original;
                         changes.addProperty(solve.key, result.normalized);
-                        target.solved.add(solve.key);
+                        if (result.wrote()) target.solved.add(solve.key);
                         solveNext(op, target, changes, solves, index + 1);
                     })
                     .start();
@@ -558,7 +558,7 @@ public final class MixModule implements HostModule {
                         }
                         requested.put("value", new JsonPrimitive(result.normalized));
                         writes.put("value", -1L);
-                        solvedValue = true;
+                        solvedValue = result.wrote();
                         writeFields();
                     })
                     .start();
