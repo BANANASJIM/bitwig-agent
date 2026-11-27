@@ -57,7 +57,7 @@ EOF
 
 - To fill a section with one clip, copy it once and lengthen that copy with `clips set` `length`, not N copies. `clips.set` needs the new arranger clip ref the copy returned, so send the lengths as a second batch: `{"method":"clips.set","params":{"target":<new arranger clip ref>,"length":64}}`.
 - The same material in several places is one `clips.copy` per place.
-- The batch continues past `sent` and stops at the first error or at the first outcome that is neither `applied`, `already_matched` nor `sent`; every finished call printed one line. Fix the cause and resend only the lines after the last printed one.
+- The batch continues past `sent` and stops at the first error or at the first outcome that is neither `applied`, `already_matched` nor `sent`; every finished call printed one line and each line it never sent printed `{"outcome":"not_applied","reason":"not_reached"}`. Fix the cause and resend only the `not_reached` lines.
 - Verify against the table by reading, not by writing again: `markers list`, and `arranger list --target=<track ref>` for each track (clips with `start` and `length`; it lists in creation order, so sort by `start`).
 
 ## Record and edit audio

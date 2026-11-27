@@ -912,7 +912,9 @@ async def test_batch_continues_past_success_and_stops_at_the_first_unsuccessful_
     stdin = lines_of(*({"method": "transport.set", "params": {"playing": False}},) * 3)
     out = await cli.execute(["batch", "-"], stdin=lambda: stdin)
     assert out.code == code
-    assert [json.loads(line)["outcome"] for line in out.stdout.splitlines()] == outcomes[:printed]
+    lines = [json.loads(line) for line in out.stdout.splitlines()]
+    assert [line["outcome"] for line in lines[:printed]] == outcomes[:printed]
+    assert lines[printed:] == [{"outcome": "not_applied", "reason": "not_reached"}] * (3 - printed)
     assert len(host.requests) == printed
 
 
@@ -928,7 +930,7 @@ async def test_batch_stops_at_the_first_error_and_names_the_line(host, monkeypat
     stdin = lines_of(*({"method": "transport.set", "params": {"playing": False}},) * 3)
     out = await cli.execute(["batch"], stdin=lambda: stdin)
     assert out.code == 1
-    assert out.stdout == '{"outcome":"applied"}\n'
+    assert out.stdout == '{"outcome":"applied"}\n{"outcome":"not_applied","reason":"not_reached"}\n'
     assert json.loads(out.stderr)["message"].startswith("line 2: ")
     assert len(host.requests) == 2
 
