@@ -100,13 +100,18 @@ public final class NativeHostTest {
             assertSame(host, access.exactConstructor("app").getDeclaringClass());
             assertThrows(
                     NoSuchMethodException.class, () -> access.exactMethod("app.isDocumentThread", int.class, false));
-            // The code's types must also be the descriptor the table records for the key.
-            assertTrue(assertThrows(
-                            NoSuchMethodException.class,
-                            () -> access.exactMethod("app.otherDescriptor", boolean.class, false))
-                    .getMessage()
-                    .contains("is not the name table's ()I"));
-            assertThrows(NoSuchFieldException.class, () -> access.exactConstant("app.otherConstant", host));
+            // The table's desc is not compared at runtime: the binding reports the code's types for the offline check.
+            java.util.Map<String, String> bound = new java.util.HashMap<>();
+            runtime.onBound(bound::put);
+            assertEquals(
+                    "q3",
+                    access.exactMethod("app.otherDescriptor", boolean.class, false)
+                            .getName());
+            assertSame(host, access.exactConstant("app.otherConstant", host).getClass());
+            assertEquals(
+                    java.util.Map.of(
+                            "app.otherDescriptor", "()Z", "app.otherConstant", "L" + app.replace('.', '/') + ";"),
+                    bound);
             boolean[] ran = {false};
             access.execute(() -> ran[0] = true);
             assertTrue(ran[0], "execute dispatches through the table's asyncExec binding");

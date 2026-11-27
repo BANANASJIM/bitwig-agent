@@ -60,11 +60,21 @@ public final class NativeTrackResolverTest {
         String names = inspected.get("names").getAsString();
         NativeHost runtime = new NativeHost(isolatedHost(jar, names), version, () -> {});
         assertTrue(runtime.access().gateError() == null, "inspected jar passes the exact version and SHA-256 gate");
+        JsonObject members = SharedData.read(names).getAsJsonObject("members");
+        List<String> differ = new ArrayList<>(), compared = new ArrayList<>();
+        runtime.onBound((key, descriptor) -> {
+            compared.add(key);
+            if (!members.getAsJsonObject(key).get("desc").getAsString().equals(descriptor))
+                differ.add(key + ": code " + descriptor + ", table "
+                        + members.getAsJsonObject(key).get("desc"));
+        });
         NativePorts ports = new NativePorts(op -> runtime);
         HostOperation op = new HostOperation(Long.MAX_VALUE);
         for (PortHandle<?> port : ports.all()) assertNotNull(port.get(op), "every port binds");
         assertNotNull(((NativeAutomationAccess) ports.automation().get(op)).text(), "display text binds on first use");
         assertNotNull(((NativeChainAccess) ports.chains().get(op)).layers(), "layer bindings bind on first use");
+        assertTrue(
+                !compared.isEmpty() && differ.isEmpty(), "the code binds each member with its table desc: " + differ);
         bind(runtime, NativeTrackResolver::new);
         bind(runtime, NativeDeviceTargetAccess::new);
         bind(runtime, NativeClipTiming::new);

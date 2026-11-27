@@ -44,7 +44,7 @@ The default checks do not launch Bitwig. See [VERIFICATION.md](VERIFICATION.md) 
 
 ## Mapping a new Bitwig release
 
-Native bindings use obfuscated host names that change with every Bitwig release and platform. Binding code names them only by semantic keys; each `host.json` entry selects a name table, `src/bitwig_agent/shared/names_<version>.json`: `classes` maps a key to a host class, `members` maps a key to `{owner, name, desc}`, where `owner` is a class key and `desc` the member's JVM descriptor in that jar. `NativeHost` also requires the types the code binds a member with to equal its `desc`. `scripts/remap` maps the table from one `bitwig.jar` to another (a new release, or the same release on another platform) offline: it parses class files as data and never loads or runs host code. Use absolute paths (the tasks run from the repository root).
+Native bindings use obfuscated host names that change with every Bitwig release and platform. Binding code names them only by semantic keys; each `host.json` entry selects a name table, `src/bitwig_agent/shared/names_<version>.json`: `classes` maps a key to a host class, `members` maps a key to `{owner, name, desc}`, where `owner` is a class key and `desc` the member's JVM descriptor in that jar. `scripts/remap` maps the table from one `bitwig.jar` to another (a new release, or the same release on another platform) offline: it parses class files as data and never loads or runs host code. Use absolute paths (the tasks run from the repository root).
 
 1. Generate the new table from the latest maintained one. New keys are found and natively checked on the latest version first and mapped back to the previous one the same way (swap the jars); a key that does not map back is decided by a person, as an explicit `null` for that version, never left out.
 
@@ -62,7 +62,7 @@ Native bindings use obfuscated host names that change with every Bitwig release 
    ```
 
 3. Add the `host.json` entry (`version`, `apiVersion`, `jarSha256`, `names`) and the entry's `extension/src/host/<version>/BitwigAgentGridInsertion_<version>.java`, with the override names from the new table.
-4. Bind every native port on the new jar, the bindings resolved on first use included: `pixi run test-java --host-jar NEW/bitwig.jar` (the jar joins only the test classpath; no host code runs). `BITWIG_HOST_JARS=NEW/bitwig.jar pixi run test tests/test_names_tables.py` repeats step 2's resolution check.
+4. Bind every native port on the new jar, the bindings resolved on first use included, and compare the types the code binds each member with against its `desc`: `pixi run test-java --host-jar NEW/bitwig.jar` (the jar joins only the test classpath; no host code runs). `BITWIG_HOST_JARS=NEW/bitwig.jar pixi run test tests/test_names_tables.py` repeats step 2's resolution check.
 5. Native smoke on the test instance, then fix only the ports that fail; a structural change gets a new adapter, chosen for that entry in the port's method of `nativehost.NativePorts`.
 
 A table's key that was added after an entry shipped is resolved where it is first used (`nativehost.LazyBinding`), not in its adapter's constructor, so an older entry without it fails only that feature with `native_unavailable`.

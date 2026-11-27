@@ -12,6 +12,7 @@ import java.lang.invoke.MethodType;
 import java.lang.reflect.*;
 import java.nio.file.*;
 import java.security.MessageDigest;
+import java.util.function.BiConsumer;
 import java.util.function.Function;
 
 /** One loaded-binary gate and document dispatcher; domain bindings remain independent. */
@@ -24,6 +25,8 @@ public final class NativeHost {
     private Path hostJar;
     private String expectedHash, actualHash, gateError, modelThreadError;
     private Method singleton, async, isDocumentThread, modelThread, executor;
+    /** Each exact member binding with the descriptor of the code's types; the offline check against the table. */
+    private BiConsumer<String, String> bound = (key, descriptor) -> {};
 
     public NativeHost(Object host, String version, Runnable check) {
         this(host, version, check, HOSTS, SharedData::read);
@@ -76,6 +79,10 @@ public final class NativeHost {
             modelThreadError = Errors.diagnostic(error);
         }
         check.run();
+    }
+
+    void onBound(BiConsumer<String, String> observer) {
+        bound = observer;
     }
 
     public Access access() {
@@ -164,20 +171,8 @@ public final class NativeHost {
                 throw new NoSuchMethodException("Exact public descriptor mismatch: " + key);
             if (hostType(method.getDeclaringClass().getName()) != method.getDeclaringClass())
                 throw new NoSuchMethodException("Native descriptor class differs from the loaded host binding.");
-            String descriptor = MethodType.methodType(returns, args).toMethodDescriptorString();
-            if (!described(key, descriptor)) throw new NoSuchMethodException(mismatch(key, descriptor));
+            bound.accept(key, MethodType.methodType(returns, args).toMethodDescriptorString());
             return method;
-        }
-
-        /** Whether the code's types are the member's {@code desc} in the table, when the table records one. */
-        private boolean described(String key, String descriptor) {
-            JsonElement desc = entry(members, key).getAsJsonObject().get("desc");
-            return desc == null || desc.getAsString().equals(descriptor);
-        }
-
-        private String mismatch(String key, String descriptor) {
-            return "Descriptor " + descriptor + " is not the name table's "
-                    + entry(members, key).getAsJsonObject().get("desc").getAsString() + " for " + key;
         }
 
         /** A public constructor of the public host class {@code key} with exactly these parameter types. */
@@ -200,9 +195,8 @@ public final class NativeHost {
                     || !Modifier.isFinal(modifiers)
                     || !Modifier.isPublic(owner.getModifiers()))
                 throw new NoSuchFieldException("Exact public constant mismatch: " + key);
-            String descriptor =
-                    MethodType.methodType(type).toMethodDescriptorString().substring(2);
-            if (!described(key, descriptor)) throw new NoSuchFieldException(mismatch(key, descriptor));
+            bound.accept(
+                    key, MethodType.methodType(type).toMethodDescriptorString().substring(2));
             return field.get(null);
         }
 

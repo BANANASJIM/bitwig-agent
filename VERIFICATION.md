@@ -59,7 +59,7 @@ BITWIG_HOST_JARS=/path/6.1.4/bitwig.jar:/path/6.1.7/bitwig.jar pixi run test tes
 pixi run test-java --host-jar /path/to/bitwig.jar   # once per host.json entry
 ```
 
-The first resolves every member's name and descriptor on its owner class in the entry's jar. The second binds every port of `NativePorts`, and the bindings they resolve on first use, through the real gate on that jar; an exact binding fails unless the code's types are the table's descriptor. For the 6.1.4 and 6.1.7 tables both pass, and `scripts/remap` regenerates each table from the other and the two jars with no difference. A table that binds is not native behavior: that still needs the native smoke.
+The first resolves every member's name and descriptor on its owner class in the entry's jar. The second binds every port of `NativePorts`, and the bindings they resolve on first use, through the real gate on that jar; it fails when the types the code binds a member with differ from the table's descriptor. For the 6.1.4 and 6.1.7 tables both pass, and `scripts/remap` regenerates each table from the other and the two jars with no difference. A table that binds is not native behavior: that still needs the native smoke.
 
 ### Optional music-analysis dependencies
 
