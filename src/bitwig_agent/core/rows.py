@@ -10,7 +10,6 @@ from typing import Any
 
 from bitwig_agent.core.serialize import dumps
 
-FORMATS = ("json", "jsonl", "csv", "tsv")
 TSV_ESCAPES = (("\\", "\\\\"), ("\t", "\\t"), ("\n", "\\n"), ("\r", "\\r"))
 
 

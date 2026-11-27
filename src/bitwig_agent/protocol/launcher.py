@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import Field
 
+from bitwig_agent.protocol.annotations import STEER
 from bitwig_agent.protocol.base import StatusArgs, ToolSpec, omitted
 from bitwig_agent.protocol.limits import SCENE_WINDOW
 from bitwig_agent.protocol.refs import Index, TrackRef
@@ -25,8 +26,10 @@ class LauncherListArgs(StatusArgs):
     sceneOffset: SceneOffset = omitted()
 
 
-class LauncherStopArgs(StatusArgs):
-    target: TrackRef
+class LauncherTrackArgs(StatusArgs):
+    target: TrackRef | Literal["all"] = Field(
+        description='A track ref from tracks.list, or "all" for every track of the project.'
+    )
 
 
 LAUNCHER_LIST_DESCRIPTION = (
@@ -37,9 +40,18 @@ LAUNCHER_LIST_DESCRIPTION = (
     "again with it. Does not select or move the cursor."
 )
 LAUNCHER_STOP_DESCRIPTION = (
-    "Stop launcher playback on one track; does not delete clips or stop the entire transport. A stop observed as "
-    "stopped returns outcome applied; a queued stop returns outcome sent: observe launcher.list before dependent edits. "
-    "Missing queue/stop observation returns outcome unknown (reason not_observed): stop the writer, never blindly retry."
+    'Stop launcher playback on one track, or with target "all" on every track (Bitwig\'s Stop Playback of All Tracks); '
+    "does not delete clips or stop the transport. A stopped track renders silent until launcher.returnToArrangement. "
+    "Bitwig queues a stop first; the call waits for it. Every track observed stopped: outcome applied; still queued "
+    'when the observation window ends: outcome sent, observe again before dependent edits. "all" reads back the tracks of the track window (tracks[], complete=false when the project '
+    "has more, then at most sent). No stop or queue observed: outcome unknown (reason not_observed); never blindly retry."
+)
+LAUNCHER_RETURN_DESCRIPTION = (
+    'Return one track, or with target "all" every track, from the launcher to Arranger playback (Bitwig\'s Switch '
+    "Playback to Arranger; immediate, no launch quantization): playing launcher clips stop and a track stopped from the "
+    "launcher follows the arranger again, so export.audio renders the arranger. outcome applied when every track reads "
+    "back playbackState arranger (not stopped, no launcher clip playing or queued); complete=false (launcher clips "
+    "beyond the observed scene or track window) gives at most sent. Not observed: unknown (not_observed); never retry."
 )
 
 
@@ -47,5 +59,14 @@ SPECS: dict[str, ToolSpec] = {
     "launcher.list": ToolSpec(
         LauncherListArgs, LAUNCHER_LIST_DESCRIPTION, True, examples=({"target": TRACK_REF},), records="slots"
     ),
-    "launcher.stop": ToolSpec(LauncherStopArgs, LAUNCHER_STOP_DESCRIPTION, False, examples=({"target": TRACK_REF},)),
+    "launcher.stop": ToolSpec(
+        LauncherTrackArgs, LAUNCHER_STOP_DESCRIPTION, False, examples=({"target": TRACK_REF}, {"target": "all"})
+    ),
+    "launcher.returnToArrangement": ToolSpec(
+        LauncherTrackArgs,
+        LAUNCHER_RETURN_DESCRIPTION,
+        False,
+        examples=({"target": "all"}, {"target": TRACK_REF}),
+        annotations=STEER,
+    ),
 }

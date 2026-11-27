@@ -278,6 +278,8 @@ class ToolSpec:
     annotations: Annotations | None = None
     summary: str = ""
     records: str | None = None
+    views: tuple[str, ...] = ()
+    """Named read-only text views of the result (format=<name>), rendered client-side from the same records."""
     inspect: str | None = None
     """The read method that shows the state this write acted on; the registry fills it for every host write."""
     wire: type[BaseModel] | None = None

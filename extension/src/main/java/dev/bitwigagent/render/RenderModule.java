@@ -43,13 +43,17 @@ public final class RenderModule implements HostModule, JobsModule.Source {
     long applyGraceNanos = TimeUnit.SECONDS.toNanos(2);
 
     public static final class Export {
-        public final String fileType, tap;
+        /** The requested fileType as given (one type or a list), echoed in results. */
+        final JsonElement fileType;
+
+        public final List<String> fileTypes;
+        public final String tap;
         public final int bitDepth, sampleRate;
         public final boolean dither, overwrite;
         public final double start, end;
 
         Export(
-                String fileType,
+                JsonElement fileType,
                 int bitDepth,
                 int sampleRate,
                 String tap,
@@ -58,6 +62,7 @@ public final class RenderModule implements HostModule, JobsModule.Source {
                 double start,
                 double end) {
             this.fileType = fileType;
+            this.fileTypes = types(fileType);
             this.bitDepth = bitDepth;
             this.sampleRate = sampleRate;
             this.tap = tap;
@@ -65,6 +70,14 @@ public final class RenderModule implements HostModule, JobsModule.Source {
             this.overwrite = overwrite;
             this.start = start;
             this.end = end;
+        }
+
+        /** One type, or the types of a list in order. */
+        static List<String> types(JsonElement fileType) {
+            List<String> out = new ArrayList<>();
+            if (fileType.isJsonArray()) for (JsonElement type : fileType.getAsJsonArray()) out.add(type.getAsString());
+            else out.add(fileType.getAsString());
+            return out;
         }
     }
 
@@ -102,8 +115,7 @@ public final class RenderModule implements HostModule, JobsModule.Source {
         }
     }
 
-    static final String SWITCH_FIX =
-            "actions.invoke actionId=switch_playback_to_arranger_for_all_tracks (every track follows the arranger again)";
+    static final String SWITCH_FIX = "launcher.returnToArrangement target=all (every track follows the arranger again)";
     static final String COPY_FIX = "clips.copy its launcher clip onto the arranger (to {track, start})";
 
     public interface Access {
@@ -308,8 +320,11 @@ public final class RenderModule implements HostModule, JobsModule.Source {
                 Params.absoluteFilePath(p, "directory");
                 RenderPlan.baseName(Params.string(p, "baseName"));
                 range(p);
+                List<String> types = Export.types(p.get("fileType"));
+                if (new HashSet<>(types).size() != types.size())
+                    throw Errors.invalid("fileType entries must be distinct.");
                 if (p.has("bitDepth")
-                        && p.get("fileType").getAsString().equals("flac")
+                        && types.contains("flac")
                         && p.get("bitDepth").getAsInt() == 32)
                     throw Errors.invalid("bitDepth must be 16 or 24 for flac.");
                 return;
@@ -414,9 +429,8 @@ public final class RenderModule implements HostModule, JobsModule.Source {
         String tap = p.has("tap") ? p.get("tap").getAsString() : "post_fader";
         Job next;
         if (export) {
-            String fileType = p.get("fileType").getAsString();
             Export options = new Export(
-                    fileType,
+                    p.get("fileType"),
                     p.has("bitDepth") ? p.get("bitDepth").getAsInt() : 24,
                     p.has("sampleRate") ? p.get("sampleRate").getAsInt() : 0,
                     tap,
@@ -428,7 +442,7 @@ public final class RenderModule implements HostModule, JobsModule.Source {
                     Path.of(p.get("directory").getAsString()),
                     p.get("baseName").getAsString(),
                     ids.size(),
-                    fileType,
+                    options.fileTypes,
                     options.overwrite);
             next = new Job(EXPORT, ids, sources, proxies, start, end, tap, plan, options);
         } else {
@@ -591,14 +605,14 @@ public final class RenderModule implements HostModule, JobsModule.Source {
         boolean verified = true, changed = false;
         JsonArray rows = new JsonArray();
         if (!current.bounce()) {
-            for (int i = 0; i < current.ids.size(); i++) {
+            for (int i = 0; i < current.plan.files.size(); i++) {
                 JsonObject row = RenderPlan.inspect(
                         current.plan.files.get(i),
                         current.plan.before.get(i),
-                        current.export.fileType,
+                        current.plan.types.get(i),
                         current.export.bitDepth,
                         current.export.sampleRate);
-                row.add("source", current.sources.get(i));
+                row.add("source", current.sources.get(current.plan.sources.get(i)));
                 verified &= row.get("valid").getAsBoolean();
                 ProjectSaveAsPlan.Stat was = current.plan.before.get(i),
                         now = ProjectSaveAsPlan.Stat.of(current.plan.files.get(i));
@@ -782,7 +796,7 @@ public final class RenderModule implements HostModule, JobsModule.Source {
         result.addProperty("end", current.end);
         result.addProperty("tap", current.tap);
         if (current.export != null) {
-            result.addProperty("fileType", current.export.fileType);
+            result.add("fileType", current.export.fileType);
             result.addProperty("bitDepth", current.export.bitDepth);
             result.addProperty(
                     "sampleRate",

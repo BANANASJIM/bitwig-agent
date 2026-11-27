@@ -146,6 +146,8 @@ public final class HostFixture {
                 send.child("displayedValue").data = reverb ? "-18 dB" : "";
                 send.child("isEnabled").data = reverb;
                 send.child("isPreFader").data = false;
+                send.child("sendMode").data = "AUTO";
+                enumOptions(send.child("sendMode"), "AUTO", "PRE", "POST");
             }
         }
         FakeHost markers =
