@@ -18,7 +18,9 @@ from . import audio, bitwig, doctor, evidence, lock, monitor, sandbox
 from .config import Config, Host
 
 EXTENSION = "BitwigAgent.bwextension"
-LICENCE = (".activation-*", ".eula-agreed-*")
+# Activation, EULA and first-run markers: without has-opened-dashboard Bitwig 6.1.7 shows its first-run welcome
+# and never starts the audio engine (measured 2026-11-27).
+SEED_FILES = (".activation-*", ".eula-agreed-*", "has-*")
 PORTS_SECONDS = 60
 STATUS_SECONDS = 180
 LOCK_SECONDS = 30
@@ -55,7 +57,7 @@ def init(config: Config, name: str) -> None:
         path.mkdir(parents=True, exist_ok=True)
     (iso / "BWS/Extensions").mkdir(exist_ok=True)
     real = Path(account().pw_dir) / ".BitwigStudio"
-    for pattern in LICENCE:
+    for pattern in SEED_FILES:
         for source in real.glob(pattern):
             if not (iso / "BitwigStudio" / source.name).exists():
                 shutil.copy2(source, iso / "BitwigStudio" / source.name)
@@ -207,6 +209,7 @@ def up(config: Config, name: str, extension: str) -> Path:
         )
         pid = settle(config, run, session)
     except BaseException as exc:  # any failure, Ctrl-C included, must not leave a running sandbox
+        evidence.update_run(run, abortShot=str(capture(config.display, run)))  # the GUI state before the kill
         stopped = stop_sandbox(run, session, f"{type(exc).__name__}: {exc}")
         state = "sandbox stopped" if stopped else f"sandbox NOT stopped: session {session} is still running"
         raise SystemExit(
@@ -275,14 +278,26 @@ def cli(args: list[str]) -> int:
     return done.returncode
 
 
+def capture(display: str, run: Path) -> Path | None:
+    """A screenshot of Bitwig's window (it draws its dialogs inside it) into the run; None without one.
+
+    The root window of a nested Xwayland display cannot be captured (import fails), so the window is.
+    """
+    env = {**os.environ, "DISPLAY": display}
+    search = ["xdotool", "search", "--onlyvisible", "--name", bitwig.WINDOW]
+    windows = subprocess.run(search, env=env, capture_output=True, text=True, check=False).stdout.split()
+    if not windows:
+        return None
+    path = run / f"shot-{len(list(run.glob('shot-*.png'))) + 1:02d}.png"
+    done = subprocess.run(["magick", "import", "-window", windows[0], str(path)], env=env, check=False)
+    return path if done.returncode == 0 else None
+
+
 def shot(config: Config) -> Path:
     _, run = owned_run()
-    path = run / f"shot-{len(list(run.glob('shot-*.png'))) + 1:02d}.png"
-    env = {**os.environ, "DISPLAY": config.display}
-    window = subprocess.run(
-        ["xdotool", "search", "--name", bitwig.WINDOW], env=env, capture_output=True, text=True, check=True
-    ).stdout.split()[0]
-    subprocess.run(["magick", "import", "-window", window, str(path)], env=env, check=True)
+    path = capture(config.display, run)
+    if path is None:
+        raise SystemExit(f"no screenshot of display {config.display}")
     print(path)
     return path
 

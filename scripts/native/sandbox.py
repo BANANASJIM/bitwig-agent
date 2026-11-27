@@ -12,6 +12,18 @@ from dataclasses import dataclass
 from pathlib import Path
 
 INSTALL = Path("/opt/bitwig-studio")
+SESSION_ENV = (
+    "HOME",
+    "USER",
+    "LOGNAME",
+    "SHELL",
+    "LANG",
+    "LANGUAGE",
+    "XAUTHORITY",
+    "XDG_RUNTIME_DIR",
+    "DBUS_SESSION_BUS_ADDRESS",
+)
+SYSTEM_PATH = "/usr/local/bin:/usr/bin:/bin"
 PIPEWIRE_PROPS = "{ jack.self-connect-mode=ignore-all jack.other-connect-mode=ignore node.autoconnect=false }"
 
 
@@ -50,8 +62,15 @@ def argv(table: list[Mount], project: Path) -> list[str]:
 
 
 def environment(base: Mapping[str, str], display: str, port: int) -> dict[str, str]:
-    env = {k: v for k, v in base.items() if k != "WAYLAND_DISPLAY"}
-    return {**env, "DISPLAY": display, "PIPEWIRE_PROPS": PIPEWIRE_PROPS, "BITWIG_AGENT_PORT": str(port)}
+    """A desktop session's environment from an allowlist: the caller's (pixi-activated) variables never reach Bitwig."""
+    kept = {k: v for k, v in base.items() if k in SESSION_ENV or k.startswith("LC_")}
+    return {
+        **kept,
+        "PATH": SYSTEM_PATH,
+        "DISPLAY": display,
+        "PIPEWIRE_PROPS": PIPEWIRE_PROPS,
+        "BITWIG_AGENT_PORT": str(port),
+    }
 
 
 def mount_points(mountinfo: str) -> set[str]:

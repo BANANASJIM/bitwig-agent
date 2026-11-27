@@ -142,10 +142,25 @@ def test_a_second_install_is_bound_over_the_install_path_before_anything_inside_
 
 
 def test_environment_selects_the_test_display_port_and_jack_guard():
-    env = sandbox.environment({"WAYLAND_DISPLAY": "wayland-0", "DISPLAY": ":0", "PATH": "/bin"}, ":1", 61174)
+    caller = {
+        "WAYLAND_DISPLAY": "wayland-0",
+        "DISPLAY": ":0",
+        "PATH": "/pixi/env/bin:/usr/bin",
+        "JAVA_HOME": "/pixi/env/lib/jvm",
+        "CONDA_PREFIX": "/pixi/env",
+        "XDG_DATA_DIRS": "/pixi/env/share:/usr/share",
+        "PYTHONPATH": "scripts",
+        "HOME": "/home/u",
+        "XDG_RUNTIME_DIR": "/run/user/1000",
+        "LC_TIME": "C",
+    }
+    env = sandbox.environment(caller, ":1", 61174)
     assert env == {
+        "HOME": "/home/u",
+        "XDG_RUNTIME_DIR": "/run/user/1000",
+        "LC_TIME": "C",
         "DISPLAY": ":1",
-        "PATH": "/bin",
+        "PATH": "/usr/local/bin:/usr/bin:/bin",
         "PIPEWIRE_PROPS": "{ jack.self-connect-mode=ignore-all jack.other-connect-mode=ignore node.autoconnect=false }",
         "BITWIG_AGENT_PORT": "61174",
     }
@@ -553,6 +568,7 @@ class Desktop:
         monkeypatch.setattr(bitwig, "PROC", self.proc)
         monkeypatch.setattr(pipewire, "run", self.run)
         monkeypatch.setattr(harness, "KILL_SECONDS", 0)
+        monkeypatch.setattr(harness, "capture", self.capture)
         monkeypatch.setattr(harness, "account", lambda: SimpleNamespace(pw_dir=str(self.home), pw_name="u"))
         monkeypatch.setattr(harness, "java_tmpdir", lambda user: tmp_path / f"tmp-bitwig-{user}")
         monkeypatch.setattr(harness, "spawn", self.spawn)
@@ -586,6 +602,10 @@ class Desktop:
         if args[:2] == ["pw-link", "-d"]:
             self.events.append("cut")
         return self.pw.run(args, timeout)
+
+    def capture(self, display, run):
+        self.events.append("shot")
+        return run / "shot-01.png"
 
     def killpg(self, session, sig):
         self.killed.append((session, sig))
@@ -636,7 +656,7 @@ def prepared(tmp_path: Path, desktop: Desktop, monkeypatch) -> config.Config:
     (state / "seed/BWA Test/BWA Test.bwproject").write_bytes(b"p")
     real = desktop.home / ".BitwigStudio"
     real.mkdir(parents=True)
-    for name in (".activation-12", ".eula-agreed-X", "telemetry-id"):
+    for name in (".activation-12", ".eula-agreed-X", "has-opened-dashboard", "telemetry-id"):
         (real / name).write_text(name, encoding="utf-8")
     cfg = config.parse(
         {
@@ -655,7 +675,12 @@ def prepared(tmp_path: Path, desktop: Desktop, monkeypatch) -> config.Config:
 def test_init_copies_licence_prefs_and_fixture_once(tmp_path, desktop, monkeypatch, capsys):
     cfg = prepared(tmp_path, desktop, monkeypatch)
     iso = cfg.iso(cfg.host("6.1.7"))
-    assert sorted(p.name for p in (iso / "BitwigStudio").iterdir()) == [".activation-12", ".eula-agreed-X", "prefs"]
+    assert sorted(p.name for p in (iso / "BitwigStudio").iterdir()) == [
+        ".activation-12",
+        ".eula-agreed-X",
+        "has-opened-dashboard",
+        "prefs",
+    ]
     assert (iso / "BWS/Extensions").is_dir()
     assert (cfg.fixture / "BWA Test.bwproject").is_file()
     capsys.readouterr()
@@ -756,11 +781,12 @@ def test_up_aborts_on_a_stray_link_by_cutting_it_then_killing_the_sandbox(tmp_pa
     assert "; sandbox stopped;" in str(raised.value)
     assert str(raised.value).endswith(f"export BWA_NATIVE_RUN={run.name}\npixi run native-down")
     assert ("Bitwig Studio:out1", "alsa_output.pci:playback_FL") not in desktop.pw.links
-    assert desktop.events == ["cut", f"kill {signal.SIGTERM}", f"kill {signal.SIGKILL}"]
+    assert desktop.events == ["shot", "cut", f"kill {signal.SIGTERM}", f"kill {signal.SIGKILL}"]
     assert not bitwig.session_alive(102)
     assert bitwig.alive(102)  # the leader is a zombie, which counts as ended
     data = evidence.read_run(run)
     assert data["strayLinksCut"] == [["Bitwig Studio:out1", "alsa_output.pci:playback_FL"]]
+    assert data["abortShot"] == str(run / "shot-01.png")
     assert data["aborted"].startswith("RuntimeError: Bitwig linked outside bwtest")
 
 
@@ -918,14 +944,26 @@ def test_entry_point_dispatches_commands(tmp_path, desktop, monkeypatch, capsys)
     assert entry.main(["proof", str(tmp_path / "state/runs/r")]) == 0
 
 
-def test_shot_captures_the_test_window_into_the_run(tmp_path, monkeypatch, quiet):
+def test_shot_captures_the_bitwig_window_into_the_run(tmp_path, monkeypatch, quiet):
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
     lock.write_owner({"run": str(tmp_path), "port": 61174})
     monkeypatch.setenv("BWA_NATIVE_RUN", tmp_path.name)
     monkeypatch.setattr(subprocess, "run", recorder(quiet, "4194305\n"))
     cfg = config.parse({"state_root": "/s", "display": ":9", "port": 1, "fixture_seed": "/s/P", "hosts": {}}, "")
     assert harness.shot(cfg) == tmp_path / "shot-01.png"
+    assert quiet[-2] == ["xdotool", "search", "--onlyvisible", "--name", bitwig.WINDOW]
     assert quiet[-1] == ["magick", "import", "-window", "4194305", str(tmp_path / "shot-01.png")]
+    monkeypatch.setattr(subprocess, "run", recorder(quiet, ""))
+    with pytest.raises(SystemExit, match="no screenshot of display :9"):
+        harness.shot(cfg)
+
+
+def test_capture_reports_a_failed_import(tmp_path, monkeypatch):
+    def run(command, **kwargs):
+        return completed(command, int(command[0] == "magick"), "4194305\n")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    assert harness.capture(":9", tmp_path) is None
 
 
 def test_snapshots_are_gzip_text(tmp_path):
