@@ -362,7 +362,7 @@ The guide draws arranger automation in a track's Automation Lane section: "doubl
 - player track `ynF.mvz()` → lane set `euS`; parameter reference `eD.cfM(bDH)`; find lane `LEn.Hnt(z2y)`;
 - create lane `YW.MRY(z2y, false, false, false)` ("Add Automation Lane" without the seed point at the current value or the UI reveal);
 - `lkr.LaE().tSS()` → point timeline `PQT`; points `qIe.cfM()` (`hMP`, ordered by beat): beat `SMz.x3t()`, value `vcm.cfM(point)` through the lane range `PQT.wGc()` (an `aL`, normalized 0..1), interpolation `dfo.FzB()` (`jRs` HOLD/LINEAR), curve `hMP.dU_()`;
-- new point `bU.MRY(beat, value, jRs, 0.0)`, insert `PQT.cfM(point, index)`, delete `PSn.MRY(point)`.
+- new point `bU.MRY(beat, value, jRs, curve)` (curve 0 for a new point, the kept curve for an updated one), insert `PQT.cfM(point, index)`, delete `PSn.MRY(point)`.
 
 Targets are parameter refs: a track's volume (`FNX.tSS()`, class `A` "Volume") or pan (`FNX.nfq()`, `mAq` "Pan") of its mixer channel `ynF.TbN()`, as `tracks.get` returns them (`{kind:"parameter", owner:<track ref>, id:"volume"|"pan"}`), or `{kind:"parameter", owner:<gridModule ref>, id:<parameter key in the grid.export spec>}`: a float (`Opy`) Grid module parameter on a top-level device of the same track. Any other owner (device, remote page, modulator) is `invalid_params`/`unsupported_scope`. The parameter's owning track must be the track the ref names.
 
