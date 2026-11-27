@@ -253,6 +253,7 @@ async def _put_back(rewire: _Rewire, capture_error: BaseException | None) -> dic
 
 async def probe(client: Any, args: dict[str, Any], timeout_ms: int) -> dict[str, Any]:
     pipewire.check_platform()
+    pipewire.load_analysis()  # the probe analyzes its take: refuse before any cable is rewired
     allow_audible = args.get("allowAudible", False)
     module, port_key = _parse_port(args["port"])
     await _require_silent(allow_audible)

@@ -1,0 +1,2938 @@
+{
+ "clicks_44k_s16 {\"key\": \"A:aeolian\", \"mode\": \"bands\", \"windowSeconds\": 2.0}": {
+  "analyzedChannel": 0,
+  "bandEdgesHz": {
+   "air": [
+    8000,
+    null
+   ],
+   "high": [
+    2000,
+    8000
+   ],
+   "low": [
+    60,
+    250
+   ],
+   "mid": [
+    250,
+    2000
+   ],
+   "sub": [
+    0,
+    60
+   ]
+  },
+  "channels": 2,
+  "chroma": {
+   "inKeyShare": 0.843,
+   "note": "power of every FFT bin in the range folded to pitch classes (one long Hann FFT per window on audio decimated to ~4 kHz); drums, noise and inharmonic partials pollute it, so use it on pitched stems",
+   "rangeHz": [
+    50.0,
+    1500.0
+   ],
+   "topPitchClasses": [
+    {
+     "name": "B",
+     "share": 0.588
+    },
+    {
+     "name": "C",
+     "share": 0.184
+    },
+    {
+     "name": "A#",
+     "share": 0.089
+    }
+   ]
+  },
+  "durationSeconds": 4.0,
+  "key": "A:aeolian",
+  "mode": "bands",
+  "note": "each window samples up to 16 Hann frames of 4096 samples; bandsDb are relative to the window's total power; peaks = strongest spectral maxima of the whole analyzed range (dB re the strongest), the way to pitch steady or noisy sources",
+  "peakResolutionHz": 10.8,
+  "peaks": [
+   {
+    "cents": 19,
+    "db": 0.0,
+    "hz": 998.7,
+    "midi": 83.19,
+    "note": "B5"
+   }
+  ],
+  "sampleRate": 44100,
+  "stereoCorrelation": 1.0,
+  "windowSeconds": 2.0,
+  "windows": [
+   {
+    "bandsDb": {
+     "air": -42.9,
+     "high": -25.3,
+     "low": -20.0,
+     "mid": -0.1,
+     "sub": -25.8
+    },
+    "centroidHz": 978,
+    "chroma": {
+     "inKeyShare": 0.843,
+     "topPitchClasses": [
+      {
+       "name": "B",
+       "share": 0.588
+      },
+      {
+       "name": "C",
+       "share": 0.184
+      },
+      {
+       "name": "A#",
+       "share": 0.089
+      }
+     ]
+    },
+    "rms": 0.0506,
+    "t": 0.0
+   },
+   {
+    "bandsDb": {
+     "air": -42.9,
+     "high": -25.3,
+     "low": -20.0,
+     "mid": -0.1,
+     "sub": -25.8
+    },
+    "centroidHz": 978,
+    "chroma": {
+     "inKeyShare": 0.843,
+     "topPitchClasses": [
+      {
+       "name": "B",
+       "share": 0.588
+      },
+      {
+       "name": "C",
+       "share": 0.184
+      },
+      {
+       "name": "A#",
+       "share": 0.089
+      }
+     ]
+    },
+    "rms": 0.0506,
+    "t": 2.0
+   }
+  ]
+ },
+ "clicks_44k_s16 {\"method\": \"envelope\", \"mode\": \"mono_pitch\"}": {
+  "analyzedChannel": 0,
+  "channels": 2,
+  "durationSeconds": 4.0,
+  "method": "envelope",
+  "mode": "mono_pitch",
+  "noteCount": 8,
+  "notes": [
+   {
+    "midi": 83.21,
+    "name": "B5",
+    "t": 0.0998
+   },
+   {
+    "midi": 83.21,
+    "name": "B5",
+    "t": 0.5986
+   },
+   {
+    "midi": 83.21,
+    "name": "B5",
+    "t": 1.0975
+   },
+   {
+    "midi": 83.21,
+    "name": "B5",
+    "t": 1.5964
+   },
+   {
+    "midi": 83.21,
+    "name": "B5",
+    "t": 2.0952
+   },
+   {
+    "midi": 83.21,
+    "name": "B5",
+    "t": 2.5991
+   },
+   {
+    "midi": 83.21,
+    "name": "B5",
+    "t": 3.098
+   },
+   {
+    "midi": 83.21,
+    "name": "B5",
+    "t": 3.5968
+   }
+  ],
+  "peak": 0.7754,
+  "sampleRate": 44100,
+  "silent": false,
+  "summary": {
+   "intervals": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "leapRecoveryRatio": 1.0,
+   "leaps": 0,
+   "pitchClassNames": [
+    "B"
+   ],
+   "pitchClasses": [
+    11
+   ],
+   "range": {
+    "max": 83,
+    "min": 83,
+    "semitones": 0
+   },
+   "repeatRatio": 1.0,
+   "stepwiseRatio": 1.0,
+   "tuneError": 0.212
+  },
+  "truncated": false
+ },
+ "clicks_44k_s16 {\"method\": \"envelope\", \"mode\": \"onsets\"}": {
+  "analyzedChannel": 0,
+  "channels": 2,
+  "count": 8,
+  "durationSeconds": 4.0,
+  "intervals": [
+   0.4988,
+   0.4989,
+   0.4989,
+   0.4988,
+   0.5039,
+   0.4989,
+   0.4988
+  ],
+  "method": "envelope",
+  "mode": "onsets",
+  "onsets": [
+   0.0998,
+   0.5986,
+   1.0975,
+   1.5964,
+   2.0952,
+   2.5991,
+   3.098,
+   3.5968
+  ],
+  "peak": 0.7754,
+  "sampleRate": 44100,
+  "silent": false,
+  "truncated": false
+ },
+ "clicks_44k_s16 {\"mode\": \"level\", \"windowSeconds\": 1.0}": {
+  "analyzedChannel": 0,
+  "channels": 2,
+  "clipping": false,
+  "durationSeconds": 4.0,
+  "mode": "level",
+  "peak": 0.7754,
+  "peakDb": -2.21,
+  "rms": 0.0506,
+  "rmsDb": -25.92,
+  "sampleRate": 44100,
+  "silenceRatio": 0.0,
+  "windowSeconds": 1.0,
+  "windows": [
+   {
+    "peak": 0.7754,
+    "rms": 0.0506,
+    "rmsDb": -25.92,
+    "t": 0.0
+   },
+   {
+    "peak": 0.7754,
+    "rms": 0.0506,
+    "rmsDb": -25.92,
+    "t": 1.0
+   },
+   {
+    "peak": 0.7754,
+    "rms": 0.0506,
+    "rmsDb": -25.92,
+    "t": 2.0
+   },
+   {
+    "peak": 0.7754,
+    "rms": 0.0506,
+    "rmsDb": -25.92,
+    "t": 3.0
+   }
+  ]
+ },
+ "clicks_44k_s16 {\"mode\": \"loudness\"}": {
+  "analyzedChannel": "all",
+  "channelLayout": "stereo",
+  "channelWeights": [
+   1.0,
+   1.0
+  ],
+  "channels": 2,
+  "durationSeconds": 4.0,
+  "gating": {
+   "absoluteGated": 30,
+   "blocks": 37,
+   "relativeGated": 30,
+   "relativeThresholdLufs": -31.93
+  },
+  "integratedLufs": -21.93,
+  "limits": [
+   "BS.1770-4 K-weighting and gating; 48 kHz coefficients are the standard's, other rates are bilinear-transform derived.",
+   "Mono counts as one front channel (about 3 LU below the same signal played on two speakers). Channel order is assumed to be WAV order; 6 channels use 5.1 weights, other counts weight every channel 1.",
+   "integratedLufs is null when no 400 ms block passes the -70 LUFS gate; shortTermMaxLufs and loudnessRangeLu need at least 3 s.",
+   "truePeakDbtp is a 4x windowed-sinc estimate over intervals near the sample peak, not a certified BS.1770 true-peak meter; expect about +-0.1 dB.",
+   "Pure Python: about 2 s of CPU per minute of stereo 48 kHz audio (measured on one desktop CPU); at most 1800 s per call.",
+   "The whole file counts (use skipSeconds to drop a warm-up); this is a file measurement, not Bitwig's own meter."
+  ],
+  "loudnessRangeLu": 0.0,
+  "mode": "loudness",
+  "momentaryMaxLufs": -21.93,
+  "perChannelTruePeakDbtp": [
+   -2.21,
+   -2.21
+  ],
+  "samplePeakDbfs": -2.21,
+  "sampleRate": 44100,
+  "shortTermMaxLufs": -22.9,
+  "startSeconds": 0.0,
+  "truePeakDbtp": -2.21
+ },
+ "clicks_44k_s16 {\"mode\": \"onsets\"}": {
+  "analyzedChannel": 0,
+  "channels": 2,
+  "count": 8,
+  "durationSeconds": 4.0,
+  "intervals": [
+   0.4988,
+   0.4989,
+   0.4988,
+   0.4989,
+   0.5039,
+   0.4988,
+   0.4989
+  ],
+  "method": "flux",
+  "mode": "onsets",
+  "onsets": [
+   0.0998,
+   0.5986,
+   1.0975,
+   1.5963,
+   2.0952,
+   2.5991,
+   3.0979,
+   3.5968
+  ],
+  "peak": 0.7754,
+  "sampleRate": 44100,
+  "silent": false,
+  "truncated": false
+ },
+ "intersample_f32 {\"key\": \"A:aeolian\", \"mode\": \"bands\", \"windowSeconds\": 2.0}": {
+  "analyzedChannel": 0,
+  "bandEdgesHz": {
+   "air": [
+    8000,
+    null
+   ],
+   "high": [
+    2000,
+    8000
+   ],
+   "low": [
+    60,
+    250
+   ],
+   "mid": [
+    250,
+    2000
+   ],
+   "sub": [
+    0,
+    60
+   ]
+  },
+  "channels": 2,
+  "chroma": {
+   "inKeyShare": null,
+   "note": "power of every FFT bin in the range folded to pitch classes (one long Hann FFT per window on audio decimated to ~4 kHz); drums, noise and inharmonic partials pollute it, so use it on pitched stems",
+   "rangeHz": [
+    50.0,
+    1500.0
+   ],
+   "topPitchClasses": []
+  },
+  "durationSeconds": 2.0,
+  "key": "A:aeolian",
+  "mode": "bands",
+  "note": "each window samples up to 16 Hann frames of 4096 samples; bandsDb are relative to the window's total power; peaks = strongest spectral maxima of the whole analyzed range (dB re the strongest), the way to pitch steady or noisy sources",
+  "peakResolutionHz": 11.7,
+  "peaks": [
+   {
+    "cents": 23,
+    "db": 0.0,
+    "hz": 12000.0,
+    "midi": 126.23,
+    "note": "F#9"
+   }
+  ],
+  "sampleRate": 48000,
+  "stereoCorrelation": 1.0,
+  "windowSeconds": 2.0,
+  "windows": [
+   {
+    "bandsDb": {
+     "air": 0.0,
+     "high": -318.0,
+     "low": -339.9,
+     "mid": -328.8,
+     "sub": -346.9
+    },
+    "centroidHz": 12000,
+    "chroma": {
+     "inKeyShare": null,
+     "topPitchClasses": []
+    },
+    "rms": 0.7071,
+    "t": 0.0
+   }
+  ]
+ },
+ "intersample_f32 {\"method\": \"envelope\", \"mode\": \"onsets\"}": {
+  "analyzedChannel": 0,
+  "channels": 2,
+  "count": 0,
+  "durationSeconds": 2.0,
+  "intervals": [],
+  "method": "envelope",
+  "mode": "onsets",
+  "onsets": [],
+  "peak": 0.7071,
+  "sampleRate": 48000,
+  "silent": false,
+  "truncated": false
+ },
+ "intersample_f32 {\"mode\": \"level\", \"windowSeconds\": 1.0}": {
+  "analyzedChannel": 0,
+  "channels": 2,
+  "clipping": false,
+  "durationSeconds": 2.0,
+  "mode": "level",
+  "peak": 0.7071,
+  "peakDb": -3.01,
+  "rms": 0.7071,
+  "rmsDb": -3.01,
+  "sampleRate": 48000,
+  "silenceRatio": 0.0,
+  "windowSeconds": 1.0,
+  "windows": [
+   {
+    "peak": 0.7071,
+    "rms": 0.7071,
+    "rmsDb": -3.01,
+    "t": 0.0
+   },
+   {
+    "peak": 0.7071,
+    "rms": 0.7071,
+    "rmsDb": -3.01,
+    "t": 1.0
+   }
+  ]
+ },
+ "intersample_f32 {\"mode\": \"loudness\"}": {
+  "analyzedChannel": "all",
+  "channelLayout": "stereo",
+  "channelWeights": [
+   1.0,
+   1.0
+  ],
+  "channels": 2,
+  "durationSeconds": 2.0,
+  "gating": {
+   "absoluteGated": 17,
+   "blocks": 17,
+   "relativeGated": 17,
+   "relativeThresholdLufs": -6.65
+  },
+  "integratedLufs": 3.35,
+  "limits": [
+   "BS.1770-4 K-weighting and gating; 48 kHz coefficients are the standard's, other rates are bilinear-transform derived.",
+   "Mono counts as one front channel (about 3 LU below the same signal played on two speakers). Channel order is assumed to be WAV order; 6 channels use 5.1 weights, other counts weight every channel 1.",
+   "integratedLufs is null when no 400 ms block passes the -70 LUFS gate; shortTermMaxLufs and loudnessRangeLu need at least 3 s.",
+   "truePeakDbtp is a 4x windowed-sinc estimate over intervals near the sample peak, not a certified BS.1770 true-peak meter; expect about +-0.1 dB.",
+   "Pure Python: about 2 s of CPU per minute of stereo 48 kHz audio (measured on one desktop CPU); at most 1800 s per call.",
+   "The whole file counts (use skipSeconds to drop a warm-up); this is a file measurement, not Bitwig's own meter."
+  ],
+  "loudnessRangeLu": null,
+  "mode": "loudness",
+  "momentaryMaxLufs": 3.35,
+  "perChannelTruePeakDbtp": [
+   0.0,
+   0.0
+  ],
+  "samplePeakDbfs": -3.01,
+  "sampleRate": 48000,
+  "shortTermMaxLufs": null,
+  "startSeconds": 0.0,
+  "truePeakDbtp": 0.0
+ },
+ "intersample_f32 {\"mode\": \"onsets\"}": {
+  "analyzedChannel": 0,
+  "channels": 2,
+  "count": 0,
+  "durationSeconds": 2.0,
+  "intervals": [],
+  "method": "flux",
+  "mode": "onsets",
+  "onsets": [],
+  "peak": 0.7071,
+  "sampleRate": 48000,
+  "silent": false,
+  "truncated": false
+ },
+ "melody_s16 {\"bpm\": 120, \"mode\": \"mono_pitch\"}": {
+  "analyzedChannel": 0,
+  "channels": 1,
+  "durationSeconds": 1.8,
+  "grid": {
+   "offsetSeconds": 0.1,
+   "onBeatRatio": 0.5,
+   "positions16": [
+    0,
+    2,
+    4,
+    6,
+    8,
+    10
+   ],
+   "stepSeconds": 0.125
+  },
+  "method": "flux",
+  "mode": "mono_pitch",
+  "noteCount": 6,
+  "notes": [
+   {
+    "midi": 60.01,
+    "name": "C4",
+    "t": 0.1
+   },
+   {
+    "midi": 62.0,
+    "name": "D4",
+    "t": 0.35
+   },
+   {
+    "midi": 64.01,
+    "name": "E4",
+    "t": 0.6
+   },
+   {
+    "midi": 67.0,
+    "name": "G4",
+    "t": 0.85
+   },
+   {
+    "midi": 69.0,
+    "name": "A4",
+    "t": 1.1
+   },
+   {
+    "midi": 71.99,
+    "name": "C5",
+    "t": 1.35
+   }
+  ],
+  "peak": 0.5956,
+  "sampleRate": 48000,
+  "silent": false,
+  "summary": {
+   "intervals": [
+    2,
+    2,
+    3,
+    2,
+    3
+   ],
+   "leapRecoveryRatio": 1.0,
+   "leaps": 0,
+   "pitchClassNames": [
+    "C",
+    "D",
+    "E",
+    "G",
+    "A"
+   ],
+   "pitchClasses": [
+    0,
+    2,
+    4,
+    7,
+    9
+   ],
+   "range": {
+    "max": 72,
+    "min": 60,
+    "semitones": 12
+   },
+   "repeatRatio": 0.0,
+   "stepwiseRatio": 0.6,
+   "tuneError": 0.005
+  },
+  "truncated": false
+ },
+ "melody_s16 {\"key\": \"A:aeolian\", \"mode\": \"bands\", \"windowSeconds\": 2.0}": {
+  "analyzedChannel": 0,
+  "bandEdgesHz": {
+   "air": [
+    8000,
+    null
+   ],
+   "high": [
+    2000,
+    8000
+   ],
+   "low": [
+    60,
+    250
+   ],
+   "mid": [
+    250,
+    2000
+   ],
+   "sub": [
+    0,
+    60
+   ]
+  },
+  "channels": 1,
+  "chroma": {
+   "inKeyShare": 0.957,
+   "note": "power of every FFT bin in the range folded to pitch classes (one long Hann FFT per window on audio decimated to ~4 kHz); drums, noise and inharmonic partials pollute it, so use it on pitched stems",
+   "rangeHz": [
+    50.0,
+    1500.0
+   ],
+   "topPitchClasses": [
+    {
+     "name": "G",
+     "share": 0.347
+    },
+    {
+     "name": "E",
+     "share": 0.24
+    },
+    {
+     "name": "A",
+     "share": 0.231
+    }
+   ]
+  },
+  "durationSeconds": 1.8,
+  "key": "A:aeolian",
+  "mode": "bands",
+  "note": "each window samples up to 16 Hann frames of 4096 samples; bandsDb are relative to the window's total power; peaks = strongest spectral maxima of the whole analyzed range (dB re the strongest), the way to pitch steady or noisy sources",
+  "peakResolutionHz": 11.7,
+  "peaks": [
+   {
+    "cents": 1,
+    "db": 0.0,
+    "hz": 293.8,
+    "midi": 62.01,
+    "note": "D4"
+   },
+   {
+    "cents": 0,
+    "db": -0.6,
+    "hz": 329.7,
+    "midi": 64.0,
+    "note": "E4"
+   },
+   {
+    "cents": 1,
+    "db": -1.3,
+    "hz": 261.8,
+    "midi": 60.01,
+    "note": "C4"
+   },
+   {
+    "cents": -1,
+    "db": -1.8,
+    "hz": 523.1,
+    "midi": 71.99,
+    "note": "C5"
+   },
+   {
+    "cents": 0,
+    "db": -3.3,
+    "hz": 439.9,
+    "midi": 69.0,
+    "note": "A4"
+   },
+   {
+    "cents": -1,
+    "db": -4.0,
+    "hz": 391.8,
+    "midi": 66.99,
+    "note": "G4"
+   }
+  ],
+  "sampleRate": 48000,
+  "stereoCorrelation": null,
+  "windowSeconds": 2.0,
+  "windows": [
+   {
+    "bandsDb": {
+     "air": -77.2,
+     "high": -60.2,
+     "low": -20.0,
+     "mid": -0.0,
+     "sub": -40.9
+    },
+    "centroidHz": 358,
+    "chroma": {
+     "inKeyShare": 0.957,
+     "topPitchClasses": [
+      {
+       "name": "G",
+       "share": 0.347
+      },
+      {
+       "name": "E",
+       "share": 0.24
+      },
+      {
+       "name": "A",
+       "share": 0.231
+      }
+     ]
+    },
+    "rms": 0.199,
+    "t": 0.0
+   }
+  ]
+ },
+ "melody_s16 {\"method\": \"envelope\", \"mode\": \"onsets\"}": {
+  "analyzedChannel": 0,
+  "channels": 1,
+  "count": 6,
+  "durationSeconds": 1.8,
+  "intervals": [
+   0.25,
+   0.25,
+   0.25,
+   0.25,
+   0.25
+  ],
+  "method": "envelope",
+  "mode": "onsets",
+  "onsets": [
+   0.1,
+   0.35,
+   0.6,
+   0.85,
+   1.1,
+   1.35
+  ],
+  "peak": 0.5956,
+  "sampleRate": 48000,
+  "silent": false,
+  "truncated": false
+ },
+ "melody_s16 {\"mode\": \"level\", \"windowSeconds\": 1.0}": {
+  "analyzedChannel": 0,
+  "channels": 1,
+  "clipping": false,
+  "durationSeconds": 1.8,
+  "mode": "level",
+  "peak": 0.5956,
+  "peakDb": -4.5,
+  "rms": 0.199,
+  "rmsDb": -14.02,
+  "sampleRate": 48000,
+  "silenceRatio": 0.0,
+  "windowSeconds": 1.0,
+  "windows": [
+   {
+    "peak": 0.5954,
+    "rms": 0.2177,
+    "rmsDb": -13.24,
+    "t": 0.0
+   },
+   {
+    "peak": 0.5956,
+    "rms": 0.1729,
+    "rmsDb": -15.24,
+    "t": 1.0
+   }
+  ]
+ },
+ "melody_s16 {\"mode\": \"loudness\"}": {
+  "analyzedChannel": "all",
+  "channelLayout": "mono",
+  "channelWeights": [
+   1.0
+  ],
+  "channels": 1,
+  "durationSeconds": 1.8,
+  "gating": {
+   "absoluteGated": 15,
+   "blocks": 15,
+   "relativeGated": 15,
+   "relativeThresholdLufs": -24.31
+  },
+  "integratedLufs": -14.31,
+  "limits": [
+   "BS.1770-4 K-weighting and gating; 48 kHz coefficients are the standard's, other rates are bilinear-transform derived.",
+   "Mono counts as one front channel (about 3 LU below the same signal played on two speakers). Channel order is assumed to be WAV order; 6 channels use 5.1 weights, other counts weight every channel 1.",
+   "integratedLufs is null when no 400 ms block passes the -70 LUFS gate; shortTermMaxLufs and loudnessRangeLu need at least 3 s.",
+   "truePeakDbtp is a 4x windowed-sinc estimate over intervals near the sample peak, not a certified BS.1770 true-peak meter; expect about +-0.1 dB.",
+   "Pure Python: about 2 s of CPU per minute of stereo 48 kHz audio (measured on one desktop CPU); at most 1800 s per call.",
+   "The whole file counts (use skipSeconds to drop a warm-up); this is a file measurement, not Bitwig's own meter."
+  ],
+  "loudnessRangeLu": null,
+  "mode": "loudness",
+  "momentaryMaxLufs": -12.96,
+  "perChannelTruePeakDbtp": [
+   -4.5
+  ],
+  "samplePeakDbfs": -4.5,
+  "sampleRate": 48000,
+  "shortTermMaxLufs": null,
+  "startSeconds": 0.0,
+  "truePeakDbtp": -4.5
+ },
+ "melody_s16 {\"mode\": \"onsets\"}": {
+  "analyzedChannel": 0,
+  "channels": 1,
+  "count": 6,
+  "durationSeconds": 1.8,
+  "intervals": [
+   0.25,
+   0.25,
+   0.25,
+   0.25,
+   0.25
+  ],
+  "method": "flux",
+  "mode": "onsets",
+  "onsets": [
+   0.1,
+   0.35,
+   0.6,
+   0.85,
+   1.1,
+   1.35
+  ],
+  "peak": 0.5956,
+  "sampleRate": 48000,
+  "silent": false,
+  "truncated": false
+ },
+ "noise_f64 {\"key\": \"A:aeolian\", \"mode\": \"bands\", \"windowSeconds\": 2.0}": {
+  "analyzedChannel": 0,
+  "bandEdgesHz": {
+   "air": [
+    8000,
+    null
+   ],
+   "high": [
+    2000,
+    8000
+   ],
+   "low": [
+    60,
+    250
+   ],
+   "mid": [
+    250,
+    2000
+   ],
+   "sub": [
+    0,
+    60
+   ]
+  },
+  "channels": 2,
+  "chroma": {
+   "inKeyShare": 0.577,
+   "note": "power of every FFT bin in the range folded to pitch classes (one long Hann FFT per window on audio decimated to ~4 kHz); drums, noise and inharmonic partials pollute it, so use it on pitched stems",
+   "rangeHz": [
+    50.0,
+    1500.0
+   ],
+   "topPitchClasses": [
+    {
+     "name": "F",
+     "share": 0.104
+    },
+    {
+     "name": "C#",
+     "share": 0.095
+    },
+    {
+     "name": "E",
+     "share": 0.095
+    }
+   ]
+  },
+  "durationSeconds": 4.0,
+  "key": "A:aeolian",
+  "mode": "bands",
+  "note": "each window samples up to 16 Hann frames of 4096 samples; bandsDb are relative to the window's total power; peaks = strongest spectral maxima of the whole analyzed range (dB re the strongest), the way to pitch steady or noisy sources",
+  "peakResolutionHz": 11.7,
+  "peaks": [
+   {
+    "cents": 11,
+    "db": 0.0,
+    "hz": 21227.5,
+    "midi": 136.11,
+    "note": "E10"
+   },
+   {
+    "cents": 15,
+    "db": 0.0,
+    "hz": 7523.0,
+    "midi": 118.15,
+    "note": "A#8"
+   },
+   {
+    "cents": 19,
+    "db": -0.1,
+    "hz": 9499.6,
+    "midi": 122.19,
+    "note": "D9"
+   },
+   {
+    "cents": 4,
+    "db": -0.2,
+    "hz": 7921.8,
+    "midi": 119.04,
+    "note": "B8"
+   },
+   {
+    "cents": -6,
+    "db": -0.2,
+    "hz": 23598.3,
+    "midi": 137.94,
+    "note": "F#10"
+   },
+   {
+    "cents": -32,
+    "db": -0.3,
+    "hz": 8219.6,
+    "midi": 119.68,
+    "note": "C9"
+   },
+   {
+    "cents": 11,
+    "db": -0.3,
+    "hz": 17851.5,
+    "midi": 133.11,
+    "note": "C#10"
+   },
+   {
+    "cents": -21,
+    "db": -0.3,
+    "hz": 4918.4,
+    "midi": 110.79,
+    "note": "D#8"
+   }
+  ],
+  "sampleRate": 48000,
+  "stereoCorrelation": 0.002,
+  "windowSeconds": 2.0,
+  "windows": [
+   {
+    "bandsDb": {
+     "air": -1.8,
+     "high": -6.0,
+     "low": -21.4,
+     "mid": -11.3,
+     "sub": -27.7
+    },
+    "centroidHz": 11977,
+    "chroma": {
+     "inKeyShare": 0.578,
+     "topPitchClasses": [
+      {
+       "name": "F",
+       "share": 0.118
+      },
+      {
+       "name": "C#",
+       "share": 0.095
+      },
+      {
+       "name": "D#",
+       "share": 0.094
+      }
+     ]
+    },
+    "rms": 0.0753,
+    "t": 0.0
+   },
+   {
+    "bandsDb": {
+     "air": -1.7,
+     "high": -6.1,
+     "low": -21.2,
+     "mid": -11.4,
+     "sub": -27.9
+    },
+    "centroidHz": 12028,
+    "chroma": {
+     "inKeyShare": 0.577,
+     "topPitchClasses": [
+      {
+       "name": "E",
+       "share": 0.101
+      },
+      {
+       "name": "C#",
+       "share": 0.095
+      },
+      {
+       "name": "F#",
+       "share": 0.094
+      }
+     ]
+    },
+    "rms": 0.0752,
+    "t": 2.0
+   }
+  ]
+ },
+ "noise_f64 {\"method\": \"envelope\", \"mode\": \"onsets\"}": {
+  "analyzedChannel": 0,
+  "channels": 2,
+  "count": 0,
+  "durationSeconds": 4.0,
+  "intervals": [],
+  "method": "envelope",
+  "mode": "onsets",
+  "onsets": [],
+  "peak": 0.2512,
+  "sampleRate": 48000,
+  "silent": false,
+  "truncated": false
+ },
+ "noise_f64 {\"mode\": \"level\", \"windowSeconds\": 1.0}": {
+  "analyzedChannel": 0,
+  "channels": 2,
+  "clipping": false,
+  "durationSeconds": 4.0,
+  "mode": "level",
+  "peak": 0.2512,
+  "peakDb": -12.0,
+  "rms": 0.0752,
+  "rmsDb": -22.47,
+  "sampleRate": 48000,
+  "silenceRatio": 0.0,
+  "windowSeconds": 1.0,
+  "windows": [
+   {
+    "peak": 0.2512,
+    "rms": 0.0752,
+    "rmsDb": -22.48,
+    "t": 0.0
+   },
+   {
+    "peak": 0.2512,
+    "rms": 0.0754,
+    "rmsDb": -22.46,
+    "t": 1.0
+   },
+   {
+    "peak": 0.2512,
+    "rms": 0.075,
+    "rmsDb": -22.5,
+    "t": 2.0
+   },
+   {
+    "peak": 0.2512,
+    "rms": 0.0753,
+    "rmsDb": -22.46,
+    "t": 3.0
+   }
+  ]
+ },
+ "noise_f64 {\"mode\": \"loudness\"}": {
+  "analyzedChannel": "all",
+  "channelLayout": "stereo",
+  "channelWeights": [
+   1.0,
+   1.0
+  ],
+  "channels": 2,
+  "durationSeconds": 4.0,
+  "gating": {
+   "absoluteGated": 37,
+   "blocks": 37,
+   "relativeGated": 37,
+   "relativeThresholdLufs": -26.33
+  },
+  "integratedLufs": -16.33,
+  "limits": [
+   "BS.1770-4 K-weighting and gating; 48 kHz coefficients are the standard's, other rates are bilinear-transform derived.",
+   "Mono counts as one front channel (about 3 LU below the same signal played on two speakers). Channel order is assumed to be WAV order; 6 channels use 5.1 weights, other counts weight every channel 1.",
+   "integratedLufs is null when no 400 ms block passes the -70 LUFS gate; shortTermMaxLufs and loudnessRangeLu need at least 3 s.",
+   "truePeakDbtp is a 4x windowed-sinc estimate over intervals near the sample peak, not a certified BS.1770 true-peak meter; expect about +-0.1 dB.",
+   "Pure Python: about 2 s of CPU per minute of stereo 48 kHz audio (measured on one desktop CPU); at most 1800 s per call.",
+   "The whole file counts (use skipSeconds to drop a warm-up); this is a file measurement, not Bitwig's own meter."
+  ],
+  "loudnessRangeLu": 0.0,
+  "mode": "loudness",
+  "momentaryMaxLufs": -16.26,
+  "perChannelTruePeakDbtp": [
+   -9.83,
+   -10.13
+  ],
+  "samplePeakDbfs": -12.0,
+  "sampleRate": 48000,
+  "shortTermMaxLufs": -16.32,
+  "startSeconds": 0.0,
+  "truePeakDbtp": -9.83
+ },
+ "noise_f64 {\"mode\": \"onsets\"}": {
+  "analyzedChannel": 0,
+  "channels": 2,
+  "count": 25,
+  "durationSeconds": 4.0,
+  "intervals": [
+   0.14,
+   0.225,
+   0.15,
+   0.405,
+   0.26,
+   0.05,
+   0.065,
+   0.165,
+   0.065,
+   0.13,
+   0.125,
+   0.17,
+   0.125,
+   0.155,
+   0.14,
+   0.17,
+   0.28,
+   0.195,
+   0.08,
+   0.16,
+   0.055,
+   0.135,
+   0.205,
+   0.15
+  ],
+  "method": "flux",
+  "mode": "onsets",
+  "onsets": [
+   0.075,
+   0.215,
+   0.44,
+   0.59,
+   0.995,
+   1.255,
+   1.305,
+   1.37,
+   1.535,
+   1.6,
+   1.73,
+   1.855,
+   2.025,
+   2.15,
+   2.305,
+   2.445,
+   2.615,
+   2.895,
+   3.09,
+   3.17,
+   3.33,
+   3.385,
+   3.52,
+   3.725,
+   3.875
+  ],
+  "peak": 0.2512,
+  "sampleRate": 48000,
+  "silent": false,
+  "truncated": false
+ },
+ "sine2500_s16 {\"key\": \"A:aeolian\", \"mode\": \"bands\", \"windowSeconds\": 2.0}": {
+  "analyzedChannel": 0,
+  "bandEdgesHz": {
+   "air": [
+    8000,
+    null
+   ],
+   "high": [
+    2000,
+    8000
+   ],
+   "low": [
+    60,
+    250
+   ],
+   "mid": [
+    250,
+    2000
+   ],
+   "sub": [
+    0,
+    60
+   ]
+  },
+  "channels": 2,
+  "chroma": {
+   "inKeyShare": 0.0,
+   "note": "power of every FFT bin in the range folded to pitch classes (one long Hann FFT per window on audio decimated to ~4 kHz); drums, noise and inharmonic partials pollute it, so use it on pitched stems",
+   "rangeHz": [
+    50.0,
+    1500.0
+   ],
+   "topPitchClasses": [
+    {
+     "name": "F#",
+     "share": 1.0
+    },
+    {
+     "name": "B",
+     "share": 0.0
+    },
+    {
+     "name": "F",
+     "share": 0.0
+    }
+   ]
+  },
+  "durationSeconds": 4.0,
+  "key": "A:aeolian",
+  "mode": "bands",
+  "note": "each window samples up to 16 Hann frames of 4096 samples; bandsDb are relative to the window's total power; peaks = strongest spectral maxima of the whole analyzed range (dB re the strongest), the way to pitch steady or noisy sources",
+  "peakResolutionHz": 11.7,
+  "peaks": [
+   {
+    "cents": 8,
+    "db": 0.8,
+    "hz": 2500.2,
+    "midi": 99.08,
+    "note": "D#7"
+   }
+  ],
+  "sampleRate": 48000,
+  "stereoCorrelation": 1.0,
+  "windowSeconds": 2.0,
+  "windows": [
+   {
+    "bandsDb": {
+     "air": -93.4,
+     "high": -0.0,
+     "low": -137.2,
+     "mid": -101.3,
+     "sub": -142.7
+    },
+    "centroidHz": 2500,
+    "chroma": {
+     "inKeyShare": 0.0,
+     "topPitchClasses": [
+      {
+       "name": "F#",
+       "share": 1.0
+      },
+      {
+       "name": "B",
+       "share": 0.0
+      },
+      {
+       "name": "F",
+       "share": 0.0
+      }
+     ]
+    },
+    "rms": 0.3544,
+    "t": 0.0
+   },
+   {
+    "bandsDb": {
+     "air": -93.4,
+     "high": -0.0,
+     "low": -137.2,
+     "mid": -101.3,
+     "sub": -142.7
+    },
+    "centroidHz": 2500,
+    "chroma": {
+     "inKeyShare": 0.0,
+     "topPitchClasses": [
+      {
+       "name": "F#",
+       "share": 1.0
+      },
+      {
+       "name": "B",
+       "share": 0.0
+      },
+      {
+       "name": "F",
+       "share": 0.0
+      }
+     ]
+    },
+    "rms": 0.3544,
+    "t": 2.0
+   }
+  ]
+ },
+ "sine2500_s16 {\"method\": \"envelope\", \"mode\": \"onsets\"}": {
+  "analyzedChannel": 0,
+  "channels": 2,
+  "count": 0,
+  "durationSeconds": 4.0,
+  "intervals": [],
+  "method": "envelope",
+  "mode": "onsets",
+  "onsets": [],
+  "peak": 0.5012,
+  "sampleRate": 48000,
+  "silent": false,
+  "truncated": false
+ },
+ "sine2500_s16 {\"mode\": \"level\", \"windowSeconds\": 1.0}": {
+  "analyzedChannel": 0,
+  "channels": 2,
+  "clipping": false,
+  "durationSeconds": 4.0,
+  "mode": "level",
+  "peak": 0.5012,
+  "peakDb": -6.0,
+  "rms": 0.3544,
+  "rmsDb": -9.01,
+  "sampleRate": 48000,
+  "silenceRatio": 0.0,
+  "windowSeconds": 1.0,
+  "windows": [
+   {
+    "peak": 0.5012,
+    "rms": 0.3544,
+    "rmsDb": -9.01,
+    "t": 0.0
+   },
+   {
+    "peak": 0.5012,
+    "rms": 0.3544,
+    "rmsDb": -9.01,
+    "t": 1.0
+   },
+   {
+    "peak": 0.5012,
+    "rms": 0.3544,
+    "rmsDb": -9.01,
+    "t": 2.0
+   },
+   {
+    "peak": 0.5012,
+    "rms": 0.3544,
+    "rmsDb": -9.01,
+    "t": 3.0
+   }
+  ]
+ },
+ "sine2500_s16 {\"mode\": \"loudness\"}": {
+  "analyzedChannel": "all",
+  "channelLayout": "stereo",
+  "channelWeights": [
+   1.0,
+   1.0
+  ],
+  "channels": 2,
+  "durationSeconds": 4.0,
+  "gating": {
+   "absoluteGated": 37,
+   "blocks": 37,
+   "relativeGated": 37,
+   "relativeThresholdLufs": -13.11
+  },
+  "integratedLufs": -3.11,
+  "limits": [
+   "BS.1770-4 K-weighting and gating; 48 kHz coefficients are the standard's, other rates are bilinear-transform derived.",
+   "Mono counts as one front channel (about 3 LU below the same signal played on two speakers). Channel order is assumed to be WAV order; 6 channels use 5.1 weights, other counts weight every channel 1.",
+   "integratedLufs is null when no 400 ms block passes the -70 LUFS gate; shortTermMaxLufs and loudnessRangeLu need at least 3 s.",
+   "truePeakDbtp is a 4x windowed-sinc estimate over intervals near the sample peak, not a certified BS.1770 true-peak meter; expect about +-0.1 dB.",
+   "Pure Python: about 2 s of CPU per minute of stereo 48 kHz audio (measured on one desktop CPU); at most 1800 s per call.",
+   "The whole file counts (use skipSeconds to drop a warm-up); this is a file measurement, not Bitwig's own meter."
+  ],
+  "loudnessRangeLu": 0.0,
+  "mode": "loudness",
+  "momentaryMaxLufs": -3.11,
+  "perChannelTruePeakDbtp": [
+   -6.0,
+   -6.0
+  ],
+  "samplePeakDbfs": -6.0,
+  "sampleRate": 48000,
+  "shortTermMaxLufs": -3.11,
+  "startSeconds": 0.0,
+  "truePeakDbtp": -6.0
+ },
+ "sine2500_s16 {\"mode\": \"onsets\"}": {
+  "analyzedChannel": 0,
+  "channels": 2,
+  "count": 0,
+  "durationSeconds": 4.0,
+  "intervals": [],
+  "method": "flux",
+  "mode": "onsets",
+  "onsets": [],
+  "peak": 0.5012,
+  "sampleRate": 48000,
+  "silent": false,
+  "truncated": false
+ },
+ "sine3000_s24 {\"key\": \"A:aeolian\", \"mode\": \"bands\", \"windowSeconds\": 2.0}": {
+  "analyzedChannel": 0,
+  "bandEdgesHz": {
+   "air": [
+    8000,
+    null
+   ],
+   "high": [
+    2000,
+    8000
+   ],
+   "low": [
+    60,
+    250
+   ],
+   "mid": [
+    250,
+    2000
+   ],
+   "sub": [
+    0,
+    60
+   ]
+  },
+  "channels": 2,
+  "chroma": {
+   "inKeyShare": 1.0,
+   "note": "power of every FFT bin in the range folded to pitch classes (one long Hann FFT per window on audio decimated to ~4 kHz); drums, noise and inharmonic partials pollute it, so use it on pitched stems",
+   "rangeHz": [
+    50.0,
+    1500.0
+   ],
+   "topPitchClasses": [
+    {
+     "name": "B",
+     "share": 1.0
+    },
+    {
+     "name": "C",
+     "share": 0.0
+    },
+    {
+     "name": "A#",
+     "share": 0.0
+    }
+   ]
+  },
+  "durationSeconds": 4.0,
+  "key": "A:aeolian",
+  "mode": "bands",
+  "note": "each window samples up to 16 Hann frames of 4096 samples; bandsDb are relative to the window's total power; peaks = strongest spectral maxima of the whole analyzed range (dB re the strongest), the way to pitch steady or noisy sources",
+  "peakResolutionHz": 11.7,
+  "peaks": [
+   {
+    "cents": 23,
+    "db": 0.0,
+    "hz": 3000.0,
+    "midi": 102.23,
+    "note": "F#7"
+   }
+  ],
+  "sampleRate": 48000,
+  "stereoCorrelation": 1.0,
+  "windowSeconds": 2.0,
+  "windows": [
+   {
+    "bandsDb": {
+     "air": -140.9,
+     "high": -0.0,
+     "low": -340.0,
+     "mid": -327.5,
+     "sub": -335.7
+    },
+    "centroidHz": 3000,
+    "chroma": {
+     "inKeyShare": 1.0,
+     "topPitchClasses": [
+      {
+       "name": "B",
+       "share": 1.0
+      },
+      {
+       "name": "C",
+       "share": 0.0
+      },
+      {
+       "name": "A#",
+       "share": 0.0
+      }
+     ]
+    },
+    "rms": 0.3544,
+    "t": 0.0
+   },
+   {
+    "bandsDb": {
+     "air": -140.9,
+     "high": -0.0,
+     "low": -340.0,
+     "mid": -327.5,
+     "sub": -335.7
+    },
+    "centroidHz": 3000,
+    "chroma": {
+     "inKeyShare": 1.0,
+     "topPitchClasses": [
+      {
+       "name": "B",
+       "share": 1.0
+      },
+      {
+       "name": "C",
+       "share": 0.0
+      },
+      {
+       "name": "A#",
+       "share": 0.0
+      }
+     ]
+    },
+    "rms": 0.3544,
+    "t": 2.0
+   }
+  ]
+ },
+ "sine3000_s24 {\"method\": \"envelope\", \"mode\": \"onsets\"}": {
+  "analyzedChannel": 0,
+  "channels": 2,
+  "count": 0,
+  "durationSeconds": 4.0,
+  "intervals": [],
+  "method": "envelope",
+  "mode": "onsets",
+  "onsets": [],
+  "peak": 0.5012,
+  "sampleRate": 48000,
+  "silent": false,
+  "truncated": false
+ },
+ "sine3000_s24 {\"mode\": \"level\", \"windowSeconds\": 1.0}": {
+  "analyzedChannel": 0,
+  "channels": 2,
+  "clipping": false,
+  "durationSeconds": 4.0,
+  "mode": "level",
+  "peak": 0.5012,
+  "peakDb": -6.0,
+  "rms": 0.3544,
+  "rmsDb": -9.01,
+  "sampleRate": 48000,
+  "silenceRatio": 0.0,
+  "windowSeconds": 1.0,
+  "windows": [
+   {
+    "peak": 0.5012,
+    "rms": 0.3544,
+    "rmsDb": -9.01,
+    "t": 0.0
+   },
+   {
+    "peak": 0.5012,
+    "rms": 0.3544,
+    "rmsDb": -9.01,
+    "t": 1.0
+   },
+   {
+    "peak": 0.5012,
+    "rms": 0.3544,
+    "rmsDb": -9.01,
+    "t": 2.0
+   },
+   {
+    "peak": 0.5012,
+    "rms": 0.3544,
+    "rmsDb": -9.01,
+    "t": 3.0
+   }
+  ]
+ },
+ "sine3000_s24 {\"mode\": \"loudness\"}": {
+  "analyzedChannel": "all",
+  "channelLayout": "stereo",
+  "channelWeights": [
+   1.0,
+   1.0
+  ],
+  "channels": 2,
+  "durationSeconds": 4.0,
+  "gating": {
+   "absoluteGated": 37,
+   "blocks": 37,
+   "relativeGated": 37,
+   "relativeThresholdLufs": -12.88
+  },
+  "integratedLufs": -2.88,
+  "limits": [
+   "BS.1770-4 K-weighting and gating; 48 kHz coefficients are the standard's, other rates are bilinear-transform derived.",
+   "Mono counts as one front channel (about 3 LU below the same signal played on two speakers). Channel order is assumed to be WAV order; 6 channels use 5.1 weights, other counts weight every channel 1.",
+   "integratedLufs is null when no 400 ms block passes the -70 LUFS gate; shortTermMaxLufs and loudnessRangeLu need at least 3 s.",
+   "truePeakDbtp is a 4x windowed-sinc estimate over intervals near the sample peak, not a certified BS.1770 true-peak meter; expect about +-0.1 dB.",
+   "Pure Python: about 2 s of CPU per minute of stereo 48 kHz audio (measured on one desktop CPU); at most 1800 s per call.",
+   "The whole file counts (use skipSeconds to drop a warm-up); this is a file measurement, not Bitwig's own meter."
+  ],
+  "loudnessRangeLu": 0.0,
+  "mode": "loudness",
+  "momentaryMaxLufs": -2.88,
+  "perChannelTruePeakDbtp": [
+   -6.0,
+   -6.0
+  ],
+  "samplePeakDbfs": -6.0,
+  "sampleRate": 48000,
+  "shortTermMaxLufs": -2.88,
+  "startSeconds": 0.0,
+  "truePeakDbtp": -6.0
+ },
+ "sine3000_s24 {\"mode\": \"onsets\"}": {
+  "analyzedChannel": 0,
+  "channels": 2,
+  "count": 0,
+  "durationSeconds": 4.0,
+  "intervals": [],
+  "method": "flux",
+  "mode": "onsets",
+  "onsets": [],
+  "peak": 0.5012,
+  "sampleRate": 48000,
+  "silent": false,
+  "truncated": false
+ },
+ "sine440_f32 {\"key\": \"A:aeolian\", \"mode\": \"bands\", \"windowSeconds\": 2.0}": {
+  "analyzedChannel": 0,
+  "bandEdgesHz": {
+   "air": [
+    8000,
+    null
+   ],
+   "high": [
+    2000,
+    8000
+   ],
+   "low": [
+    60,
+    250
+   ],
+   "mid": [
+    250,
+    2000
+   ],
+   "sub": [
+    0,
+    60
+   ]
+  },
+  "channels": 2,
+  "chroma": {
+   "inKeyShare": 1.0,
+   "note": "power of every FFT bin in the range folded to pitch classes (one long Hann FFT per window on audio decimated to ~4 kHz); drums, noise and inharmonic partials pollute it, so use it on pitched stems",
+   "rangeHz": [
+    50.0,
+    1500.0
+   ],
+   "topPitchClasses": [
+    {
+     "name": "A",
+     "share": 1.0
+    },
+    {
+     "name": "G#",
+     "share": 0.0
+    },
+    {
+     "name": "A#",
+     "share": 0.0
+    }
+   ]
+  },
+  "durationSeconds": 4.0,
+  "key": "A:aeolian",
+  "mode": "bands",
+  "note": "each window samples up to 16 Hann frames of 4096 samples; bandsDb are relative to the window's total power; peaks = strongest spectral maxima of the whole analyzed range (dB re the strongest), the way to pitch steady or noisy sources",
+  "peakResolutionHz": 11.7,
+  "peaks": [
+   {
+    "cents": 0,
+    "db": 1.4,
+    "hz": 439.9,
+    "midi": 69.0,
+    "note": "A4"
+   }
+  ],
+  "sampleRate": 48000,
+  "stereoCorrelation": 1.0,
+  "windowSeconds": 2.0,
+  "windows": [
+   {
+    "bandsDb": {
+     "air": -153.0,
+     "high": -124.5,
+     "low": -79.2,
+     "mid": -0.0,
+     "sub": -95.6
+    },
+    "centroidHz": 440,
+    "chroma": {
+     "inKeyShare": 1.0,
+     "topPitchClasses": [
+      {
+       "name": "A",
+       "share": 1.0
+      },
+      {
+       "name": "G#",
+       "share": 0.0
+      },
+      {
+       "name": "A#",
+       "share": 0.0
+      }
+     ]
+    },
+    "rms": 0.3544,
+    "t": 0.0
+   },
+   {
+    "bandsDb": {
+     "air": -153.0,
+     "high": -124.5,
+     "low": -79.2,
+     "mid": -0.0,
+     "sub": -95.6
+    },
+    "centroidHz": 440,
+    "chroma": {
+     "inKeyShare": 1.0,
+     "topPitchClasses": [
+      {
+       "name": "A",
+       "share": 1.0
+      },
+      {
+       "name": "G#",
+       "share": 0.0
+      },
+      {
+       "name": "A#",
+       "share": 0.0
+      }
+     ]
+    },
+    "rms": 0.3544,
+    "t": 2.0
+   }
+  ]
+ },
+ "sine440_f32 {\"method\": \"envelope\", \"mode\": \"onsets\"}": {
+  "analyzedChannel": 0,
+  "channels": 2,
+  "count": 0,
+  "durationSeconds": 4.0,
+  "intervals": [],
+  "method": "envelope",
+  "mode": "onsets",
+  "onsets": [],
+  "peak": 0.5012,
+  "sampleRate": 48000,
+  "silent": false,
+  "truncated": false
+ },
+ "sine440_f32 {\"mode\": \"bands\", \"spectrogramPath\": \"spectrogram.png\", \"windowSeconds\": 1.0}": {
+  "analyzedChannel": 0,
+  "bandEdgesHz": {
+   "air": [
+    8000,
+    null
+   ],
+   "high": [
+    2000,
+    8000
+   ],
+   "low": [
+    60,
+    250
+   ],
+   "mid": [
+    250,
+    2000
+   ],
+   "sub": [
+    0,
+    60
+   ]
+  },
+  "channels": 2,
+  "durationSeconds": 4.0,
+  "mode": "bands",
+  "note": "each window samples up to 16 Hann frames of 4096 samples; bandsDb are relative to the window's total power; peaks = strongest spectral maxima of the whole analyzed range (dB re the strongest), the way to pitch steady or noisy sources",
+  "peakResolutionHz": 11.7,
+  "peaks": [
+   {
+    "cents": 0,
+    "db": 1.4,
+    "hz": 439.9,
+    "midi": 69.0,
+    "note": "A4"
+   }
+  ],
+  "sampleRate": 48000,
+  "spectrogram": {
+   "axis": "log frequency, low at the bottom; time left to right",
+   "dynamicRangeDb": 80.0,
+   "fMaxHz": 16000,
+   "fMinHz": 30.0,
+   "height": 256,
+   "width": 184
+  },
+  "stereoCorrelation": 1.0,
+  "windowSeconds": 1.0,
+  "windows": [
+   {
+    "bandsDb": {
+     "air": -153.0,
+     "high": -124.6,
+     "low": -79.2,
+     "mid": -0.0,
+     "sub": -95.5
+    },
+    "centroidHz": 440,
+    "rms": 0.3544,
+    "t": 0.0
+   },
+   {
+    "bandsDb": {
+     "air": -153.0,
+     "high": -124.6,
+     "low": -79.2,
+     "mid": -0.0,
+     "sub": -95.5
+    },
+    "centroidHz": 440,
+    "rms": 0.3544,
+    "t": 1.0
+   },
+   {
+    "bandsDb": {
+     "air": -153.0,
+     "high": -124.6,
+     "low": -79.2,
+     "mid": -0.0,
+     "sub": -95.5
+    },
+    "centroidHz": 440,
+    "rms": 0.3544,
+    "t": 2.0
+   },
+   {
+    "bandsDb": {
+     "air": -153.0,
+     "high": -124.6,
+     "low": -79.2,
+     "mid": -0.0,
+     "sub": -95.5
+    },
+    "centroidHz": 440,
+    "rms": 0.3544,
+    "t": 3.0
+   }
+  ]
+ },
+ "sine440_f32 {\"mode\": \"level\", \"windowSeconds\": 1.0}": {
+  "analyzedChannel": 0,
+  "channels": 2,
+  "clipping": false,
+  "durationSeconds": 4.0,
+  "mode": "level",
+  "peak": 0.5012,
+  "peakDb": -6.0,
+  "rms": 0.3544,
+  "rmsDb": -9.01,
+  "sampleRate": 48000,
+  "silenceRatio": 0.0,
+  "windowSeconds": 1.0,
+  "windows": [
+   {
+    "peak": 0.5012,
+    "rms": 0.3544,
+    "rmsDb": -9.01,
+    "t": 0.0
+   },
+   {
+    "peak": 0.5012,
+    "rms": 0.3544,
+    "rmsDb": -9.01,
+    "t": 1.0
+   },
+   {
+    "peak": 0.5012,
+    "rms": 0.3544,
+    "rmsDb": -9.01,
+    "t": 2.0
+   },
+   {
+    "peak": 0.5012,
+    "rms": 0.3544,
+    "rmsDb": -9.01,
+    "t": 3.0
+   }
+  ]
+ },
+ "sine440_f32 {\"mode\": \"loudness\"}": {
+  "analyzedChannel": "all",
+  "channelLayout": "stereo",
+  "channelWeights": [
+   1.0,
+   1.0
+  ],
+  "channels": 2,
+  "durationSeconds": 4.0,
+  "gating": {
+   "absoluteGated": 37,
+   "blocks": 37,
+   "relativeGated": 37,
+   "relativeThresholdLufs": -17.93
+  },
+  "integratedLufs": -7.93,
+  "limits": [
+   "BS.1770-4 K-weighting and gating; 48 kHz coefficients are the standard's, other rates are bilinear-transform derived.",
+   "Mono counts as one front channel (about 3 LU below the same signal played on two speakers). Channel order is assumed to be WAV order; 6 channels use 5.1 weights, other counts weight every channel 1.",
+   "integratedLufs is null when no 400 ms block passes the -70 LUFS gate; shortTermMaxLufs and loudnessRangeLu need at least 3 s.",
+   "truePeakDbtp is a 4x windowed-sinc estimate over intervals near the sample peak, not a certified BS.1770 true-peak meter; expect about +-0.1 dB.",
+   "Pure Python: about 2 s of CPU per minute of stereo 48 kHz audio (measured on one desktop CPU); at most 1800 s per call.",
+   "The whole file counts (use skipSeconds to drop a warm-up); this is a file measurement, not Bitwig's own meter."
+  ],
+  "loudnessRangeLu": 0.0,
+  "mode": "loudness",
+  "momentaryMaxLufs": -7.93,
+  "perChannelTruePeakDbtp": [
+   -6.0,
+   -9.0
+  ],
+  "samplePeakDbfs": -6.0,
+  "sampleRate": 48000,
+  "shortTermMaxLufs": -7.93,
+  "startSeconds": 0.0,
+  "truePeakDbtp": -6.0
+ },
+ "sine440_f32 {\"mode\": \"onsets\"}": {
+  "analyzedChannel": 0,
+  "channels": 2,
+  "count": 79,
+  "durationSeconds": 4.0,
+  "intervals": [
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05,
+   0.05
+  ],
+  "method": "flux",
+  "mode": "onsets",
+  "onsets": [
+   0.04,
+   0.09,
+   0.14,
+   0.19,
+   0.24,
+   0.29,
+   0.34,
+   0.39,
+   0.44,
+   0.49,
+   0.54,
+   0.59,
+   0.64,
+   0.69,
+   0.74,
+   0.79,
+   0.84,
+   0.89,
+   0.94,
+   0.99,
+   1.04,
+   1.09,
+   1.14,
+   1.19,
+   1.24,
+   1.29,
+   1.34,
+   1.39,
+   1.44,
+   1.49,
+   1.54,
+   1.59,
+   1.64,
+   1.69,
+   1.74,
+   1.79,
+   1.84,
+   1.89,
+   1.94,
+   1.99,
+   2.04,
+   2.09,
+   2.14,
+   2.19,
+   2.24,
+   2.29,
+   2.34,
+   2.39,
+   2.44,
+   2.49,
+   2.54,
+   2.59,
+   2.64,
+   2.69,
+   2.74,
+   2.79,
+   2.84,
+   2.89,
+   2.94,
+   2.99,
+   3.04,
+   3.09,
+   3.14,
+   3.19,
+   3.24,
+   3.29,
+   3.34,
+   3.39,
+   3.44,
+   3.49,
+   3.54,
+   3.59,
+   3.64,
+   3.69,
+   3.74,
+   3.79,
+   3.84,
+   3.89,
+   3.94
+  ],
+  "peak": 0.5012,
+  "sampleRate": 48000,
+  "silent": false,
+  "truncated": false
+ },
+ "sine440_f32 {\"mode\": \"probe\"}": {
+  "analyzedChannel": 0,
+  "channels": 2,
+  "count": 400,
+  "durationSeconds": 4.0,
+  "max": 0.0325,
+  "means": [
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331,
+   0.0325,
+   -0.0195,
+   -0.001,
+   0.0211,
+   -0.0331
+  ],
+  "min": -0.0331,
+  "mode": "probe",
+  "sampleRate": 48000,
+  "startSeconds": 0.0,
+  "truncated": false,
+  "windowSeconds": 0.01
+ },
+ "two_level_f32 {\"key\": \"A:aeolian\", \"mode\": \"bands\", \"windowSeconds\": 2.0}": {
+  "analyzedChannel": 0,
+  "bandEdgesHz": {
+   "air": [
+    8000,
+    null
+   ],
+   "high": [
+    2000,
+    8000
+   ],
+   "low": [
+    60,
+    250
+   ],
+   "mid": [
+    250,
+    2000
+   ],
+   "sub": [
+    0,
+    60
+   ]
+  },
+  "channels": 2,
+  "chroma": {
+   "inKeyShare": 1.0,
+   "note": "power of every FFT bin in the range folded to pitch classes (one long Hann FFT per window on audio decimated to ~4 kHz); drums, noise and inharmonic partials pollute it, so use it on pitched stems",
+   "rangeHz": [
+    50.0,
+    1500.0
+   ],
+   "topPitchClasses": [
+    {
+     "name": "B",
+     "share": 1.0
+    },
+    {
+     "name": "C",
+     "share": 0.0
+    },
+    {
+     "name": "A#",
+     "share": 0.0
+    }
+   ]
+  },
+  "durationSeconds": 12.0,
+  "key": "A:aeolian",
+  "mode": "bands",
+  "note": "each window samples up to 16 Hann frames of 4096 samples; bandsDb are relative to the window's total power; peaks = strongest spectral maxima of the whole analyzed range (dB re the strongest), the way to pitch steady or noisy sources",
+  "peakResolutionHz": 11.7,
+  "peaks": [
+   {
+    "cents": 16,
+    "db": 0.0,
+    "hz": 997.1,
+    "midi": 83.16,
+    "note": "B5"
+   }
+  ],
+  "sampleRate": 48000,
+  "stereoCorrelation": 1.0,
+  "windowSeconds": 2.0,
+  "windows": [
+   {
+    "bandsDb": {
+     "air": -154.1,
+     "high": -127.6,
+     "low": -122.4,
+     "mid": -0.0,
+     "sub": -129.8
+    },
+    "centroidHz": 997,
+    "chroma": {
+     "inKeyShare": 1.0,
+     "topPitchClasses": [
+      {
+       "name": "B",
+       "share": 1.0
+      },
+      {
+       "name": "C",
+       "share": 0.0
+      },
+      {
+       "name": "A#",
+       "share": 0.0
+      }
+     ]
+    },
+    "rms": 0.0224,
+    "t": 0.0
+   },
+   {
+    "bandsDb": {
+     "air": -154.1,
+     "high": -127.6,
+     "low": -122.4,
+     "mid": -0.0,
+     "sub": -129.8
+    },
+    "centroidHz": 997,
+    "chroma": {
+     "inKeyShare": 1.0,
+     "topPitchClasses": [
+      {
+       "name": "B",
+       "share": 1.0
+      },
+      {
+       "name": "C",
+       "share": 0.0
+      },
+      {
+       "name": "A#",
+       "share": 0.0
+      }
+     ]
+    },
+    "rms": 0.0224,
+    "t": 2.0
+   },
+   {
+    "bandsDb": {
+     "air": -154.1,
+     "high": -127.6,
+     "low": -122.4,
+     "mid": -0.0,
+     "sub": -129.8
+    },
+    "centroidHz": 997,
+    "chroma": {
+     "inKeyShare": 1.0,
+     "topPitchClasses": [
+      {
+       "name": "B",
+       "share": 1.0
+      },
+      {
+       "name": "C",
+       "share": 0.0
+      },
+      {
+       "name": "A#",
+       "share": 0.0
+      }
+     ]
+    },
+    "rms": 0.0224,
+    "t": 4.0
+   },
+   {
+    "bandsDb": {
+     "air": -154.0,
+     "high": -127.6,
+     "low": -122.4,
+     "mid": -0.0,
+     "sub": -129.8
+    },
+    "centroidHz": 997,
+    "chroma": {
+     "inKeyShare": 1.0,
+     "topPitchClasses": [
+      {
+       "name": "B",
+       "share": 1.0
+      },
+      {
+       "name": "C",
+       "share": 0.0
+      },
+      {
+       "name": "A#",
+       "share": 0.0
+      }
+     ]
+    },
+    "rms": 0.0707,
+    "t": 6.0
+   },
+   {
+    "bandsDb": {
+     "air": -154.0,
+     "high": -127.6,
+     "low": -122.4,
+     "mid": -0.0,
+     "sub": -129.8
+    },
+    "centroidHz": 997,
+    "chroma": {
+     "inKeyShare": 1.0,
+     "topPitchClasses": [
+      {
+       "name": "B",
+       "share": 1.0
+      },
+      {
+       "name": "C",
+       "share": 0.0
+      },
+      {
+       "name": "A#",
+       "share": 0.0
+      }
+     ]
+    },
+    "rms": 0.0707,
+    "t": 8.0
+   },
+   {
+    "bandsDb": {
+     "air": -154.0,
+     "high": -127.6,
+     "low": -122.4,
+     "mid": -0.0,
+     "sub": -129.8
+    },
+    "centroidHz": 997,
+    "chroma": {
+     "inKeyShare": 1.0,
+     "topPitchClasses": [
+      {
+       "name": "B",
+       "share": 1.0
+      },
+      {
+       "name": "C",
+       "share": 0.0
+      },
+      {
+       "name": "A#",
+       "share": 0.0
+      }
+     ]
+    },
+    "rms": 0.0707,
+    "t": 10.0
+   }
+  ]
+ },
+ "two_level_f32 {\"method\": \"envelope\", \"mode\": \"onsets\"}": {
+  "analyzedChannel": 0,
+  "channels": 2,
+  "count": 0,
+  "durationSeconds": 12.0,
+  "intervals": [],
+  "method": "envelope",
+  "mode": "onsets",
+  "onsets": [],
+  "peak": 0.1,
+  "sampleRate": 48000,
+  "silent": false,
+  "truncated": false
+ },
+ "two_level_f32 {\"mode\": \"level\", \"windowSeconds\": 1.0}": {
+  "analyzedChannel": 0,
+  "channels": 2,
+  "clipping": false,
+  "durationSeconds": 12.0,
+  "mode": "level",
+  "peak": 0.1,
+  "peakDb": -20.0,
+  "rms": 0.0524,
+  "rmsDb": -25.61,
+  "sampleRate": 48000,
+  "silenceRatio": 0.0,
+  "windowSeconds": 1.0,
+  "windows": [
+   {
+    "peak": 0.0316,
+    "rms": 0.0224,
+    "rmsDb": -33.01,
+    "t": 0.0
+   },
+   {
+    "peak": 0.0316,
+    "rms": 0.0224,
+    "rmsDb": -33.01,
+    "t": 1.0
+   },
+   {
+    "peak": 0.0316,
+    "rms": 0.0224,
+    "rmsDb": -33.01,
+    "t": 2.0
+   },
+   {
+    "peak": 0.0316,
+    "rms": 0.0224,
+    "rmsDb": -33.01,
+    "t": 3.0
+   },
+   {
+    "peak": 0.0316,
+    "rms": 0.0224,
+    "rmsDb": -33.01,
+    "t": 4.0
+   },
+   {
+    "peak": 0.0316,
+    "rms": 0.0224,
+    "rmsDb": -33.01,
+    "t": 5.0
+   },
+   {
+    "peak": 0.1,
+    "rms": 0.0707,
+    "rmsDb": -23.01,
+    "t": 6.0
+   },
+   {
+    "peak": 0.1,
+    "rms": 0.0707,
+    "rmsDb": -23.01,
+    "t": 7.0
+   },
+   {
+    "peak": 0.1,
+    "rms": 0.0707,
+    "rmsDb": -23.01,
+    "t": 8.0
+   },
+   {
+    "peak": 0.1,
+    "rms": 0.0707,
+    "rmsDb": -23.01,
+    "t": 9.0
+   },
+   {
+    "peak": 0.1,
+    "rms": 0.0707,
+    "rmsDb": -23.01,
+    "t": 10.0
+   },
+   {
+    "peak": 0.1,
+    "rms": 0.0707,
+    "rmsDb": -23.01,
+    "t": 11.0
+   }
+  ]
+ },
+ "two_level_f32 {\"mode\": \"loudness\"}": {
+  "analyzedChannel": "all",
+  "channelLayout": "stereo",
+  "channelWeights": [
+   1.0,
+   1.0
+  ],
+  "channels": 2,
+  "durationSeconds": 12.0,
+  "gating": {
+   "absoluteGated": 117,
+   "blocks": 117,
+   "relativeGated": 117,
+   "relativeThresholdLufs": -32.6
+  },
+  "integratedLufs": -22.6,
+  "limits": [
+   "BS.1770-4 K-weighting and gating; 48 kHz coefficients are the standard's, other rates are bilinear-transform derived.",
+   "Mono counts as one front channel (about 3 LU below the same signal played on two speakers). Channel order is assumed to be WAV order; 6 channels use 5.1 weights, other counts weight every channel 1.",
+   "integratedLufs is null when no 400 ms block passes the -70 LUFS gate; shortTermMaxLufs and loudnessRangeLu need at least 3 s.",
+   "truePeakDbtp is a 4x windowed-sinc estimate over intervals near the sample peak, not a certified BS.1770 true-peak meter; expect about +-0.1 dB.",
+   "Pure Python: about 2 s of CPU per minute of stereo 48 kHz audio (measured on one desktop CPU); at most 1800 s per call.",
+   "The whole file counts (use skipSeconds to drop a warm-up); this is a file measurement, not Bitwig's own meter."
+  ],
+  "loudnessRangeLu": 10.0,
+  "mode": "loudness",
+  "momentaryMaxLufs": -20.0,
+  "perChannelTruePeakDbtp": [
+   -20.0,
+   -20.0
+  ],
+  "samplePeakDbfs": -20.0,
+  "sampleRate": 48000,
+  "shortTermMaxLufs": -20.0,
+  "startSeconds": 0.0,
+  "truePeakDbtp": -20.0
+ },
+ "two_level_f32 {\"mode\": \"onsets\"}": {
+  "analyzedChannel": 0,
+  "channels": 2,
+  "count": 1,
+  "durationSeconds": 12.0,
+  "intervals": [],
+  "method": "flux",
+  "mode": "onsets",
+  "onsets": [
+   6.0
+  ],
+  "peak": 0.1,
+  "sampleRate": 48000,
+  "silent": false,
+  "truncated": false
+ }
+}
