@@ -43,7 +43,7 @@ EXIT_PIPE_CLOSED = 141
 USAGE_CODES = frozenset({"invalid_params", "unknown_method"})
 EXIT_OK, EXIT_ERROR, EXIT_USAGE, EXIT_UNKNOWN = 0, 1, 2, 3
 SUMMARY_WIDTH = 90
-BATCH_USAGE = "batch [-|@file]   (JSON Lines, one write per line: see batch --help)"
+BATCH_USAGE = "batch [-|@file]"
 BATCH_HELP = "\n".join(
     [
         "bitwig-agent batch [-|@file]",
@@ -216,8 +216,8 @@ def overview() -> str:
             "  Reads that return a record list: --format=jsonl|csv|tsv [--fields=a,b.c] prints only the records,",
             "  one per line (scope, total, window are not output; the default JSON keeps them).",
             '  A partial list adds one {"warning"} line to stderr and still exits 0.',
-            'Batch: bitwig-agent batch [-|@file] runs JSON Lines of writes {"method":"a.b","params":{}} in order',
-            "  and stops at the first error or outcome not in applied|already_matched|sent; each later line prints",
+            'Batch: runs JSON Lines of writes {"method":"a.b","params":{}} in order and stops at the first error',
+            "  or outcome not in applied|already_matched|sent; each later line prints",
             '  {"outcome":"not_applied","reason":"not_reached"}.',
             "",
             "Exit codes:",
