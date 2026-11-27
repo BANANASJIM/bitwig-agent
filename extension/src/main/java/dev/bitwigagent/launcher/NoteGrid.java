@@ -478,6 +478,56 @@ public final class NoteGrid {
         return out;
     }
 
+    /** The edits as native cells, each in the window it was planned in. */
+    static List<NativeNotes.Cell> cells(List<Edit> edits, List<Window> windows) {
+        List<NativeNotes.Cell> cells = new ArrayList<>(edits.size());
+        for (int i = 0; i < edits.size(); i++) {
+            Edit e = edits.get(i);
+            Window w = windows.get(i);
+            cells.add(new NativeNotes.Cell(
+                    w.channel, (long) w.start + e.x, w.size, e.pitch, e.set, e.velocity, e.duration, e.cells));
+        }
+        return cells;
+    }
+
+    /**
+     * {@link #preflight} against the cells a native write observed, in the same order and with the same refusals;
+     * marks each edit already matched or not and returns the ones to write.
+     */
+    static boolean[] nativePlan(
+            List<Edit> edits,
+            List<Window> windows,
+            double loopStart,
+            double loopEnd,
+            List<NativeNotes.Observed> cells) {
+        boolean[] write = new boolean[edits.size()];
+        for (int i = 0; i < edits.size(); i++) {
+            Edit e = edits.get(i);
+            Window w = windows.get(i);
+            NativeNotes.Observed old = cells.get(i);
+            if (old.sustained && old.onsets == 0)
+                throw Errors.notApplied(Reason.OVERLAP, "Edit addresses a sustained note, not its onset");
+            double beat = (w.start + e.x) * w.size;
+            if (e.set && (beat < loopStart || beat + e.duration > loopEnd))
+                throw Errors.invalid("set note must fit inside the observed clip loop start and end");
+            if (e.set && old.collides)
+                throw Errors.notApplied(
+                        Reason.OVERLAP,
+                        "Set duration overlaps an existing unrelated onset; clear it in a separate explicit edit first");
+        }
+        for (int i = 0; i < edits.size(); i++) {
+            Edit e = edits.get(i);
+            NativeNotes.Observed old = cells.get(i);
+            e.alreadyMatched = e.set
+                    ? old.onsets == 1
+                            && midiVelocity(old.velocity) == e.velocity
+                            && Math.abs(old.durationBeats - e.duration) <= DURATION_RESOLUTION / 2
+                    : old.onsets == 0;
+            write[i] = !e.alreadyMatched;
+        }
+        return write;
+    }
+
     static void preflight(List<Edit> changes, Window w, Clip clip) {
         double loopStart = clip.getLoopStart().get();
         double end = loopStart + clip.getLoopLength().get();

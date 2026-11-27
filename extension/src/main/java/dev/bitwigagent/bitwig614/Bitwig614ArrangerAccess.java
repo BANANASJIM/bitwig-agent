@@ -335,6 +335,8 @@ public final class Bitwig614ArrangerAccess implements ArrangerModule.Access {
                             + " requested notes were not read back (clip holds "
                             + readback.json.get("notesInClip").getAsInt() + "); inspect before another write.");
         JsonObject out = written(lane, "create", clip, null);
+        // One "Create Arranger Clip" transaction: observed natively as one Undo step for the clip and its notes.
+        out.addProperty("undoGroupingVerified", true);
         if (readback != null) out.add("noteWrite", readback.json);
         return out;
     }

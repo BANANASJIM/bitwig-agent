@@ -9,21 +9,28 @@ import dev.bitwigagent.core.Outcome;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.Scheduler;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/** Note reads and edits of one launcher clip through the cursor clip's note grid. */
+/**
+ * Note reads and edits of one launcher clip. Edits are written natively as one Undo step when the exact bindings
+ * match the host (else through the cursor clip's public per-note setters) and read back through the cursor clip's note
+ * grid.
+ */
 public final class NoteModule implements HostModule {
     static final Set<String> METHODS = Set.of("notes.read", "notes.edit");
     private static final int NOTE_LIMIT = 2048;
 
     private final LauncherState state;
     private final Scheduler scheduler;
+    final NativeNotes natives;
 
-    public NoteModule(LauncherState state) {
+    public NoteModule(LauncherState state, NativeNotes natives) {
         this.state = state;
         this.scheduler = state.scheduler;
+        this.natives = natives;
     }
 
     @Override
@@ -68,12 +75,101 @@ public final class NoteModule implements HostModule {
     }
 
     /**
-     * Writes the planned windows: one is an ordinary note edit; several run in order as follow-up operations and stop
-     * at the first that does not succeed, the rest reported not reached.
+     * Writes the planned windows. Natively every window is written in one Undo step before anything is selected, and
+     * the windows then only drive the readback. Through the public setters one window is an ordinary note edit;
+     * several run in order as follow-up operations and stop at the first that does not succeed, the rest reported not
+     * reached.
      */
     void write(HostOperation op, LauncherState.Target target, List<NoteGrid.Part> parts, boolean full, long end) {
+        NativeNotes.Access access = natives.access(op);
+        if (access != null) {
+            writeNative(op, target, parts, full, access);
+            return;
+        }
         if (parts.size() == 1) bindAndEdit(op, target, parts.get(0), full, end, true);
-        else new Windows(op, target, parts, full).run(0);
+        else new Windows(op, target, parts, null, full).run(0);
+    }
+
+    /** A write's windows with their edits, also as one flat list in window order for the native task. */
+    static final class Planned {
+        final List<NoteGrid.Part> parts;
+        final List<List<NoteGrid.Edit>> edits = new ArrayList<>();
+        final List<NoteGrid.Edit> flat = new ArrayList<>();
+        final List<NoteGrid.Window> windows = new ArrayList<>();
+
+        Planned(List<NoteGrid.Part> parts) {
+            this.parts = parts;
+            for (NoteGrid.Part part : parts) {
+                List<NoteGrid.Edit> list = NoteGrid.edits(part);
+                edits.add(list);
+                for (NoteGrid.Edit e : list) {
+                    flat.add(e);
+                    windows.add(part.window);
+                }
+            }
+        }
+
+        List<NativeNotes.Cell> cells() {
+            return NoteGrid.cells(flat, windows);
+        }
+    }
+
+    /** One native task: observe every cell, write the ones that differ in one Undo step, then read the windows back. */
+    private void writeNative(
+            HostOperation op,
+            LauncherState.Target target,
+            List<NoteGrid.Part> parts,
+            boolean full,
+            NativeNotes.Access access) {
+        Planned planned = new Planned(parts);
+        List<NativeNotes.Cell> cells = planned.cells();
+        state.guard(op, target);
+        String id = target.id(), expected = target.slot.api.name().get();
+        Runnable check = state.nativeCheck(op, target);
+        access.execute(() -> {
+            try {
+                access.edit(
+                        target.slot.api,
+                        id,
+                        expected,
+                        cells,
+                        check,
+                        (loopStart, loopEnd, observed) ->
+                                NoteGrid.nativePlan(planned.flat, planned.windows, loopStart, loopEnd, observed),
+                        () -> {
+                            check.run();
+                            op.markDispatched();
+                        });
+                scheduler.schedule(op, () -> readBack(op, target, planned, full), 0);
+            } catch (RuntimeException | Error failure) {
+                op.fail(failure);
+            }
+        });
+    }
+
+    /** Reads back natively written windows: one directly, several as follow-up operations that each read one. */
+    void readBack(HostOperation op, LauncherState.Target target, Planned planned, boolean full) {
+        state.guard(op, target);
+        if (planned.parts.size() == 1)
+            bindAndVerify(op, target, planned.parts.get(0), planned.edits.get(0), full, state.until(op), true);
+        else new Windows(op, target, planned.parts, planned.edits, full).run(0);
+    }
+
+    private void bindAndVerify(
+            HostOperation op,
+            LauncherState.Target target,
+            NoteGrid.Part part,
+            List<NoteGrid.Edit> changes,
+            boolean full,
+            long end,
+            boolean dispatches) {
+        state.bind(
+                op,
+                target,
+                dispatches,
+                () -> part.window,
+                end,
+                (o, t, e, w) -> awaitNotes(o, t, w, changes, full, e, true));
     }
 
     /** Binds the cursor clip with the part's window and writes its edits once it is settled. */
@@ -87,24 +183,42 @@ public final class NoteModule implements HostModule {
         state.bind(op, target, dispatches, () -> part.window, end, (o, t, e, w) -> editNotes(o, t, part, full));
     }
 
+    /**
+     * Windows run in order as follow-up operations. With {@code written} (the native write already holds every
+     * window's edits) each window only reads back, all of them run, and a window left unread is unknown; otherwise
+     * each writes its own edits and the first that does not succeed stops the rest.
+     */
     private final class Windows {
         private final HostOperation op;
         private final LauncherState.Target target;
         private final List<NoteGrid.Part> parts;
+        private final List<List<NoteGrid.Edit>> written;
         private final boolean full;
         private final JsonArray entries = new JsonArray();
         private long slowest;
 
-        Windows(HostOperation op, LauncherState.Target target, List<NoteGrid.Part> parts, boolean full) {
+        Windows(
+                HostOperation op,
+                LauncherState.Target target,
+                List<NoteGrid.Part> parts,
+                List<List<NoteGrid.Edit>> written,
+                boolean full) {
             this.op = op;
             this.target = target;
             this.parts = parts;
+            this.written = written;
             this.full = full;
         }
 
         void run(int index) {
             long started = scheduler.now();
             if (index > 0 && op.deadline - started < 2 * slowest) {
+                if (written != null) {
+                    for (int i = index; i < parts.size(); i++)
+                        record(i, unread(written.get(i), "Too little time left to read this window back."));
+                    finish();
+                    return;
+                }
                 JsonObject entry = Results.outcome(Outcome.NOT_APPLIED);
                 entry.addProperty("reason", Reason.DEADLINE.wire());
                 entry.addProperty("message", "Too little time left for another window; send its notes again.");
@@ -123,8 +237,14 @@ public final class NoteModule implements HostModule {
                         return;
                     }
                     JsonObject entry = error == null ? result : Errors.entryResult(error);
+                    if (written != null && !entry.has("summary")) {
+                        Outcome outcome = Results.outcomeOf(entry);
+                        entry = merged(entry, unread(written.get(index), null));
+                        if (outcome != Outcome.UNKNOWN) entry.addProperty("outcome", Outcome.UNKNOWN.wire());
+                    }
                     record(index, entry);
-                    if (Results.outcomeOf(entry).succeeded() && index + 1 < parts.size()) run(index + 1);
+                    boolean next = written != null || Results.outcomeOf(entry).succeeded();
+                    if (next && index + 1 < parts.size()) run(index + 1);
                     else finish();
                 } catch (RuntimeException failure) {
                     op.fail(failure);
@@ -132,7 +252,10 @@ public final class NoteModule implements HostModule {
             });
             try {
                 // Only the first window's selection counts as a write; later ones rebind the clip already selected.
-                bindAndEdit(child, target, parts.get(index), full, state.until(child), index == 0);
+                if (written != null)
+                    bindAndVerify(
+                            child, target, parts.get(index), written.get(index), full, state.until(child), index == 0);
+                else bindAndEdit(child, target, parts.get(index), full, state.until(child), index == 0);
             } catch (RuntimeException failure) {
                 child.fail(failure);
             }
@@ -194,15 +317,39 @@ public final class NoteModule implements HostModule {
             summary.addProperty("unverified", unverified);
             summary.addProperty("notReached", unreached);
             out.add("summary", summary);
+            out.addProperty("undo", NativeNotes.undo(written != null, dispatched));
             out.add("windows", windows);
             if (notReached.size() > 0) out.add("notReached", notReached);
             op.result.complete(out);
         }
     }
 
+    /** A natively written window that was not read back: every edit unknown, counted as dispatched or matched. */
+    private static JsonObject unread(List<NoteGrid.Edit> changes, String message) {
+        JsonObject entry = Results.outcome(Outcome.UNKNOWN);
+        entry.addProperty("reason", Reason.NOT_OBSERVED.wire());
+        if (message != null) entry.addProperty("message", message);
+        int matched = 0;
+        for (NoteGrid.Edit e : changes) if (e.alreadyMatched) matched++;
+        JsonObject summary = new JsonObject();
+        summary.addProperty("requested", changes.size());
+        summary.addProperty("dispatched", changes.size() - matched);
+        summary.addProperty("alreadyMatched", matched);
+        summary.addProperty("verified", 0);
+        summary.addProperty("unverified", changes.size());
+        entry.add("summary", summary);
+        return entry;
+    }
+
+    private static JsonObject merged(JsonObject first, JsonObject defaults) {
+        for (Map.Entry<String, JsonElement> e : defaults.entrySet())
+            if (!first.has(e.getKey())) first.add(e.getKey(), e.getValue());
+        return first;
+    }
+
     /** Keys of a window's result the combined result already carries once. */
     private static final Set<String> WINDOW_DROPPED =
-            Set.of("ref", "window", "loop", "playStartBeats", "playStopBeats", "loopEnabled");
+            Set.of("ref", "window", "loop", "playStartBeats", "playStopBeats", "loopEnabled", "undo");
 
     private void editNotes(HostOperation op, LauncherState.Target target, NoteGrid.Part part, boolean full) {
         NoteGrid.Window w = part.window;
@@ -221,16 +368,21 @@ public final class NoteModule implements HostModule {
             else state.clip.clearStep(w.channel, e.x, e.pitch);
         }
         long end = state.until(op);
-        scheduler.schedule(op, () -> awaitNotes(op, target, w, changes, full, end), Scheduler.POLL_MS);
+        scheduler.schedule(op, () -> awaitNotes(op, target, w, changes, full, end, false), Scheduler.POLL_MS);
     }
 
+    /**
+     * Polls the window's cells until every edit reads back. A per-note write needs a callback newer than its dispatch
+     * (else the grid may be stale); {@code nativeWrite} grids are bound after the write, so the readback alone counts.
+     */
     private void awaitNotes(
             HostOperation op,
             LauncherState.Target target,
             NoteGrid.Window w,
             List<NoteGrid.Edit> changes,
             boolean full,
-            long end) {
+            long end,
+            boolean nativeWrite) {
         scheduler.poll(
                 op,
                 end,
@@ -238,14 +390,14 @@ public final class NoteModule implements HostModule {
                     state.cursorGuard(op, target);
                     boolean all = true;
                     for (NoteGrid.Edit e : changes) {
-                        boolean fresh = fresh(e);
+                        boolean fresh = nativeWrite || fresh(e);
                         e.verified = (fresh || e.alreadyMatched)
                                 && NoteGrid.matches(e, state.clip.getStep(w.channel, e.x, e.pitch));
                         all &= e.verified;
                     }
                     return all;
                 },
-                all -> finishNotes(op, target, w, changes, full));
+                all -> finishNotes(op, target, w, changes, full, nativeWrite));
     }
 
     private boolean fresh(NoteGrid.Edit e) {
@@ -257,7 +409,8 @@ public final class NoteModule implements HostModule {
             LauncherState.Target target,
             NoteGrid.Window w,
             List<NoteGrid.Edit> changes,
-            boolean full) {
+            boolean full,
+            boolean nativeWrite) {
         JsonObject out = notesResult(target, w, full);
         // The outcome always covers every edit; detail only changes how many entries are listed.
         Outcome worst = Outcome.ALREADY_MATCHED;
@@ -267,7 +420,7 @@ public final class NoteModule implements HostModule {
         for (NoteGrid.Edit e : changes) {
             if (e.verified) verified++;
             if (e.alreadyMatched) matched++;
-            boolean fresh = fresh(e);
+            boolean fresh = nativeWrite || fresh(e);
             Outcome outcome = e.alreadyMatched && e.verified
                     ? Outcome.ALREADY_MATCHED
                     : e.verified ? Outcome.APPLIED : Outcome.UNKNOWN;
@@ -295,6 +448,7 @@ public final class NoteModule implements HostModule {
         summary.addProperty("verified", verified);
         summary.addProperty("unverified", changes.size() - verified);
         out.add("summary", summary);
+        out.addProperty("undo", NativeNotes.undo(nativeWrite, changes.size() - matched));
         if (full) out.add("edits", results);
         else if (results.size() > 0) out.add("unverifiedEdits", results);
         op.result.complete(out);

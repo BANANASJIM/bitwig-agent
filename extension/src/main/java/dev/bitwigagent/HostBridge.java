@@ -38,6 +38,7 @@ import dev.bitwigagent.launcher.LauncherModule;
 import dev.bitwigagent.launcher.LauncherSettingsModule;
 import dev.bitwigagent.launcher.LauncherState;
 import dev.bitwigagent.launcher.LauncherTargets;
+import dev.bitwigagent.launcher.NativeNotes;
 import dev.bitwigagent.launcher.NoteModule;
 import dev.bitwigagent.launcher.SceneModule;
 import dev.bitwigagent.launcher.SceneWindowLease;
@@ -117,7 +118,7 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
         register(new LauncherModule(launcher, trackRefs));
         RenderModule render = new RenderModule(
                 scheduler, window, trackRefs, project, transportSafety, natives, holds, null, launcher);
-        NoteModule notes = new NoteModule(launcher);
+        NoteModule notes = new NoteModule(launcher, new NativeNotes(natives, null));
         register(notes);
         ArrangerModule arranger =
                 new ArrangerModule(scheduler, window, trackRefs, projectState, transportSafety, natives, holds, null);

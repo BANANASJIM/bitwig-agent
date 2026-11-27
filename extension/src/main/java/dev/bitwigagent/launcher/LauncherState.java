@@ -238,6 +238,20 @@ public final class LauncherState implements RenderModule.LauncherContent {
             throw Errors.of(Reason.NOT_READY, "The track or the scene window changed", op.dispatched());
     }
 
+    /**
+     * The check a native task on the document thread runs: the operation is live and the scene window has not moved
+     * (the slot proxy follows its bank position). The task itself verifies the native track and clip.
+     */
+    Runnable nativeCheck(HostOperation op, Target target) {
+        int offset = target.at.offset;
+        return () -> {
+            scheduler.check(op);
+            if (offset >= 0 && window.sceneOffset() != offset)
+                throw Errors.notApplied(
+                        Reason.TARGET_CHANGED, "The scene window changed while the native note write was queued");
+        };
+    }
+
     void cursorGuard(HostOperation op, Target target) {
         guard(op, target);
         if (!selection.ownedBy(op) || !bound(target.id(), target.slot))

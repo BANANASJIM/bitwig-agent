@@ -48,6 +48,7 @@ public final class LauncherFake {
     final SceneModule sceneModule;
     public final Map<String, HostModule> modules = new HashMap<>();
     public final SettingsAccess settings = new SettingsAccess();
+    final NotesAccess nativeNotes = new NotesAccess();
     final LaneAccess lane = new LaneAccess();
     NoteStepChangedCallback observer;
     public int scenes = 16;
@@ -112,6 +113,21 @@ public final class LauncherFake {
             boolean arrangerAutomation,
             boolean launcherAutomation,
             boolean sceneCountObserved) {
+        this(safetyObserved, record, arrangerAutomation, launcherAutomation, sceneCountObserved, false);
+    }
+
+    /** A fixture whose note writes go through {@link #nativeNotes} instead of the public per-note setters. */
+    static LauncherFake withNativeNotes() {
+        return new LauncherFake(true, false, false, false, true, true);
+    }
+
+    private LauncherFake(
+            boolean safetyObserved,
+            boolean record,
+            boolean arrangerAutomation,
+            boolean launcherAutomation,
+            boolean sceneCountObserved,
+            boolean nativeWrites) {
         for (int i = 0; i < SCENES; i++) {
             slots[i] = new SlotData();
             sceneNames[i] = "";
@@ -408,8 +424,8 @@ public final class LauncherFake {
         });
         services = new TestServices(host.proxy(ControllerHost.class), tasks::now);
         launcher = services.launcher();
-        noteModule = services.notes();
-        clipModule = services.clips(settings, lane);
+        noteModule = services.notes(nativeWrites ? nativeNotes : null);
+        clipModule = services.clips(settings, lane, nativeWrites ? nativeNotes : null);
         sceneModule = services.scene();
         for (HostModule module : List.of(launcher, noteModule, clipModule, sceneModule))
             for (String method : module.methods()) modules.put(method, module);
@@ -589,11 +605,122 @@ public final class LauncherFake {
             out.add("fields", fields);
             return out;
         }
+    }
 
-        private int selectedSlotOf(Object slotProxy) {
-            ClipLauncherSlotBank bank = tracks[0].clipLauncherSlotBank();
-            for (int j = 0; j < HostLimits.SCENES; j++) if (bank.getItemAt(j) == slotProxy) return bankOffset + j;
-            throw new AssertionError("The settings access got a slot that is not in the window");
+    private int selectedSlotOf(Object slotProxy) {
+        ClipLauncherSlotBank bank = tracks[0].clipLauncherSlotBank();
+        for (int j = 0; j < HostLimits.SCENES; j++) if (bank.getItemAt(j) == slotProxy) return bankOffset + j;
+        throw new AssertionError("The native access got a slot that is not in the window");
+    }
+
+    /**
+     * Native note writes over the slot data: notes are stored on the cell's grid (or {@link #noteStorageStepSize}),
+     * and a write is one transaction. {@code drop} skips the model writes after dispatch; {@code failAfterDispatch}
+     * throws inside the transaction.
+     */
+    final class NotesAccess implements NativeNotes.Access {
+        int edits, creates, transactions;
+        boolean drop, failAfterDispatch, occupied;
+        /** The clip name the native model reports, when it differs from the slot's public name. */
+        String rename;
+
+        @Override
+        public void execute(Runnable work) {
+            work.run();
+        }
+
+        private long storageStep(NativeNotes.Cell cell, double storage) {
+            return Math.round(cell.step * cell.stepBeats / storage);
+        }
+
+        private double storage(NativeNotes.Cell cell) {
+            return noteStorageStepSize == null ? cell.stepBeats : noteStorageStepSize;
+        }
+
+        @Override
+        public boolean[] edit(
+                Object slot,
+                String trackId,
+                String expectedName,
+                List<NativeNotes.Cell> cells,
+                Runnable check,
+                NativeNotes.Plan plan,
+                Runnable beforeWrite) {
+            edits++;
+            int scene = selectedSlotOf(slot);
+            check.run();
+            SlotData data = slots[scene];
+            String name = rename != null ? rename : data.name;
+            if (!data.content || !name.equals(expectedName) || !trackId.equals(LauncherFake.this.trackId))
+                throw Errors.notApplied(Reason.TARGET_CHANGED, "fixture native target changed");
+            List<NativeNotes.Observed> observed = new ArrayList<>();
+            for (NativeNotes.Cell cell : cells) {
+                double storage = storage(cell), beat = cell.step * cell.stepBeats;
+                int step = (int) storageStep(cell, storage);
+                Note on = notes.get(key(scene, cell.channel, step, cell.pitch));
+                boolean sustained = false, collides = false;
+                for (int earlier = 0; earlier < step; earlier++) {
+                    Note n = notes.get(key(scene, cell.channel, earlier, cell.pitch));
+                    if (n != null && earlier * storage + n.duration > beat) sustained = true;
+                }
+                int span = (int) Math.round(cell.cells * cell.stepBeats / storage);
+                for (int later = step + 1; later < step + span; later++)
+                    if (notes.containsKey(key(scene, cell.channel, later, cell.pitch))) collides = true;
+                observed.add(new NativeNotes.Observed(
+                        on == null ? 0 : 1,
+                        on == null ? 0 : on.exact != null ? on.exact : on.velocity / 127.0,
+                        on == null ? 0 : on.duration,
+                        sustained,
+                        collides));
+            }
+            boolean[] write = plan.write(loopStart, loopStart + data.length, observed);
+            boolean any = false;
+            for (boolean w : write) any |= w;
+            if (!any) return write;
+            beforeWrite.run();
+            transactions++;
+            if (failAfterDispatch) throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "fixture native call failed");
+            for (int i = 0; i < cells.size(); i++) {
+                NativeNotes.Cell cell = cells.get(i);
+                if (!write[i] || drop) continue;
+                int step = (int) storageStep(cell, storage(cell));
+                if (cell.set) put(scene, cell.channel, step, cell.pitch, cell.velocity, cell.durationBeats);
+                else notes.remove(key(scene, cell.channel, step, cell.pitch));
+            }
+            return write;
+        }
+
+        @Override
+        public void create(
+                Object slot,
+                String trackId,
+                String name,
+                int lengthBeats,
+                List<NativeNotes.Cell> cells,
+                Runnable check,
+                Runnable beforeWrite) {
+            creates++;
+            int scene = selectedSlotOf(slot);
+            check.run();
+            if (slots[scene].content || occupied)
+                throw Errors.notApplied(Reason.TARGET_EXISTS, "fixture slot not empty");
+            beforeWrite.run();
+            transactions++;
+            if (failAfterDispatch) throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "fixture native call failed");
+            SlotData data = slots[scene];
+            data.length = lengthBeats;
+            data.playStop = lengthBeats;
+            if (applyName) data.name = name;
+            for (NativeNotes.Cell cell : cells)
+                if (!drop)
+                    put(
+                            scene,
+                            cell.channel,
+                            (int) storageStep(cell, storage(cell)),
+                            cell.pitch,
+                            cell.velocity,
+                            cell.durationBeats);
+            if (emitCreateContent) observeContent(scene, true);
         }
     }
 

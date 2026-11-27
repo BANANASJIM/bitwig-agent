@@ -255,6 +255,11 @@ public final class ClipModule implements HostModule {
             if (target.slot.api.hasContent().get())
                 throw Errors.notApplied(Reason.TARGET_EXISTS, "Insert only accepts an observed empty slot");
             state.guard(op, target);
+            NativeNotes.Access access = notes.natives.access(op);
+            if (access != null) {
+                insertNative(op, target, p, access);
+                return;
+            }
             op.markDispatched();
             state.beginMutation(target, "clips.insert");
             int length = p.getAsJsonObject("loop").get("lengthBeats").getAsInt();
@@ -278,12 +283,89 @@ public final class ClipModule implements HostModule {
         });
     }
 
+    /**
+     * One native task creates the named clip with its loop length and playback stop and writes the notes, as one Undo
+     * step and without selecting anything; the clip is then bound and read back like a public insert.
+     */
+    private void insertNative(HostOperation op, LauncherState.Target target, JsonObject p, NativeNotes.Access access) {
+        int length = p.getAsJsonObject("loop").get("lengthBeats").getAsInt();
+        String id = target.id(), name = p.get("name").getAsString();
+        NoteModule.Planned planned = new NoteModule.Planned(p.has("notes") ? noteParts(p) : List.of());
+        List<NativeNotes.Cell> cells = planned.cells();
+        Runnable check = state.nativeCheck(op, target);
+        access.execute(() -> {
+            try {
+                access.create(target.slot.api, id, name, length, cells, check, () -> {
+                    check.run();
+                    op.markDispatched();
+                    state.beginMutation(target, "clips.insert");
+                });
+                scheduler.schedule(op, () -> awaitNativeCreate(op, target, p, length, planned), 0);
+            } catch (RuntimeException | Error failure) {
+                op.fail(failure);
+            }
+        });
+    }
+
+    private void awaitNativeCreate(
+            HostOperation op, LauncherState.Target target, JsonObject p, int length, NoteModule.Planned planned) {
+        long end = state.until(op);
+        // The notes are already written: a readback failure is unknown, never "nothing changed".
+        Consumer<HostOperation> readNotes = child -> {
+            child.markDispatched();
+            notes.readBack(child, target, planned, NoteGrid.full(p));
+        };
+        state.awaitGuarded(
+                op,
+                () -> state.guard(op, target),
+                end,
+                () -> target.slot.contentVersion > state.contentBefore()
+                        && target.slot.observedContent
+                        && target.slot.api.hasContent().get(),
+                () -> state.bind(
+                        op,
+                        target,
+                        true,
+                        null,
+                        end,
+                        (o, t, e, w) -> awaitCreated(o, t, e, p, length, NativeNotes.ONE_STEP, readNotes)),
+                () -> {
+                    JsonObject out = new JsonObject();
+                    if (p.has("notes")) out.addProperty("noteWrite", "not_read_back");
+                    out.add("slot", state.slotJson(target));
+                    out.addProperty("undo", NativeNotes.ONE_STEP);
+                    op.result.complete(state.unresolved(
+                            out, Reason.NOT_OBSERVED, "The new clip's content was not observed in the slot."));
+                });
+    }
+
     private void nameCreated(HostOperation op, LauncherState.Target target, long end, JsonObject p, int length) {
         state.cursorGuard(op, target);
         String name = p.get("name").getAsString();
         state.clip.setName(name);
         // Native createEmptyClip can leave playback stop at its four-beat default.
         state.clip.getPlayStop().set(length);
+        awaitCreated(
+                op,
+                target,
+                end,
+                p,
+                length,
+                NativeNotes.PER_STEP,
+                child -> notes.write(child, target, noteParts(p), NoteGrid.full(p), state.until(op)));
+    }
+
+    /** Waits for the new clip's name, loop length and playback stop, then has {@code writeNotes} handle the notes. */
+    private void awaitCreated(
+            HostOperation op,
+            LauncherState.Target target,
+            long end,
+            JsonObject p,
+            int length,
+            String undo,
+            Consumer<HostOperation> writeNotes) {
+        state.cursorGuard(op, target);
+        String name = p.get("name").getAsString();
         BooleanSupplier named = () -> target.slot.api.name().get().equals(name)
                 && state.clip.getLoopLength().get() == length
                 && state.clip.getPlayStop().get() == length;
@@ -296,15 +378,22 @@ public final class ClipModule implements HostModule {
                             state.cursorGuard(op, target);
                             return named.getAsBoolean();
                         },
-                        matches -> finishInsert(op, target, p, matches)),
+                        matches -> finishInsert(op, target, p, matches, undo, writeNotes)),
                 Scheduler.POLL_MS);
     }
 
-    private void finishInsert(HostOperation op, LauncherState.Target target, JsonObject p, boolean matches) {
+    private void finishInsert(
+            HostOperation op,
+            LauncherState.Target target,
+            JsonObject p,
+            boolean matches,
+            String undo,
+            Consumer<HostOperation> writeNotes) {
         JsonObject out = new JsonObject();
         out.add("ref", state.clipRef(target));
         out.add("slot", state.slotJson(target));
         state.addClipMetadata(out);
+        out.addProperty("undo", undo);
         if (matches) {
             out.addProperty("verification", "slot_content_name_length");
             state.finishMutation();
@@ -330,7 +419,7 @@ public final class ClipModule implements HostModule {
                 op.result.complete(out);
             });
             try {
-                notes.write(child, target, noteParts(p), NoteGrid.full(p), state.until(op));
+                writeNotes.accept(child);
             } catch (RuntimeException failure) {
                 child.fail(failure);
             }
@@ -341,7 +430,8 @@ public final class ClipModule implements HostModule {
             op.result.complete(out);
             return;
         }
-        if (p.has("notes")) out.addProperty("noteWrite", "not_attempted");
+        if (p.has("notes"))
+            out.addProperty("noteWrite", undo.equals(NativeNotes.ONE_STEP) ? "not_read_back" : "not_attempted");
         op.result.complete(state.unresolved(
                 out, Reason.READBACK_MISMATCH, "The new clip's name or length differs from the request."));
     }
