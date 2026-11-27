@@ -6,10 +6,23 @@ from typing import Annotated, Self
 
 from pydantic import Field, field_validator, model_validator
 
-from bitwig_agent.protocol.base import Nonempty, StatusArgs, ToolSpec, omitted
+from bitwig_agent.protocol.base import Nonempty, StatusArgs, StrictModel, ToolSpec, omitted
 from bitwig_agent.protocol.values import Normalized
 
 MAX_TIME_SIGNATURE_NUMERATOR = 32
+
+
+class TransportLoop(StrictModel):
+    start: Annotated[float, Field(ge=0)] = omitted()
+    length: Annotated[float, Field(gt=0)] = omitted()
+
+    @model_validator(mode="after")
+    def require_field(self) -> Self:
+        if not self.model_fields_set:
+            raise ValueError("loop needs start or length")
+        if {"start", "length"} <= self.model_fields_set and not math.isfinite(self.start + self.length):
+            raise ValueError("loop.start + loop.length must be finite")
+        return self
 
 
 class TransportSetArgs(StatusArgs):
@@ -19,8 +32,7 @@ class TransportSetArgs(StatusArgs):
     position: Annotated[float, Field(ge=0)] = omitted()
     metronome: bool = omitted()
     loopEnabled: bool = omitted()
-    loopStartBeats: Annotated[float, Field(ge=0)] = omitted()
-    loopDurationBeats: Annotated[float, Field(gt=0)] = omitted()
+    loop: TransportLoop = omitted(description="Arranger loop in beats; supply only the fields that change.")
     timeSignature: str = omitted(
         description=f"numerator/denominator, e.g. 7/8: numerator 1..{MAX_TIME_SIGNATURE_NUMERATOR}, denominator 1, 2, 4, 8, 16 or 32."
     )
@@ -55,15 +67,11 @@ class TransportSetArgs(StatusArgs):
     def require_change(self) -> Self:
         if not self.model_fields_set - {"timeoutMs"}:
             raise ValueError("transport.set requires at least one changed field")
-        if {"loopStartBeats", "loopDurationBeats"} <= self.model_fields_set and not math.isfinite(
-            self.loopStartBeats + self.loopDurationBeats
-        ):
-            raise ValueError("loopStartBeats + loopDurationBeats must be finite")
         return self
 
 
 TRANSPORT_GET_DESCRIPTION = "Read observed projectName, playing, tempoBpm, position, metronome and loop settings. Recording/automation fields are arrangerRecordEnabled, arrangerAutomationWriteEnabled and clipLauncherAutomationWriteEnabled; require each explicitly false before stopped-fixture edits, not missing/null. One response covers project-label and playback-safety preflight; the name is not full-path identity or an atomic lock. metronomeVolume is {value 0..1, display}; preRoll, defaultLaunchQuantization and recordQuantizationGrid are {value, options} with the host's own option list (value null until observed). punchInEnabled and punchOutEnabled are booleans."
-TRANSPORT_SET_DESCRIPTION = "Change only supplied transport fields; e.g. tempoBpm=120 playing=false. Supported tempo range 20..666 BPM is a toolkit bound. Beat positions are nonnegative; loop duration is positive and loop end finite. An explicit playing=false is observed before other supplied fields are dispatched; this is not an atomic transaction. Inspect the outcome and per-field outcome/reason; stop on unknown. Playback can produce audio. Recording or automation-write mode blocks changes except an explicit playing=false stop; modes are never silently disabled. timeSignature (e.g. '7/8', numerator 1..32, denominator 1/2/4/8/16/32) is read back like the other fields; time-signature change markers are not in the public API. metronomeVolume takes the value transport.get returned (0..1, not dB); {display} is refused as invalid_params/unsupported_unit until the host's metronome display is measured. punchInEnabled, punchOutEnabled, preRoll, defaultLaunchQuantization (project default clip launch quantization) and recordQuantizationGrid take the same per-field readback; the three enums take the bare option value from transport.get (the host's own list, refused as invalid_params/not_applied otherwise, before anything is written) and punch/pre-roll/quantization edits are blocked while recording or automation write is on, like the other settings."
+TRANSPORT_SET_DESCRIPTION = "Change only supplied transport fields; e.g. tempoBpm=120 playing=false. Supported tempo range 20..666 BPM is a toolkit bound. Beat positions are nonnegative; loop.length is positive and the loop end finite. An explicit playing=false is observed before other supplied fields are dispatched; this is not an atomic transaction. Inspect the outcome and per-field outcome/reason; stop on unknown. Playback can produce audio. Recording or automation-write mode blocks changes except an explicit playing=false stop; modes are never silently disabled. timeSignature (e.g. '7/8', numerator 1..32, denominator 1/2/4/8/16/32) is read back like the other fields; time-signature change markers are not in the public API. metronomeVolume takes the value transport.get returned (0..1, not dB); {display} is refused as invalid_params/unsupported_unit until the host's metronome display is measured. punchInEnabled, punchOutEnabled, preRoll, defaultLaunchQuantization (project default clip launch quantization) and recordQuantizationGrid take the same per-field readback; the three enums take the bare option value from transport.get (the host's own list, refused as invalid_params/not_applied otherwise, before anything is written) and punch/pre-roll/quantization edits are blocked while recording or automation write is on, like the other settings."
 
 
 SPECS: dict[str, ToolSpec] = {
@@ -75,6 +83,7 @@ SPECS: dict[str, ToolSpec] = {
         examples=(
             {"tempoBpm": 120.0, "playing": False},
             {"preRoll": "one_bar", "punchInEnabled": True, "metronomeVolume": 0.5},
+            {"loopEnabled": True, "loop": {"start": 0, "length": 16}},
         ),
     ),
 }

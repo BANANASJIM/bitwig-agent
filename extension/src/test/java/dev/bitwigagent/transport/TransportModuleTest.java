@@ -44,10 +44,11 @@ public final class TransportModuleTest {
                 "{\"tempoBpm\":\"120\"}",
                 "{\"playing\":1}",
                 "{\"position\":-1}",
-                "{\"loopDurationBeats\":0}",
+                "{\"loop\":{\"length\":0}}",
+                "{\"loop\":{}}",
                 "{\"loopEnabled\":null}",
                 "{\"recording\":true}",
-                "{\"loopStartBeats\":1e308,\"loopDurationBeats\":1e308}")) {
+                "{\"loop\":{\"start\":1e308,\"length\":1e308}}")) {
             assertRpcError("invalid_params", f.submit(module, "transport.set", HostFixture.json(text)));
             assertTrue(f.tasks.isEmpty(), "invalid request must not schedule host work: " + text);
         }
@@ -593,7 +594,7 @@ public final class TransportModuleTest {
         TransportModule module = f.services.transportModule();
         f.transport.child("arrangerLoopDuration").emit(Double.MAX_VALUE);
         HostOperation op =
-                f.submit(module, "transport.set", HostFixture.json("{\"loopStartBeats\":" + Double.MAX_VALUE + "}"));
+                f.submit(module, "transport.set", HostFixture.json("{\"loop\":{\"start\":" + Double.MAX_VALUE + "}}"));
         f.next();
         assertRpcError("invalid_params", op);
     }
@@ -628,5 +629,18 @@ public final class TransportModuleTest {
                         .getAsString()
                         .equals("readback_mismatch"),
                 "the field names the mismatch");
+    }
+
+    @Test
+    void theLoopIsNestedAndWritesOnlyTheSuppliedPart() {
+        HostFixture f = new HostFixture();
+        TransportModule module = f.services.transportModule();
+        JsonObject result = f.call(module, "transport.set", HostFixture.json("{\"loop\":{\"start\":8}}"));
+        assertTrue(f.transport.child("arrangerLoopStart").writes == 1, "loop.start written");
+        assertTrue(f.transport.child("arrangerLoopDuration").writes == 0, "omitted loop.length left alone");
+        assertTrue(result.getAsJsonObject("fields").getAsJsonObject("loop").has("start"), "per-field result nested");
+        assertTrue(!result.getAsJsonObject("fields").getAsJsonObject("loop").has("length"), "only the supplied part");
+        JsonObject loop = f.call(module, "transport.get", new JsonObject()).getAsJsonObject("loop");
+        assertTrue(loop.has("start") && loop.has("length") && !loop.has("loopStart"), "read nests the loop");
     }
 }

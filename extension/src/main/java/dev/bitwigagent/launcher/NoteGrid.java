@@ -22,7 +22,7 @@ public final class NoteGrid {
     private NoteGrid() {}
 
     public static final double BEAT_GRID = HostLimits.LIMITS.beatGrid;
-    static final int MAX_CLIP_BEATS = HostLimits.LIMITS.maxClipBeats;
+    static final int MAX_CLIP_BEATS = HostLimits.LIMITS.maxClipLength;
     public static final String BEAT_GRID_LABEL = "1/" + Math.round(1 / BEAT_GRID);
     private static final int MAX_STEPS = 128;
     private static final BigDecimal ONSET_GRID = BigDecimal.valueOf(BEAT_GRID);

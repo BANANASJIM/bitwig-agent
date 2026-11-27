@@ -59,7 +59,7 @@ public final class MethodSpecs {
                 maxRequestBytes,
                 maxResponseBytes,
                 defaultPort,
-                maxClipBeats,
+                maxClipLength,
                 responseGraceMs;
         public final double beatGrid, durationResolution, normalizedTolerance;
 
@@ -74,7 +74,7 @@ public final class MethodSpecs {
             maxRequestBytes = integer(object, "maxRequestBytes");
             maxResponseBytes = integer(object, "maxResponseBytes");
             defaultPort = integer(object, "defaultPort");
-            maxClipBeats = integer(object, "maxClipBeats");
+            maxClipLength = integer(object, "maxClipLength");
             responseGraceMs = integer(object, "responseGraceMs");
             beatGrid = object.get("beatGrid").getAsDouble();
             durationResolution = object.get("durationResolution").getAsDouble();
@@ -85,7 +85,7 @@ public final class MethodSpecs {
                     || Math.min(maxRequestBytes, maxResponseBytes) < 1
                     || defaultPort < 1
                     || defaultPort > 65535
-                    || maxClipBeats < 1
+                    || maxClipLength < 1
                     || responseGraceMs < 2
                     || !(beatGrid > 0)
                     || !(durationResolution > 0)

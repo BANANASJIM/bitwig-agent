@@ -32,8 +32,8 @@ public final class TransportModule implements HostModule {
         "position",
         "metronome",
         "metronomeVolume",
-        "loopStartBeats",
-        "loopDurationBeats",
+        "loopStart",
+        "loopLength",
         "loopEnabled",
         "punchInEnabled",
         "punchOutEnabled",
@@ -46,14 +46,7 @@ public final class TransportModule implements HostModule {
     private static final ValueMatch BEATS_AND_TEMPO = ValueMatch.raw(1e-6);
     /** Fields every host reports at startup; a newer field that is not (yet) observed reads null instead of blocking the rest. */
     private static final Set<String> BASE = Set.of(
-            "tempoBpm",
-            "timeSignature",
-            "position",
-            "metronome",
-            "loopStartBeats",
-            "loopDurationBeats",
-            "loopEnabled",
-            "playing");
+            "tempoBpm", "timeSignature", "position", "metronome", "loopStart", "loopLength", "loopEnabled", "playing");
 
     private final Transport transport;
     private final Application application;
@@ -85,8 +78,8 @@ public final class TransportModule implements HostModule {
         observe("position", transport.playPosition());
         observe("metronome", transport.isMetronomeEnabled());
         observe("loopEnabled", transport.isArrangerLoopEnabled());
-        observe("loopStartBeats", transport.arrangerLoopStart());
-        observe("loopDurationBeats", transport.arrangerLoopDuration());
+        observe("loopStart", transport.arrangerLoopStart());
+        observe("loopLength", transport.arrangerLoopDuration());
         Sample volume = sample("metronomeVolume");
         transport.metronomeVolume().addValueObserver((DoubleValueChangedCallback) volume::number);
         transport.metronomeVolume().displayedValue().markInterested();
@@ -118,13 +111,38 @@ public final class TransportModule implements HostModule {
             throw Errors.notApplied(
                     Reason.INVALID_PARAMS,
                     "timeSignature must be numerator/denominator: numerator 1..32, denominator 1, 2, 4, 8, 16 or 32.");
-        if (p.has("loopDurationBeats") && p.get("loopDurationBeats").getAsDouble() == 0)
-            throw Errors.notApplied(Reason.INVALID_PARAMS, "loopDurationBeats must be positive.");
-        if (p.has("loopStartBeats")
-                && p.has("loopDurationBeats")
-                && !Double.isFinite(p.get("loopStartBeats").getAsDouble()
-                        + p.get("loopDurationBeats").getAsDouble()))
+        if (!p.has("loop")) return;
+        JsonObject loop = p.getAsJsonObject("loop");
+        if (loop.size() == 0) throw Errors.notApplied(Reason.INVALID_PARAMS, "loop needs start or length.");
+        if (loop.has("length") && loop.get("length").getAsDouble() == 0)
+            throw Errors.notApplied(Reason.INVALID_PARAMS, "loop.length must be positive.");
+        if (loop.has("start")
+                && loop.has("length")
+                && !Double.isFinite(
+                        loop.get("start").getAsDouble() + loop.get("length").getAsDouble()))
             throw Errors.notApplied(Reason.INVALID_PARAMS, "Loop end must be finite.");
+    }
+
+    /** The wire nests the arranger loop as loop:{start, length}; the samples keep one key per host value. */
+    private static JsonObject flat(JsonObject params) {
+        JsonObject out = new JsonObject();
+        for (Map.Entry<String, JsonElement> entry : params.entrySet()) {
+            if (!entry.getKey().equals("loop")) {
+                out.add(entry.getKey(), entry.getValue());
+                continue;
+            }
+            JsonObject loop = entry.getValue().getAsJsonObject();
+            if (loop.has("start")) out.add("loopStart", loop.get("start"));
+            if (loop.has("length")) out.add("loopLength", loop.get("length"));
+        }
+        return out;
+    }
+
+    private static void nest(JsonObject result) {
+        JsonObject loop = new JsonObject();
+        if (result.has("loopStart")) loop.add("start", result.remove("loopStart"));
+        if (result.has("loopLength")) loop.add("length", result.remove("loopLength"));
+        if (loop.size() > 0) result.add("loop", loop);
     }
 
     static boolean validSignature(String text) {
@@ -133,12 +151,13 @@ public final class TransportModule implements HostModule {
     }
 
     @Override
-    public void dispatch(HostOperation op, String method, JsonObject p) {
+    public void dispatch(HostOperation op, String method, JsonObject params) {
         scheduler.check(op);
         if (method.equals("transport.get")) {
             op.result.complete(snapshot());
             return;
         }
+        JsonObject p = flat(params);
         if (p.has("metronomeVolume"))
             ValueInput.parse("metronomeVolume", p.get("metronomeVolume")).normalized("metronomeVolume");
         for (String key : BASE) require(key);
@@ -151,12 +170,12 @@ public final class TransportModule implements HostModule {
                         entry.getValue(),
                         p.get(entry.getKey()).getAsString(),
                         observedString(entry.getKey()));
-        double start = p.has("loopStartBeats")
-                ? p.get("loopStartBeats").getAsDouble()
-                : values.get("loopStartBeats").value.getAsDouble();
-        double duration = p.has("loopDurationBeats")
-                ? p.get("loopDurationBeats").getAsDouble()
-                : values.get("loopDurationBeats").value.getAsDouble();
+        double start = p.has("loopStart")
+                ? p.get("loopStart").getAsDouble()
+                : values.get("loopStart").value.getAsDouble();
+        double duration = p.has("loopLength")
+                ? p.get("loopLength").getAsDouble()
+                : values.get("loopLength").value.getAsDouble();
         if (!Double.isFinite(start + duration))
             throw Errors.notApplied(Reason.INVALID_PARAMS, "Loop end must be finite.");
         Request request = new Request(
@@ -266,10 +285,10 @@ public final class TransportModule implements HostModule {
             case "recordQuantizationGrid":
                 enums.get(key).set(value.getAsString());
                 break;
-            case "loopStartBeats":
+            case "loopStart":
                 transport.arrangerLoopStart().set(value.getAsDouble());
                 break;
-            case "loopDurationBeats":
+            case "loopLength":
                 transport.arrangerLoopDuration().set(value.getAsDouble());
                 break;
             default:
@@ -332,6 +351,7 @@ public final class TransportModule implements HostModule {
         result.addProperty("outcome", worst.wire());
         if (!worst.succeeded()) result.addProperty("reason", (reason != null ? reason : worstReason).wire());
         if (worst == Outcome.APPLIED) Verification.API_READBACK.put(result);
+        nest(fields);
         result.add("fields", fields);
         if (request.silentEngine)
             Results.addWarning(
@@ -365,8 +385,8 @@ public final class TransportModule implements HostModule {
                 "numerator/denominator as the host reports it; time-signature change markers are not in the public API");
         units.addProperty("position", "quarter_note_beats_current_play_position");
         units.addProperty("metronomeVolume", "normalized_0_1_not_db");
-        units.addProperty("loopStartBeats", "quarter_note_beats");
-        units.addProperty("loopDurationBeats", "quarter_note_beats");
+        units.addProperty("loop", "quarter_note_beats");
+        nest(result);
         result.add("units", units);
         JsonArray outside = new JsonArray();
         for (Map.Entry<String, SettableEnumValue> entry : enums.entrySet())
