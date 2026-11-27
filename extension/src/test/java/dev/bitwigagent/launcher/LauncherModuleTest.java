@@ -286,6 +286,21 @@ public final class LauncherModuleTest {
     }
 
     @Test
+    void observedPlaybackStateReachesTheRenderWarnings() {
+        LauncherFake f = new LauncherFake();
+        occupy(f, 0, "Riff");
+        f.call("launcher.list", listParams(f));
+        LauncherState state = f.services.launcherState();
+        assertEquals(Boolean.FALSE, state.playing(0), "nothing plays");
+        assertEquals(Boolean.TRUE, state.stopped(0), "a track nothing has started is reported stopped");
+        f.slots[0].playing = true;
+        f.stopped = false;
+        f.call("launcher.list", listParams(f));
+        assertEquals(Boolean.TRUE, state.playing(0), "a playing slot overrides the arranger");
+        assertEquals(Boolean.FALSE, state.stopped(0));
+    }
+
+    @Test
     void anUnobservedStopRemainsUnknown() {
         LauncherFake f = new LauncherFake();
         occupy(f, 0, "Riff");

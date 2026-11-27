@@ -242,7 +242,8 @@ public final class RenderModuleTest {
         assertTrue(
                 warnings.size() == 1
                         && warnings.get(0).getAsString().contains(A)
-                        && warnings.get(0).getAsString().contains("clips.copy"),
+                        && warnings.get(0).getAsString().contains("clips.copy")
+                        && warnings.get(0).getAsString().contains("follows the arranger"),
                 "launcher clips and an empty arranger lane warn, naming the track and the fix");
 
         Sim covered = new Sim();
@@ -252,6 +253,8 @@ public final class RenderModuleTest {
         covered.drainUntil(fine);
         assertFalse(assertOutcome("applied", fine).has("warnings"), "an overlapping arranger clip is enough");
 
+        RenderModule.LauncherContent only = slot -> true;
+        assertTrue(only.playing(0) == null && only.stopped(0) == null, "an unobserved state defaults to null");
         for (Boolean content : new Boolean[] {false, null}) {
             Sim quiet = new Sim();
             quiet.launcherContent = content;
@@ -261,6 +264,58 @@ public final class RenderModuleTest {
                     assertOutcome("applied", none).has("warnings"),
                     "no launcher content, or none observed: no warning");
         }
+    }
+
+    @Test
+    void exportWarnsPerTrackWhenItsRenderDiffersFromTheArranger() throws IOException {
+        // Playing a launcher clip overrides the arranger, whether or not the arranger holds a clip in range.
+        for (boolean covered : new boolean[] {false, true}) {
+            Sim playing = new Sim();
+            playing.launcherContent = true;
+            playing.launcherPlaying = true;
+            if (covered) playing.clips.put(A, lanes(clip(8, 16, "Verse", "instrument")));
+            HostOperation op = playing.start("export.audio", export(playing.dir.toString(), "master", A), 5000);
+            playing.drainUntil(op);
+            JsonObject result = assertOutcome("applied", op);
+            String warning = result.getAsJsonArray("warnings").get(0).getAsString();
+            assertTrue(
+                    result.getAsJsonArray("warnings").size() == 1
+                            && warning.contains(A)
+                            && warning.contains("playing a launcher clip")
+                            && warning.contains("switch_playback_to_arranger_for_all_tracks")
+                            && warning.contains("clips.copy") == !covered,
+                    "a playing launcher clip warns with the switch fix, and the copy fix only for an empty arranger");
+            assertTrue(
+                    result.get("next").getAsString().contains("switch_playback_to_arranger_for_all_tracks"),
+                    "next names the fix");
+        }
+
+        // Stopped from the launcher: silent even with arranger clips in range, and the copy fix only when it is empty.
+        Sim stopped = new Sim();
+        stopped.launcherContent = true;
+        stopped.launcherStopped = true;
+        stopped.clips.put(A, lanes(clip(8, 16, "Verse", "instrument")));
+        HostOperation op = stopped.start("export.audio", export(stopped.dir.toString(), "master", A), 5000);
+        stopped.drainUntil(op);
+        JsonObject result = assertOutcome("applied", op);
+        String warning = result.getAsJsonArray("warnings").get(0).getAsString();
+        assertTrue(
+                warning.contains("stopped from the launcher")
+                        && warning.contains("renders silent")
+                        && warning.contains("switch_playback_to_arranger_for_all_tracks")
+                        && !warning.contains("clips.copy")
+                        && !result.get("next").getAsString().contains("clips.copy"),
+                "a launcher-stopped track warns even with an arranger clip in range");
+
+        // Following the arranger with the launcher unobserved or idle and nothing to copy: no warning, no next.
+        Sim following = new Sim();
+        following.launcherContent = false;
+        following.launcherPlaying = false;
+        following.launcherStopped = false;
+        HostOperation quiet = following.start("export.audio", export(following.dir.toString(), "master", A), 5000);
+        following.drainUntil(quiet);
+        JsonObject clean = assertOutcome("applied", quiet);
+        assertFalse(clean.has("warnings") || clean.has("next"), "a track following its arranger is not warned");
     }
 
     @Test
@@ -697,6 +752,8 @@ public final class RenderModuleTest {
         boolean finish = true, write = true, garbage, deleteOld, done, lost;
         /** What the launcher reports for every track: null = unobserved. */
         Boolean launcherContent;
+        /** Launcher clip playing/queued and launcher-stopped, for every track: null = unobserved. */
+        Boolean launcherPlaying, launcherStopped;
 
         Reason refusal;
         String tap;
@@ -772,7 +829,19 @@ public final class RenderModuleTest {
                             return new RenderModule.Clips(new ArrayList<>(lane), rows);
                         }
                     },
-                    slot -> launcherContent);
+                    new RenderModule.LauncherContent() {
+                        public Boolean hasContent(int slot) {
+                            return launcherContent;
+                        }
+
+                        public Boolean playing(int slot) {
+                            return launcherPlaying;
+                        }
+
+                        public Boolean stopped(int slot) {
+                            return launcherStopped;
+                        }
+                    });
             jobs = new JobsModule(module);
         }
 
