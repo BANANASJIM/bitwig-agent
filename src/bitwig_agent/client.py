@@ -17,15 +17,14 @@ from bitwig_agent.protocol.base import PROTOCOL, REASONS
 from bitwig_agent.protocol.limits import (
     DEFAULT_PORT,
     DEFAULT_TIMEOUT_MS,
-    MAX_REQUEST_BYTES,
-    MAX_RESPONSE_BYTES,
+    MAX_MESSAGE_BYTES,
     MIN_TIMEOUT_MS,
     RESPONSE_GRACE_MS,
     mebibytes,
 )
 from bitwig_agent.protocol.shared import shared
 
-RESPONSE_TOO_LARGE = f"Response exceeds {mebibytes(MAX_RESPONSE_BYTES)}"
+RESPONSE_TOO_LARGE = f"Response exceeds {mebibytes(MAX_MESSAGE_BYTES)}"
 METHODS = frozenset(TOOLS) - CLIENT_SIDE
 
 
@@ -103,13 +102,13 @@ def _encode_request(method: str, params: dict[str, Any], timeout_ms: int) -> tup
     request_id = uuid.uuid4().hex
     request = {"id": request_id, "method": method, "params": params, "timeoutMs": timeout_ms, "protocol": PROTOCOL}
     payload = (json.dumps(request, allow_nan=False, separators=(",", ":")) + "\n").encode("utf-8")
-    if len(payload) > MAX_REQUEST_BYTES:
-        raise ValueError(f"Request exceeds {mebibytes(MAX_REQUEST_BYTES)}")
+    if len(payload) > MAX_MESSAGE_BYTES:
+        raise ValueError(f"Request exceeds {mebibytes(MAX_MESSAGE_BYTES)}")
     return request_id, payload
 
 
 def _parse_response(raw: bytes, request_id: str, method: str) -> dict[str, Any]:
-    if len(raw) > MAX_RESPONSE_BYTES:
+    if len(raw) > MAX_MESSAGE_BYTES:
         raise ValueError(RESPONSE_TOO_LARGE)
     response = load_json(raw.decode("utf-8"))
     if not isinstance(response, dict) or response.get("id") != request_id:
@@ -142,7 +141,7 @@ def _transport_failure(exc: Exception, method: str, dispatched: bool) -> dict[st
     reason = "deadline" if isinstance(exc, TimeoutError) else "transport"
     hint = ""
     if method == "grid.get" and (isinstance(exc, asyncio.LimitOverrunError) or RESPONSE_TOO_LARGE in str(exc)):
-        hint = f" The grid.get response exceeded the {mebibytes(MAX_RESPONSE_BYTES)} client cap: lower moduleLimit (64 works with includeParameters) or set includeParameters=false."
+        hint = f" The grid.get response exceeded the {mebibytes(MAX_MESSAGE_BYTES)} client cap: lower moduleLimit (64 works with includeParameters) or set includeParameters=false."
     message = f"{type(exc).__name__}: {exc}.{hint}"
     if dispatched and not TOOLS[method].read_only:
         return unknown_result(reason, message + " The request was not retried.", TOOLS[method].inspect)
@@ -164,7 +163,7 @@ class BridgeClient:
             # The host deadline bounds mutations. The extra second only lets its
             # final response reach us; it never extends or replays the request.
             async with asyncio.timeout(timeout_ms / 1000 + self.response_grace_seconds):
-                reader, writer = await asyncio.open_connection("127.0.0.1", self.port, limit=MAX_RESPONSE_BYTES)
+                reader, writer = await asyncio.open_connection("127.0.0.1", self.port, limit=MAX_MESSAGE_BYTES)
                 dispatched = True
                 writer.write(payload)
                 await writer.drain()

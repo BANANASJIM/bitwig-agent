@@ -100,13 +100,9 @@ public final class LauncherState implements RenderModule.LauncherContent {
     public final Track clipTrack;
     public final Slot[][] slots = new Slot[HostLimits.TRACKS][HostLimits.SCENES];
     final boolean[] stopReady = new boolean[HostLimits.TRACKS];
-    final long[][] noteVersions = new long[NOTE_GRID_SIZE][NOTE_GRID_SIZE];
-    final long[][] noteGenerations = new long[NOTE_GRID_SIZE][NOTE_GRID_SIZE];
-    long sequence, bindingGeneration;
     // Callback counters of the cursor clip's launch properties, in ClipModule.LAUNCH order.
     final long[] launchSequence = new long[3];
     public boolean clipExistsReady, lengthReady;
-    private GridObservation gridObservation;
     // Only positive completion releases these holds; completed futures and later callbacks cannot release one.
     private Mutation cursorMutation;
 
@@ -144,20 +140,8 @@ public final class LauncherState implements RenderModule.LauncherContent {
         clip.getPlayStop().markInterested();
         clip.getLoopStart().markInterested();
         clip.isLoopEnabled().markInterested();
-        clip.addNoteStepObserver(note -> {
-            int c = note.channel(), x = note.x(), y = note.y();
-            GridObservation grid = gridObservation;
-            if (grid != null
-                    && c == grid.window.channel
-                    && x >= 0
-                    && x < NOTE_GRID_SIZE
-                    && y >= 0
-                    && y < NOTE_GRID_SIZE
-                    && bound(grid.id, grid.slot)) {
-                noteVersions[x][y] = ++sequence;
-                noteGenerations[x][y] = grid.generation;
-            }
-        });
+        // The grid is read through getStep; the subscription stays because dropping it is untested on a host.
+        clip.addNoteStepObserver(note -> {});
         ClipLauncherSlot cursorSlot = clip.clipLauncherSlot();
         cursorSlot.sceneIndex().markInterested();
         for (int t = 0; t < HostLimits.TRACKS; t++) {
@@ -303,8 +287,6 @@ public final class LauncherState implements RenderModule.LauncherContent {
     void bind(
             HostOperation op, Target target, boolean dispatches, Supplier<NoteGrid.Window> grid, long end, Bound then) {
         guard(op, target);
-        gridObservation = null;
-        bindingGeneration++;
         if (dispatches) op.markDispatched();
         target.slot.api.select();
         scheduler.schedule(op, () -> awaitBinding(op, target, grid, end, then), 40);
@@ -344,7 +326,6 @@ public final class LauncherState implements RenderModule.LauncherContent {
             return;
         }
         // API exposes no grid-configuration acknowledgement. This is settling, not a proven data barrier.
-        if (w != null) gridObservation = new GridObservation(bindingGeneration, target.id(), target.slot, w);
         then.run(op, target, end, w);
     }
 
@@ -465,20 +446,6 @@ public final class LauncherState implements RenderModule.LauncherContent {
         String description() {
             return "A prior " + method + " was dispatched for the clip slot of track " + trackId + " at scene " + scene
                     + (rebound ? "; its native target binding changed." : ".");
-        }
-    }
-
-    private static final class GridObservation {
-        final long generation;
-        final String id;
-        final Slot slot;
-        final NoteGrid.Window window;
-
-        GridObservation(long generation, String id, Slot slot, NoteGrid.Window window) {
-            this.generation = generation;
-            this.id = id;
-            this.slot = slot;
-            this.window = window;
         }
     }
 

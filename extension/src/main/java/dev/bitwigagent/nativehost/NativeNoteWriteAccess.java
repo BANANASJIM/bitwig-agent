@@ -1,39 +1,42 @@
 package dev.bitwigagent.nativehost;
 
 import dev.bitwigagent.core.Errors;
+import dev.bitwigagent.core.RangeEdit;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.launcher.NativeNotes;
+import dev.bitwigagent.launcher.Note;
 import java.lang.reflect.Method;
 import java.util.*;
+import java.util.function.Function;
 
 /**
- * Exact bindings that write a launcher clip's notes as one Undo step. The public {@code Clip.setStep} and
- * {@code clearStep} each post their own document event, and each event opens its own outermost transaction ("Insert
- * Note", "Delete Events"), so every note is an Undo step. Here one document task opens {@code project.begin(label,
- * false)}, makes the same model calls those events end in, and closes it with {@code project.end(false)}: the
- * transaction manager reports only the outermost begin and end to the undo recorder (depth counter), so the inner
- * transactions merge.
+ * Exact bindings that read a launcher clip's notes and write them as one Undo step. The public {@code Clip.setStep}
+ * and {@code clearStep} each post their own document event, and each event opens its own outermost transaction
+ * ("Insert Note", "Delete Events"), so every note is an Undo step. Here one document task opens {@code
+ * project.begin(label, false)}, makes the same model calls those events end in, and closes it with {@code
+ * project.end(false)}: the transaction manager reports only the outermost begin and end to the undo recorder (depth
+ * counter), so the inner transactions merge.
  *
- * <p>Set: {@code note.clip.add(note.create(time, duration, velocity * 0.007874016f), channel, key, null)}, which
- * clears the overlap and adds the note like the public setter but leaves the editor selection alone. Clear: the row's
- * notes that start inside the cell, deleted with {@code note.rowEvents.delete(Collection)}. Times use the public
- * setter's rounding ({@code time.grid.round}, 2^-20 beat); durations too, the resolution Bitwig keeps them at after
- * Undo/Redo. Clip creation is {@code launcher.emptySlot.createClip()} plus the length the public
+ * <p>Read: the clip's row table ({@code note.rowOwner.rows}) is a polyphonic note timeline in both supported hosts
+ * (its only implementation extends {@code note.polyTimeline}), so {@code note.polyTimeline.rows} lists every row; each
+ * row is a key row (channel, key) and an event list. The arranger readback walks the same rows. Nothing is selected.
+ * Write: removed and replaced notes are deleted from their rows with {@code note.rowEvents.delete(Collection)}, then
+ * each written note is added with {@code note.clip.add(note.create(time, duration, velocity * 0.007874016f), channel,
+ * key, null)}, which leaves the editor selection alone. Times and durations are canonical (2^-20 beat), the step the
+ * public setter rounds to. Clip creation is {@code launcher.emptySlot.createClip()} plus the length the public
  * {@code createEmptyClip} sets, without its slot selection.
  */
 public final class NativeNoteWriteAccess implements NativeNotes.Access {
     static final String EDIT_LABEL = "Edit Notes", CREATE_LABEL = "Insert Clip";
     /** The public setter's MIDI-to-model velocity factor (1/127 as a float). */
     private static final float VELOCITY = 0.007874016f;
-    /** The public clearStep's cell end: a note starting before {@code cell + step - CELL_END} is in the cell. */
-    private static final double CELL_END = 1e-4, EPS = 1e-9;
 
     private final NativeHost.Access a;
     private final NativeLauncherClip launcher;
     private final NativeClipTiming timing;
-    private final Class<?> noteClip, rowOwner;
-    private final Method round, newNote, addNote, rows, row, events, start, length, velocity, delete, begin, end;
-    private final Method createClip, clipLength, setLength, rename, setNumber;
+    private final Class<?> noteClip, rowOwner, polyTimeline;
+    private final Method newNote, addNote, rows, allRows, channel, key, events, start, length, velocity, delete;
+    private final Method begin, end, createClip, clipLength, setLength, rename, setNumber;
 
     public NativeNoteWriteAccess(NativeHost.Access a) throws ReflectiveOperationException {
         this.a = a;
@@ -41,13 +44,15 @@ public final class NativeNoteWriteAccess implements NativeNotes.Access {
         timing = new NativeClipTiming(a);
         noteClip = a.type("note.clip");
         rowOwner = a.type("note.rowOwner");
+        polyTimeline = a.type("note.polyTimeline");
         Class<?> note = a.type("note");
-        round = a.exactMethod("time.grid.round", double.class, true, double.class);
         newNote = a.exactMethod("note.create", note, true, double.class, double.class, double.class);
         addNote =
                 a.exactMethod("note.clip.add", void.class, false, note, int.class, int.class, a.type("note.selection"));
         rows = a.exactMethod("note.rowOwner.rows", a.type("note.rows"), false);
-        row = a.exactMethod("note.rowTable.row", a.type("note.row"), false, int.class, int.class, boolean.class);
+        allRows = a.exactMethod("note.polyTimeline.rows", List.class, false);
+        channel = a.exactMethod("note.keyRow.channel", int.class, false);
+        key = a.exactMethod("note.keyRow.key", int.class, false);
         events = a.exactMethod("event.list.events", List.class, false);
         start = a.exactMethod("event.timed.start", double.class, false);
         length = a.exactMethod("event.enduring.length", double.class, false);
@@ -68,72 +73,48 @@ public final class NativeNoteWriteAccess implements NativeNotes.Access {
     }
 
     @Override
-    public boolean[] edit(
-            Object slot,
-            String trackId,
-            String expectedName,
-            List<NativeNotes.Cell> cells,
-            Runnable check,
-            NativeNotes.Plan plan,
-            Runnable beforeWrite) {
-        NativeLauncherClip.Bound bound = launcher.clip(slot, trackId, expectedName, check);
-        Object clip = bound.clip;
-        if (!noteClip.isInstance(clip) || !rowOwner.isInstance(clip))
-            throw Errors.notApplied(Reason.UNSUPPORTED_SCOPE, "The launcher clip is not a note clip.");
-        Object loop = a.invoke(timing.loop, a.invoke(timing.timing, clip));
-        double loopStart = number(a.invoke(timing.position, loop));
-        double loopEnd = loopStart + number(a.invoke(timing.duration, loop));
-        List<NativeNotes.Observed> observed = new ArrayList<>(cells.size());
-        List<List<Object>> onsets = new ArrayList<>(cells.size());
-        for (NativeNotes.Cell cell : cells) {
-            check.run();
-            double t = time(cell), cellEnd = t + cell.stepBeats - CELL_END;
-            double spanEnd = t + cell.cells * cell.stepBeats - CELL_END;
-            List<Object> inCell = new ArrayList<>();
-            boolean sustained = false, collides = false;
-            for (Object n : notes(clip, cell)) {
-                double s = (Double) a.invoke(start, n);
-                if (s >= t - EPS && s <= cellEnd) inCell.add(n);
-                else if (s < t - EPS && s + (Double) a.invoke(length, n) > t + EPS) sustained = true;
-                else if (s > cellEnd && s <= spanEnd) collides = true;
-            }
-            onsets.add(inCell);
-            Object first = inCell.isEmpty() ? null : inCell.get(0);
-            observed.add(new NativeNotes.Observed(
-                    inCell.size(),
-                    first == null ? 0 : (Double) a.invoke(velocity, first),
-                    first == null ? 0 : (Double) a.invoke(length, first),
-                    sustained,
-                    collides));
-        }
-        boolean[] write = plan.write(loopStart, loopEnd, observed);
-        boolean any = false;
-        for (boolean w : write) any |= w;
-        if (!any) return write;
-        bound.guard();
-        beforeWrite.run();
-        transaction(bound.project, EDIT_LABEL, () -> {
-            for (int i = 0; i < cells.size(); i++) {
-                if (!write[i]) continue;
-                NativeNotes.Cell cell = cells.get(i);
-                if (cell.set) add(clip, cell);
-                else if (!onsets.get(i).isEmpty()) a.invoke(delete, rowOf(clip, cell), new ArrayList<>(onsets.get(i)));
-            }
-        });
-        return write;
+    public NativeNotes.Observed read(Object slot, String trackId, String expectedName, Runnable check) {
+        return snapshot(noteClip(launcher.clip(slot, trackId, expectedName, check))).observed;
     }
 
     @Override
-    public void create(
+    public NativeNotes.Observed edit(
+            Object slot,
+            String trackId,
+            String expectedName,
+            Runnable check,
+            Function<NativeNotes.Observed, RangeEdit.Change<Note>> plan,
+            Runnable beforeWrite) {
+        NativeLauncherClip.Bound bound = launcher.clip(slot, trackId, expectedName, check);
+        Object clip = noteClip(bound);
+        Snapshot before = snapshot(clip);
+        RangeEdit.Change<Note> change = plan.apply(before.observed);
+        if (change.isEmpty()) return before.observed;
+        bound.guard();
+        beforeWrite.run();
+        transaction(bound.project, EDIT_LABEL, () -> {
+            Map<Object, List<Object>> doomed = new IdentityHashMap<>();
+            for (Note n : change.remove) doom(before, n, doomed);
+            for (RangeEdit.Update<Note> u : change.update) doom(before, u.before, doomed);
+            for (Map.Entry<Object, List<Object>> row : doomed.entrySet())
+                a.invoke(delete, row.getKey(), row.getValue());
+            for (Note n : change.written()) add(clip, n);
+        });
+        return snapshot(clip).observed;
+    }
+
+    @Override
+    public NativeNotes.Observed create(
             Object slot,
             String trackId,
             String name,
             int beats,
-            List<NativeNotes.Cell> cells,
+            List<Note> notes,
             Runnable check,
             Runnable beforeWrite) {
         NativeLauncherClip.Bound bound = launcher.empty(slot, trackId, check);
         beforeWrite.run();
+        Object[] created = new Object[1];
         transaction(bound.project, CREATE_LABEL, () -> {
             a.invoke(createClip, bound.slot);
             Object clip = a.invoke(launcher.clip, slot);
@@ -145,8 +126,60 @@ public final class NativeNoteWriteAccess implements NativeNotes.Access {
                     setNumber,
                     a.invoke(timing.position, a.invoke(timing.playStop, a.invoke(timing.timing, clip))),
                     (double) beats);
-            for (NativeNotes.Cell cell : cells) add(clip, cell);
+            for (Note n : notes) add(clip, n);
+            created[0] = clip;
         });
+        return snapshot(created[0]).observed;
+    }
+
+    /** The bound clip, required to be a note clip with a row table. */
+    private Object noteClip(NativeLauncherClip.Bound bound) {
+        Object clip = bound.clip;
+        if (!noteClip.isInstance(clip) || !rowOwner.isInstance(clip))
+            throw Errors.notApplied(Reason.UNSUPPORTED_SCOPE, "The launcher clip is not a note clip.");
+        return clip;
+    }
+
+    /** Every note of the clip with its native row and event, and the loop. */
+    private final class Snapshot {
+        final NativeNotes.Observed observed;
+        final Map<Note, Object[]> natives = new IdentityHashMap<>();
+
+        Snapshot(Object clip) {
+            Object table = a.invoke(rows, clip);
+            if (!polyTimeline.isInstance(table))
+                throw Errors.notApplied(Reason.UNSUPPORTED_SCOPE, "The clip's note rows are not a note timeline.");
+            List<Note> notes = new ArrayList<>();
+            for (Object row : new ArrayList<>((List<?>) a.invoke(allRows, table))) {
+                int c = (Integer) a.invoke(channel, row), k = (Integer) a.invoke(key, row);
+                List<?> list = new ArrayList<>((List<?>) a.invoke(events, row));
+                if (list.isEmpty()) continue;
+                if (c < 0 || c > 15 || k < 0 || k > 127)
+                    throw Errors.notApplied(
+                            Reason.UNSUPPORTED_SCOPE, "The clip has a note row outside channel 0..15 or key 0..127.");
+                for (Object e : list) {
+                    Note n = Note.read(c, k, (Double) a.invoke(start, e), (Double) a.invoke(length, e), (Double)
+                            a.invoke(velocity, e));
+                    notes.add(n);
+                    natives.put(n, new Object[] {row, e});
+                }
+            }
+            notes.sort(Note.ORDER);
+            Object loop = a.invoke(timing.loop, a.invoke(timing.timing, clip));
+            observed = new NativeNotes.Observed(
+                    Collections.unmodifiableList(notes),
+                    number(a.invoke(timing.position, loop)),
+                    number(a.invoke(timing.duration, loop)));
+        }
+    }
+
+    private Snapshot snapshot(Object clip) {
+        return new Snapshot(clip);
+    }
+
+    private static void doom(Snapshot before, Note n, Map<Object, List<Object>> doomed) {
+        Object[] at = before.natives.get(n);
+        doomed.computeIfAbsent(at[0], r -> new ArrayList<>()).add(at[1]);
     }
 
     private void transaction(Object project, String label, Runnable work) {
@@ -158,27 +191,9 @@ public final class NativeNoteWriteAccess implements NativeNotes.Access {
         }
     }
 
-    private double time(NativeNotes.Cell cell) {
-        return round(cell.step * cell.stepBeats);
-    }
-
-    private double round(double beats) {
-        return (Double) a.invoke(round, null, beats);
-    }
-
-    private void add(Object clip, NativeNotes.Cell cell) {
-        // The duration is stored to 2^-20 beat as well: unrounded, a note reads back exactly until Undo/Redo rounds it.
-        Object note = a.invoke(newNote, null, time(cell), round(cell.duration), (double) (cell.velocity * VELOCITY));
-        a.invoke(addNote, clip, note, cell.channel, cell.pitch, null);
-    }
-
-    private Object rowOf(Object clip, NativeNotes.Cell cell) {
-        return a.invoke(row, a.invoke(rows, clip), cell.channel, cell.pitch, false);
-    }
-
-    private List<?> notes(Object clip, NativeNotes.Cell cell) {
-        Object r = rowOf(clip, cell);
-        return r == null ? List.of() : new ArrayList<>((List<?>) a.invoke(events, r));
+    private void add(Object clip, Note n) {
+        Object note = a.invoke(newNote, null, n.beatValue(), n.durationValue(), (double) (n.velocity * VELOCITY));
+        a.invoke(addNote, clip, note, n.channel, n.pitch, null);
     }
 
     private double number(Object nativeNumber) {

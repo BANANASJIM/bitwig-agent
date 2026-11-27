@@ -280,9 +280,9 @@ public final class RpcServerTest {
             String base = request("limit", "{\"padding\":\"\"}", null);
             String boundary = base.replace(
                     "\"padding\":\"\"",
-                    "\"padding\":\"" + "x".repeat(RpcServer.MAX_REQUEST_BYTES - (base.length() - 1)) + "\"");
+                    "\"padding\":\"" + "x".repeat(RpcServer.MAX_MESSAGE_BYTES - (base.length() - 1)) + "\"");
             assertTrue(
-                    boundary.getBytes(StandardCharsets.UTF_8).length == RpcServer.MAX_REQUEST_BYTES + 1,
+                    boundary.getBytes(StandardCharsets.UTF_8).length == RpcServer.MAX_MESSAGE_BYTES + 1,
                     "Boundary fixture");
             assertTrue(call(server, boundary).has("result"), "1 MiB request excluding newline accepted");
             error(call(server, boundary.replace("padding", "paddingX")), "invalid_request");
@@ -458,7 +458,7 @@ public final class RpcServerTest {
     void responseLimit() throws Exception {
         try (RpcServer server = new RpcServer(0, SPECS, (method, params, until) -> {
             JsonObject result = ok();
-            result.addProperty("large", "x".repeat(RpcServer.MAX_RESPONSE_BYTES));
+            result.addProperty("large", "x".repeat(RpcServer.MAX_MESSAGE_BYTES));
             return CompletableFuture.completedFuture(result);
         })) {
             server.start();

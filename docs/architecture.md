@@ -30,7 +30,7 @@ The extension binds `127.0.0.1:61172`; the Python client connects to IPv4 loopba
 | [`frontends/cli.py`](https://github.com/BANANASJIM/bitwig-agent/blob/main/src/bitwig_agent/frontends/cli.py) | CLI argument parsing, help layout and exit codes on top of `core` (`bitwig-agent`) |
 | [`install.py`](https://github.com/BANANASJIM/bitwig-agent/blob/main/src/bitwig_agent/install.py) | Release-version extension download/copy, integrity check, backups and printed MCP configuration |
 
-The catalog is not a planner. Tool examples are schema examples, not live target IDs. Tool annotations are hints, not authority or a proof that a call has no side effects. For example, `notes.get` selects a clip.
+The catalog is not a planner. Tool examples are schema examples, not live target IDs. Tool annotations are hints, not authority or a proof that a call has no side effects. For example, `clips.insert` selects a clip (and so does `notes.get` without the native note binding).
 
 Python rejects invalid arguments before dispatch, including unknown fields and inappropriate value types. Java independently validates the transport and domain request; calling TCP directly does not remove host-side checks. The maintained Python dependency range is Python 3.11+, `mcp>=2.3.0,<3` and `pydantic>=2.12,<3`; the source lockfile selects exact development versions. The adapter uses the SDK 2 low-level constructor handlers and explicit result models. SDK attributes use snake_case; MCP wire fields retain their camelCase aliases, and the shared validator—not SDK convenience wrapping—owns argument validation. Package dependency resolution and native host compatibility are different concerns.
 

@@ -72,6 +72,14 @@ def index(prefix: str = "") -> dict[str, dict[str, Any]]:
     }
 
 
+def effect(name: str) -> str:
+    """How a call changes the project, as help labels it: read-only, writes, or state that leaves content alone."""
+    hints = resolve(name, TOOLS[name].annotations)
+    if hints.read_only:
+        return "read-only"
+    return "writes" if hints.destructive or not hints.idempotent else "changes state, not content"
+
+
 def method(name: str) -> dict[str, Any]:
     if not exists(name):
         raise ValueError(unknown_method_message(name))
@@ -252,7 +260,11 @@ def field_types(name: str) -> dict[str, Any]:
         raise ValueError(unknown_method_message(name))
     return {
         key: prop.get("type")
-        or (STRING_UNION if any(member.get("type") == "string" for member in prop.get("anyOf", ())) else None)
+        or (
+            STRING_UNION
+            if any(member.get("type") == "string" for member in [*prop.get("anyOf", ()), *prop.get("oneOf", ())])
+            else None
+        )
         for key, prop in TOOLS[name].model.model_json_schema()["properties"].items()
     }
 

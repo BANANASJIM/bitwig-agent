@@ -224,13 +224,10 @@ public final class ClipModuleTest {
         notes.add(noteSet(3.5, 60, 90, 1));
         late.add("notes", notes);
         assertRpcError("invalid_params", f.start("clips.insert", late));
-        JsonObject clear = insertAt(f.slot(0), 4, "Clear");
-        JsonArray bad = new JsonArray();
-        JsonObject c = noteSet(0, 60, 90, 1);
-        c.addProperty("op", "clear");
-        bad.add(c);
-        clear.add("notes", bad);
-        assertRpcError("invalid_params", f.start("clips.insert", clear));
+        JsonObject channel = insertAt(f.slot(0), 4, "Channel");
+        channel.add("notes", notes);
+        channel.addProperty("channel", 1);
+        assertRpcError("invalid_params", f.start("clips.insert", channel));
         assertEquals(0, f.creates);
     }
 
@@ -243,17 +240,16 @@ public final class ClipModuleTest {
         assertEquals("api_readback", out.get("verification").getAsString());
         JsonObject write = out.getAsJsonObject("noteWrite");
         assertEquals("applied", write.get("outcome").getAsString());
-        assertEquals(3, write.getAsJsonObject("summary").get("verified").getAsInt());
-        assertFalse(write.has("unverifiedEdits") || write.has("edits") || write.has("notes"), "compact by default");
-        assertTrue(write.getAsJsonObject("window").get("derived").getAsBoolean());
-        assertTrue(f.notes.containsKey(LauncherFake.key(33, 0, 0, 60)));
-        assertEquals(3, f.notes.size());
+        assertEquals("api_readback", write.get("verification").getAsString());
+        assertEquals(3, write.getAsJsonObject("summary").get("inserted").getAsInt());
+        assertEquals("per_note", write.get("undo").getAsString());
+        assertNotNull(f.at(33, 0, 0, 60));
+        assertEquals(3, f.clipNotes(33).size());
         assertEquals(1, f.creates, "all notes are written after exactly one create");
         assertNotNull(out.get("slot"));
         JsonObject full = withNotes(insertAt(f.slot(1), 4, "Full"));
         full.addProperty("detail", "full");
-        JsonObject listed = f.call("clips.insert", full).getAsJsonObject("noteWrite");
-        assertEquals(3, listed.getAsJsonArray("notes").size(), "detail=full returns the note listing");
+        assertRpcError("invalid_params", f.start("clips.insert", full));
     }
 
     @Test
@@ -290,7 +286,7 @@ public final class ClipModuleTest {
                 "host_refused", kept.getAsJsonObject("noteWrite").get("reason").getAsString());
 
         LauncherFake silent = new LauncherFake();
-        silent.emitNotes = false;
+        silent.dropPublicWrites = true;
         JsonObject partial = silent.call("clips.insert", withNotes(insertParams(silent, 0)));
         assertEquals("unknown", partial.get("outcome").getAsString());
         assertEquals(
@@ -335,13 +331,13 @@ public final class ClipModuleTest {
         p.add("notes", notes);
         JsonObject out = f.call("clips.insert", p);
         assertEquals("applied", out.get("outcome").getAsString());
-        assertEquals(.45, f.notes.get(LauncherFake.key(0, 0, 0, 60)).duration);
+        assertEquals(.45, f.at(0, 0, 0, 60).duration, 1e-6);
 
         f.base.tracks[0].live("trackType", () -> "Instrument");
         JsonObject arranger = params("to", params("track", f.track(), "start", 0), "length", 4, "name", "A");
         arranger.add("notes", notes);
         assertEquals("applied", f.call("clips.insert", arranger).get("outcome").getAsString());
-        assertEquals(.45, f.lane.notes.get(0)[3], "the arranger writes the requested duration");
+        assertEquals(.45, f.lane.notes.get(0)[3], 1e-6, "the arranger writes the requested duration (canonical)");
     }
 
     @Test
@@ -356,8 +352,8 @@ public final class ClipModuleTest {
         p.add("notes", notes);
         String message =
                 assertRpcError("invalid_params", f.start("clips.insert", p)).getMessage();
-        assertTrue(message.startsWith("notes: 3 problems, nothing was written: notes[1] "), message);
-        assertTrue(message.contains("notes[2] beat 1.3 is not on the 1/128-beat grid"), message);
+        assertTrue(message.startsWith("notes: 2 problems, nothing was written: notes[1] "), message);
+        assertFalse(message.contains("notes[2]"), "an off-grid onset is a valid note: " + message);
         assertTrue(message.contains("notes[3] ends at beat 4.5, past the clip length 4"), message);
         assertEquals(0, f.creates);
     }
