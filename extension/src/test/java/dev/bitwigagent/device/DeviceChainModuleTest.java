@@ -369,7 +369,8 @@ public final class DeviceChainModuleTest {
         paged.pages[1].child("pageNames").emit(new String[] {"Main"});
         paged.top.replacement = new String[] {"B", "audio-effect"};
         paged.top.replacementPages = new String[] {"Perform", "Wavetable"};
-        JsonObject preset = paged.call(paged.chains(), "devices.replace", replace(paged.device(1, "B")));
+        JsonObject preset = paged.finish(paged.run(
+                paged.chains(), "devices.replace", replace(paged.device(1, "B")), paged.host.tasks.after(20)));
         assertEquals(
                 "applied",
                 preset.get("outcome").getAsString(),
@@ -395,7 +396,11 @@ public final class DeviceChainModuleTest {
         named.top.replacement = new String[] {"Warm Pad", "audio-effect"};
         assertEquals(
                 "applied",
-                named.call(named.chains(), "devices.replace", replace(named.device(1, "B")))
+                named.finish(named.run(
+                                named.chains(),
+                                "devices.replace",
+                                replace(named.device(1, "B")),
+                                named.host.tasks.after(20)))
                         .get("outcome")
                         .getAsString(),
                 "the requested preset's name is evidence");
