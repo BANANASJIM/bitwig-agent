@@ -28,7 +28,7 @@ DURATION_TOLERANCE_BEATS = 1e-6
 
 
 def note(beat: float, pitch: int, duration: float, velocity: int) -> dict:
-    return {"op": "set", "beat": beat, "pitch": pitch, "duration": duration, "velocity": velocity}
+    return {"beat": beat, "pitch": pitch, "duration": duration, "velocity": velocity}
 
 
 def pluck_phrase() -> list[dict]:
@@ -85,21 +85,16 @@ def checked_graph(graph: dict, target: dict, observed_target: dict | None = None
     return modules
 
 
-def checked_notes(readback: dict, window: dict, edits: list[dict]) -> None:
-    if readback.get("ref") != window["target"]:
+def checked_notes(readback: dict, target: dict, notes: list[dict]) -> None:
+    if readback.get("ref") != target:
         raise RuntimeError("Note readback target differs from the owned clip")
-    if any(readback["window"].get(key) != value for key, value in window.items() if key != "target"):
-        raise RuntimeError("Note readback window differs from the authored window")
     observed = {(item["beat"], item["pitch"]): item for item in readback["notes"]}
-    expected = {(item["beat"], item["pitch"]): item for item in edits}
+    expected = {(item["beat"], item["pitch"]): item for item in notes}
     if (
-        readback.get("completeWindow") is not True
+        readback.get("complete") is not True
         or len(observed) != len(readback["notes"])
         or observed.keys() != expected.keys()
-        or readback.get("continuingAtWindowStart") != []
         or readback.get("loop") != {"length": LOOP_LENGTH_BEATS, "start": 0}
-        or readback.get("loopEnabled") is not True
-        or readback.get("playStart") != 0
     ):
         raise RuntimeError("Observed note onsets or clip bounds differ from the authored phrase")
     for key, wanted in expected.items():
@@ -442,7 +437,7 @@ async def create(args: argparse.Namespace) -> int:  # noqa: C901, PLR0912, PLR09
                 if catalog["window"].get("complete") is not True or len(matches) != 1:
                     raise RuntimeError(f"Missing or ambiguous complete native MODULE catalog entry: {name}")
                 types[name] = matches[0]["typeId"]
-        for label, path, edits in presets:
+        for label, path, phrase in presets:
             created = await call("tracks.insert", {"type": "instrument", "name": f"Toolkit {label}"})
             track_ref = created["ref"]
             track_id = track_ref["id"]
@@ -483,22 +478,14 @@ async def create(args: argparse.Namespace) -> int:  # noqa: C901, PLR0912, PLR09
                 },
             )
             report["createdTracks"][-1]["scene"] = scene["index"]
-            window = {
-                "target": inserted["ref"],
-                "channel": 0,
-                "stepSize": 0.25,
-                "startStep": 0,
-                "steps": 32,
-                "pitchStart": 0,
-                "pitchCount": 128,
-            }
-            await call("notes.set", {**window, "edits": edits})
-            readback = await call("notes.get", window)
+            clip = {"target": inserted["ref"]}
+            await call("notes.set", {**clip, "range": "all", "notes": phrase})
+            readback = await call("notes.get", clip)
             report["createdTracks"][-1]["noteReadback"] = readback
             # Clip selection can auto-arm according to existing host preferences.
             # Restore safety explicitly without changing those user preferences.
             await call("tracks.set", {"target": track_ref, "mute": True, "arm": False})
-            checked_notes(readback, window, edits)
+            checked_notes(readback, inserted["ref"], phrase)
             report["createdTracks"][-1]["noteCount"] = len(readback["notes"])
         await safety_guard()
         for owned in report["createdTracks"]:

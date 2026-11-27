@@ -28,8 +28,9 @@ public final class RpcServer implements AutoCloseable {
         boolean expire();
     }
 
-    public static final int MAX_REQUEST_BYTES = HostLimits.LIMITS.maxRequestBytes;
-    public static final int MAX_RESPONSE_BYTES = HostLimits.LIMITS.maxResponseBytes;
+    /** One cap for requests and responses (protocol limits.py). */
+    public static final int MAX_MESSAGE_BYTES = HostLimits.LIMITS.maxMessageBytes;
+
     private static final Set<String> FIELDS = Collections.unmodifiableSet(
             new HashSet<>(Arrays.asList("id", "method", "params", "timeoutMs", "protocol")));
     private static final Gson GSON = new GsonBuilder().serializeNulls().create();
@@ -245,7 +246,7 @@ public final class RpcServer implements AutoCloseable {
             int b = input.read();
             if (b == -1) throw invalid("Request must end with newline");
             if (b == '\n') break;
-            if (bytes.size() >= MAX_REQUEST_BYTES) throw invalid("Request exceeds " + mebibytes(MAX_REQUEST_BYTES));
+            if (bytes.size() >= MAX_MESSAGE_BYTES) throw invalid("Request exceeds " + mebibytes(MAX_MESSAGE_BYTES));
             bytes.write(b);
         }
         String text = StandardCharsets.UTF_8
@@ -306,15 +307,15 @@ public final class RpcServer implements AutoCloseable {
         OutputStream bounded = new FilterOutputStream(bytes) {
             @Override
             public void write(int b) throws IOException {
-                if (bytes.size() >= MAX_RESPONSE_BYTES)
-                    throw new IOException("Response exceeds " + mebibytes(MAX_RESPONSE_BYTES));
+                if (bytes.size() >= MAX_MESSAGE_BYTES)
+                    throw new IOException("Response exceeds " + mebibytes(MAX_MESSAGE_BYTES));
                 out.write(b);
             }
 
             @Override
             public void write(byte[] b, int off, int len) throws IOException {
-                if ((long) bytes.size() + len > MAX_RESPONSE_BYTES)
-                    throw new IOException("Response exceeds " + mebibytes(MAX_RESPONSE_BYTES));
+                if ((long) bytes.size() + len > MAX_MESSAGE_BYTES)
+                    throw new IOException("Response exceeds " + mebibytes(MAX_MESSAGE_BYTES));
                 out.write(b, off, len);
             }
         };

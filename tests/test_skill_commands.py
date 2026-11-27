@@ -45,6 +45,7 @@ RESULT_NAMES = {
     "waylandDisplay",
     "isError",
     "deltaDb",
+    "onsetResolution",
 }
 
 

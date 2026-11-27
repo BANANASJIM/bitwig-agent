@@ -151,11 +151,9 @@ async def test_recipe_rejects_mixed_or_incomplete_inputs_before_connecting(  # n
     [
         "wrong_target",
         "missing_onsets",
-        "incomplete_window",
+        "incomplete",
         "malformed_readback",
-        "loop_disabled",
-        "loop_unobserved",
-        "play_start_shifted",
+        "loop_shifted",
     ],
 )
 async def test_recipe_does_not_report_authored_when_clip_readback_is_wrong(
@@ -215,14 +213,6 @@ async def test_recipe_does_not_report_authored_when_clip_readback_is_wrong(
                 return {
                     "status": "observed",
                     "ref": {**clip, "name": "other"} if problem == "wrong_target" else clip,
-                    "window": {
-                        "channel": 0,
-                        "stepSize": 0.25,
-                        "startStep": 0,
-                        "steps": 32,
-                        "pitchStart": 0,
-                        "pitchCount": 128,
-                    },
                     "notes": None
                     if problem == "malformed_readback"
                     else []
@@ -236,11 +226,8 @@ async def test_recipe_does_not_report_authored_when_clip_readback_is_wrong(
                         }
                         for item in recipe.pluck_phrase()
                     ],
-                    "completeWindow": problem != "incomplete_window",
-                    "continuingAtWindowStart": [],
-                    "loop": {"length": 8, "start": 0},
-                    "loopEnabled": None if problem == "loop_unobserved" else problem != "loop_disabled",
-                    "playStart": 4 if problem == "play_start_shifted" else 0,
+                    "complete": problem != "incomplete",
+                    "loop": {"length": 8, "start": 4 if problem == "loop_shifted" else 0},
                 }
             elif method not in {"tracks.set", "notes.set"}:
                 raise AssertionError(f"Unexpected operation after invalid clip: {method}")

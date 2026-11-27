@@ -12,7 +12,7 @@ from bitwig_agent.errors import BridgeError
 from bitwig_agent.protocol import COMPOSED, TOOLS, validate_call
 from bitwig_agent.protocol.base import PROTOCOL
 from bitwig_agent.protocol.grid import TARGET as GRID
-from bitwig_agent.protocol.limits import MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES
+from bitwig_agent.protocol.limits import MAX_MESSAGE_BYTES
 from bitwig_agent.protocol.parameters import ParametersSetArgs
 
 pytestmark = pytest.mark.anyio
@@ -53,7 +53,7 @@ async def test_write_timeout_is_an_unknown_result_and_never_retried(host):
         lambda request: b'{"unfinished":',
         lambda request: None,
         lambda request: (json.dumps({"id": request["id"], "result": {"value": float("nan")}}) + "\n").encode(),
-        lambda request: b"x" * (MAX_RESPONSE_BYTES + 1) + b"\n",
+        lambda request: b"x" * (MAX_MESSAGE_BYTES + 1) + b"\n",
     ],
 )
 async def test_untrustworthy_response_rejected_without_retry(host, reply):
@@ -130,7 +130,7 @@ async def test_connection_refused_is_an_error_even_for_a_write():
 
 
 async def test_large_or_nonfinite_request_rejected_before_connection(host):
-    unsendable: list[dict[str, Any]] = [{"large": "x" * MAX_REQUEST_BYTES}, {"value": float("nan")}]
+    unsendable: list[dict[str, Any]] = [{"large": "x" * MAX_MESSAGE_BYTES}, {"value": float("nan")}]
     for params in unsendable:
         with pytest.raises(ValueError, match=r"validation errors? for ParametersSetArgs"):
             await BridgeClient(host.port).call("parameters.set", params)
@@ -224,7 +224,7 @@ async def test_recovery_methods_take_one_id(host):
 
 
 async def test_oversized_grid_get_response_says_to_lower_module_limit(host):
-    host.reply = lambda request: b"x" * (MAX_RESPONSE_BYTES + 1) + b"\n"
+    host.reply = lambda request: b"x" * (MAX_MESSAGE_BYTES + 1) + b"\n"
     params = {**GRID, "moduleLimit": 256}
     with pytest.raises(BridgeError) as caught:
         await BridgeClient(host.port).call("grid.get", params)

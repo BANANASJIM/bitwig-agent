@@ -36,7 +36,8 @@ public final class LauncherFake {
 
     public final HostFixture base = HostFixture.withoutServices();
     public final ScheduledTasks tasks = base.tasks;
-    final Map<String, Note> notes = new HashMap<>();
+    /** Stored notes by "scene:channel:pitch" row, each row by onset in note ticks. */
+    final Map<String, TreeMap<Long, Stored>> rows = new HashMap<>();
     /** The slot of the track, by absolute scene. */
     public final SlotData[] slots = new SlotData[SCENES];
 
@@ -69,7 +70,13 @@ public final class LauncherFake {
     String trackName = "Track";
     boolean emitNotes = true, launchPlaying, stopped = true;
     boolean emitPlaybackState = true, queueStop, stopQueued;
-    boolean deferGridChanges;
+    boolean deferGridChanges, dropPublicWrites;
+    /**
+     * A public write also leaves an unlisted onset in the next cell, as Bitwig left 52@2.25 when a write cut a note
+     * the public read had missed (X2a native E2E, D1/D2).
+     */
+    boolean strayOnWrite;
+
     boolean applyStop = true;
     /** Whether Track/Transport.returnToArrangement un-stops the track and stops its launcher clips. */
     boolean applyReturn = true;
@@ -77,7 +84,6 @@ public final class LauncherFake {
     boolean deferCreate, failCreate, failImport, emitCreateContent = true, applyName = true;
     Double pendingSize;
     Integer pendingStart;
-    Double noteStorageStepSize;
     /** When set, setStep stores durations rounded to this step, as the host does. */
     double durationStep;
 
@@ -121,7 +127,7 @@ public final class LauncherFake {
     }
 
     /** A fixture whose note writes go through {@link #nativeNotes} instead of the public per-note setters. */
-    static LauncherFake withNativeNotes() {
+    public static LauncherFake withNativeNotes() {
         return new LauncherFake(true, false, false, false, true, true);
     }
 
@@ -373,14 +379,18 @@ public final class LauncherFake {
             int c = (Integer) a[0], x = (Integer) a[1], y = (Integer) a[2];
             double duration = (Double) a[4];
             if (durationStep > 0) duration = Math.round(duration / durationStep) * durationStep;
-            put(selected, c, start + x, y, (Integer) a[3], duration);
+            if (!dropPublicWrites) {
+                clearCell(c, x, y);
+                put(selected, c, (start + x) * size, y, (Integer) a[3], duration);
+                if (strayOnWrite) put(selected, c, (start + x + 1) * size, y, 50, size);
+            }
             if (emitNotes) observer.noteStepChanged(note(c, x, y));
             return null;
         });
         clip.on("clearStep", a -> {
             writes++;
             int c = (Integer) a[0], x = (Integer) a[1], y = (Integer) a[2];
-            notes.remove(key(selected, c, start + x, y));
+            if (!dropPublicWrites) clearCell(c, x, y);
             if (emitNotes) observer.noteStepChanged(note(c, x, y));
             return null;
         });
@@ -567,7 +577,7 @@ public final class LauncherFake {
         return Refs.scene(scene, sceneName(scene));
     }
 
-    JsonObject slot(int scene) {
+    public JsonObject slot(int scene) {
         return Refs.slot(track(), scene(scene));
     }
 
@@ -633,12 +643,12 @@ public final class LauncherFake {
     }
 
     /**
-     * Native note writes over the slot data: notes are stored on the cell's grid (or {@link #noteStorageStepSize}),
-     * and a write is one transaction. {@code drop} skips the model writes after dispatch; {@code failAfterDispatch}
-     * throws inside the transaction.
+     * Native note reads and writes over the slot data, like the real binding: a read lists every stored note, a write
+     * plans against them and applies the change in one transaction. {@code drop} skips the model writes after
+     * dispatch; {@code failAfterDispatch} throws inside the transaction.
      */
     final class NotesAccess implements NativeNotes.Access {
-        int edits, creates, transactions;
+        int reads, edits, creates, transactions;
         boolean drop, failAfterDispatch, occupied;
         /** The clip name the native model reports, when it differs from the slot's public name. */
         String rename;
@@ -648,74 +658,53 @@ public final class LauncherFake {
             work.run();
         }
 
-        private long storageStep(NativeNotes.Cell cell, double storage) {
-            return Math.round(cell.step * cell.stepBeats / storage);
-        }
-
-        private double storage(NativeNotes.Cell cell) {
-            return noteStorageStepSize == null ? cell.stepBeats : noteStorageStepSize;
-        }
-
-        @Override
-        public boolean[] edit(
-                Object slot,
-                String trackId,
-                String expectedName,
-                List<NativeNotes.Cell> cells,
-                Runnable check,
-                NativeNotes.Plan plan,
-                Runnable beforeWrite) {
-            edits++;
+        private int target(Object slot, String trackId, String expectedName, Runnable check) {
             int scene = selectedSlotOf(slot);
             check.run();
             SlotData data = slots[scene];
             String name = rename != null ? rename : data.name;
             if (!data.content || !name.equals(expectedName) || !trackId.equals(LauncherFake.this.trackId))
                 throw Errors.notApplied(Reason.TARGET_CHANGED, "fixture native target changed");
-            List<NativeNotes.Observed> observed = new ArrayList<>();
-            for (NativeNotes.Cell cell : cells) {
-                double storage = storage(cell), beat = cell.step * cell.stepBeats;
-                int step = (int) storageStep(cell, storage);
-                Note on = notes.get(key(scene, cell.channel, step, cell.pitch));
-                boolean sustained = false, collides = false;
-                for (int earlier = 0; earlier < step; earlier++) {
-                    Note n = notes.get(key(scene, cell.channel, earlier, cell.pitch));
-                    if (n != null && earlier * storage + n.duration > beat) sustained = true;
-                }
-                int span = (int) Math.round(cell.cells * cell.stepBeats / storage);
-                for (int later = step + 1; later < step + span; later++)
-                    if (notes.containsKey(key(scene, cell.channel, later, cell.pitch))) collides = true;
-                observed.add(new NativeNotes.Observed(
-                        on == null ? 0 : 1,
-                        on == null ? 0 : on.exact != null ? on.exact : on.velocity / 127.0,
-                        on == null ? 0 : on.duration,
-                        sustained,
-                        collides));
-            }
-            boolean[] write = plan.write(loopStart, loopStart + data.length, observed);
-            boolean any = false;
-            for (boolean w : write) any |= w;
-            if (!any) return write;
-            beforeWrite.run();
-            transactions++;
-            if (failAfterDispatch) throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "fixture native call failed");
-            for (int i = 0; i < cells.size(); i++) {
-                NativeNotes.Cell cell = cells.get(i);
-                if (!write[i] || drop) continue;
-                int step = (int) storageStep(cell, storage(cell));
-                if (cell.set) put(scene, cell.channel, step, cell.pitch, cell.velocity, cell.duration);
-                else notes.remove(key(scene, cell.channel, step, cell.pitch));
-            }
-            return write;
+            return scene;
         }
 
         @Override
-        public void create(
+        public NativeNotes.Observed read(Object slot, String trackId, String expectedName, Runnable check) {
+            reads++;
+            return observed(target(slot, trackId, expectedName, check));
+        }
+
+        @Override
+        public NativeNotes.Observed edit(
+                Object slot,
+                String trackId,
+                String expectedName,
+                Runnable check,
+                java.util.function.Function<NativeNotes.Observed, dev.bitwigagent.core.RangeEdit.Change<Note>> plan,
+                Runnable beforeWrite) {
+            edits++;
+            int scene = target(slot, trackId, expectedName, check);
+            NativeNotes.Observed before = observed(scene);
+            dev.bitwigagent.core.RangeEdit.Change<Note> change = plan.apply(before);
+            if (change.isEmpty()) return before;
+            beforeWrite.run();
+            transactions++;
+            if (failAfterDispatch) throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "fixture native call failed");
+            if (!drop) {
+                for (Note n : change.remove) remove(scene, n);
+                for (dev.bitwigagent.core.RangeEdit.Update<Note> u : change.update) remove(scene, u.before);
+                for (Note n : change.written()) put(scene, n);
+            }
+            return observed(scene);
+        }
+
+        @Override
+        public NativeNotes.Observed create(
                 Object slot,
                 String trackId,
                 String name,
                 int clipLength,
-                List<NativeNotes.Cell> cells,
+                List<Note> notes,
                 Runnable check,
                 Runnable beforeWrite) {
             creates++;
@@ -730,16 +719,9 @@ public final class LauncherFake {
             data.length = clipLength;
             data.playStop = clipLength;
             if (applyName) data.name = name;
-            for (NativeNotes.Cell cell : cells)
-                if (!drop)
-                    put(
-                            scene,
-                            cell.channel,
-                            (int) storageStep(cell, storage(cell)),
-                            cell.pitch,
-                            cell.velocity,
-                            cell.duration);
+            if (!drop) for (Note n : notes) put(scene, n);
             if (emitCreateContent) observeContent(scene, true);
+            return observed(scene);
         }
     }
 
@@ -786,7 +768,6 @@ public final class LauncherFake {
                 double clipLength,
                 String name,
                 List<double[]> noteList,
-                int channel,
                 Runnable check,
                 Runnable beforeWrite) {
             beforeWrite.run();
@@ -897,17 +878,15 @@ public final class LauncherFake {
         }
     }
 
+    /** Moves the selected clip's notes: {@code move} maps {channel, step, pitch} in steps of the current grid. */
     void remap(UnaryOperator<int[]> move) {
-        Map<String, Note> moved = new HashMap<>();
-        for (Iterator<Map.Entry<String, Note>> it = notes.entrySet().iterator(); it.hasNext(); ) {
-            Map.Entry<String, Note> e = it.next();
-            String[] k = e.getKey().split(":");
-            if (Integer.parseInt(k[0]) != selected) continue;
-            int[] to = move.apply(new int[] {Integer.parseInt(k[1]), Integer.parseInt(k[2]), Integer.parseInt(k[3])});
-            it.remove();
-            moved.put(key(selected, to[0], to[1], to[2]), e.getValue());
+        List<Note> moved = new ArrayList<>();
+        for (Note n : clipNotes(selected)) {
+            int[] to = move.apply(new int[] {n.channel, (int) Math.round(n.beatValue() / size), n.pitch});
+            moved.add(Note.canonical(to[0], to[2], to[1] * size, n.durationValue(), n.velocity));
         }
-        notes.putAll(moved);
+        rows.keySet().removeIf(row -> row.startsWith(selected + ":"));
+        for (Note n : moved) put(selected, n);
     }
 
     /** One launcher clip "Riff" in scene 0 with three channel-0 notes. */
@@ -916,17 +895,61 @@ public final class LauncherFake {
         f.slots[0].content = true;
         f.slots[0].name = "Riff";
         f.put(0, 0, 0, 60, 100, 4);
-        f.put(0, 0, 8, 64, 90, 4);
-        f.put(0, 0, 3, 67, 80, 2);
+        f.put(0, 0, 1, 64, 90, 4);
+        f.put(0, 0, .375, 67, 80, 2);
         return f;
     }
 
-    void put(int scene, int channel, int step, int pitch, int velocity, double duration) {
-        notes.put(key(scene, channel, step, pitch), new Note(velocity, duration));
+    void put(int scene, int channel, double beat, int pitch, int velocity, double duration) {
+        rows.computeIfAbsent(scene + ":" + channel + ":" + pitch, k -> new TreeMap<>())
+                .put(Note.ticks(beat), new Stored(velocity, duration));
     }
 
-    static String key(int scene, int channel, int step, int pitch) {
-        return scene + ":" + channel + ":" + step + ":" + pitch;
+    void put(int scene, Note n) {
+        put(scene, n.channel, n.beatValue(), n.pitch, n.velocity, n.durationValue());
+    }
+
+    private void remove(int scene, Note n) {
+        TreeMap<Long, Stored> row = rows.get(scene + ":" + n.channel + ":" + n.pitch);
+        if (row != null) row.remove(n.beat);
+    }
+
+    /** The stored note at an onset, or null. */
+    Stored at(int scene, int channel, double beat, int pitch) {
+        TreeMap<Long, Stored> row = rows.get(scene + ":" + channel + ":" + pitch);
+        return row == null ? null : row.get(Note.ticks(beat));
+    }
+
+    /** Every stored note of a scene's clip, as the native read reports it. */
+    List<Note> clipNotes(int scene) {
+        List<Note> out = new ArrayList<>();
+        for (Map.Entry<String, TreeMap<Long, Stored>> row : rows.entrySet()) {
+            String[] k = row.getKey().split(":");
+            if (Integer.parseInt(k[0]) != scene) continue;
+            for (Map.Entry<Long, Stored> e : row.getValue().entrySet()) {
+                Stored n = e.getValue();
+                out.add(Note.read(
+                        Integer.parseInt(k[1]),
+                        Integer.parseInt(k[2]),
+                        Note.beats(e.getKey()),
+                        n.duration,
+                        n.exact != null ? n.exact : n.velocity / 127.0));
+            }
+        }
+        out.sort(Note.ORDER);
+        return out;
+    }
+
+    NativeNotes.Observed observed(int scene) {
+        return new NativeNotes.Observed(clipNotes(scene), loopStart, slots[scene].length);
+    }
+
+    /** Removes the selected clip's onsets inside one cell of the current grid. */
+    private void clearCell(int channel, int x, int pitch) {
+        TreeMap<Long, Stored> row = rows.get(selected + ":" + channel + ":" + pitch);
+        if (row == null) return;
+        long from = Note.ticks((start + x) * size);
+        row.subMap(from, from + Note.ticks(size)).clear();
     }
 
     static Object stateConstant(String name) {
@@ -940,27 +963,34 @@ public final class LauncherFake {
         throw new IllegalStateException("No NoteStep state " + name);
     }
 
+    private NoteStep empty;
+
+    /**
+     * The cell as the public grid shows it: a sustain when a note whose onset lies inside the window still sounds at
+     * the cell's start, else the first onset inside the cell. A note whose onset lies before the window shows nothing
+     * (X2a native E2E, D1: a note from beat 1.5 was not seen in the window from beat 2), and an onset inside a cell
+     * whose start lies under an earlier note's sustain is hidden (X2a public E2E, P2: 64@1.75 was not seen in the
+     * 1-beat cell from beat 1 while 64@0.5 sounded until 1.5).
+     */
     NoteStep note(int channel, int x, int pitch) {
-        double storageSize = noteStorageStepSize == null ? size : noteStorageStepSize;
-        double storagePosition = (start + x) * size / storageSize;
-        int storedStep = (int) storagePosition;
-        Note on = storagePosition == storedStep ? notes.get(key(selected, channel, storedStep, pitch)) : null;
-        Object state = stateConstant(on == null ? "Empty" : "NoteOn");
-        if (on == null)
-            for (int step = 0; step < storagePosition; step++) {
-                Note earlier = notes.get(key(selected, channel, step, pitch));
-                if (earlier != null && step * storageSize + earlier.duration > (start + x) * size) {
-                    on = earlier;
-                    state = stateConstant("NoteSustain");
-                    break;
-                }
-            }
-        final Note found = on;
-        final Object actual = state;
+        TreeMap<Long, Stored> row = rows.get(selected + ":" + channel + ":" + pitch);
+        long from = Note.ticks((start + x) * size), to = from + Note.ticks(size);
+        Map.Entry<Long, Stored> earlier = row == null ? null : row.lowerEntry(from);
+        if (earlier != null
+                && (earlier.getKey() < Note.ticks(start * size)
+                        || earlier.getKey() + Note.ticks(earlier.getValue().duration) <= from)) earlier = null;
+        Map.Entry<Long, Stored> on = row == null || earlier != null ? null : row.ceilingEntry(from);
+        if (on != null && on.getKey() >= to) on = null;
+        if (on == null && earlier == null) {
+            if (empty == null) empty = step("Empty", null);
+            return empty;
+        }
+        return step(on != null ? "NoteOn" : "NoteSustain", on != null ? on.getValue() : earlier.getValue());
+    }
+
+    private static NoteStep step(String state, Stored found) {
+        Object actual = stateConstant(state);
         FakeHost n = FakeHost.of(NoteStep.class, "n");
-        n.on("channel", a -> channel);
-        n.on("x", a -> x);
-        n.on("y", a -> pitch);
         n.on("state", a -> actual);
         n.on("velocity", a -> found == null ? 0.0 : found.exact != null ? found.exact : found.velocity / 127.0);
         n.on("duration", a -> found == null ? 0.0 : found.duration);
@@ -1029,12 +1059,12 @@ public final class LauncherFake {
         }
     }
 
-    static final class Note {
+    static final class Stored {
         final int velocity;
         final double duration;
         Double exact; // host velocity that is not a whole MIDI step, e.g. a GUI drag
 
-        Note(int velocity, double duration) {
+        Stored(int velocity, double duration) {
             this.velocity = velocity;
             this.duration = duration;
         }

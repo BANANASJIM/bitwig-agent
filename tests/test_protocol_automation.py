@@ -14,6 +14,13 @@ MODULE = {"kind": "gridModule", "device": DEVICE, "id": "22222222-2222-2222-2222
 VOLUME = {"kind": "parameter", "owner": TRACK, "id": "volume"}
 PAN = {"kind": "parameter", "owner": TRACK, "id": "pan"}
 GRID = {"kind": "parameter", "owner": MODULE, "id": "CUTOFF"}
+FREQUENCY = {"kind": "parameter", "owner": DEVICE, "id": "CONTENTS/PID1a", "name": "Frequency"}
+CHAIN = {"kind": "chain", "device": DEVICE, "id": "33333333-3333-3333-3333-333333333333", "name": "Layer 1"}
+NESTED = {
+    "kind": "parameter",
+    "owner": {"kind": "device", "chain": CHAIN, "index": 0, "name": "Filter"},
+    "id": "CONTENTS/PID1a",
+}
 SET: dict[str, Any] = {
     "target": VOLUME,
     "expect": {"pointsHash": EMPTY_HASH},
@@ -29,8 +36,8 @@ def test_get_takes_no_range_all():
         validate_call("automation.points.get", {"target": PAN, "range": "all"})
 
 
-def test_get_takes_a_track_or_grid_parameter_ref_and_a_range():
-    for target in (VOLUME, PAN, GRID):
+def test_get_takes_a_track_grid_or_device_parameter_ref_and_a_range():
+    for target in (VOLUME, PAN, GRID, FREQUENCY, NESTED):
         args = {"target": target}
         assert validate_call("automation.points.get", args)[0] == args
     ranged = {"target": PAN, "range": {"start": 8, "end": 8}}
@@ -41,12 +48,12 @@ def test_get_takes_a_track_or_grid_parameter_ref_and_a_range():
     "target",
     [
         {**VOLUME, "id": "mute"},
-        {"kind": "parameter", "owner": DEVICE, "id": "CUTOFF"},
         {
             "kind": "parameter",
             "owner": {"kind": "modulator", "device": DEVICE, "id": MODULE["id"], "name": "LFO"},
             "id": "RATE",
         },
+        {**FREQUENCY, "id": ""},
         {**GRID, "id": ""},
         {k: v for k, v in GRID.items() if k != "id"},
         {"kind": "track", "id": TRACK["id"], "name": "Lead"},
@@ -57,13 +64,28 @@ def test_get_rejects_other_owners_and_malformed_refs(target):
         validate_call("automation.points.get", {"target": target})
 
 
-def test_a_device_owned_parameter_is_unsupported_scope():
+@pytest.mark.parametrize(
+    ("owner", "next_method"),
+    [
+        ({"kind": "remotePage", "device": DEVICE, "index": 0, "name": "Main"}, "parameters.list"),
+        ({"kind": "modulator", "device": DEVICE, "id": MODULE["id"], "name": "LFO"}, None),
+    ],
+)
+def test_remote_control_and_modulator_parameters_are_unsupported_scope(owner, next_method):
     with pytest.raises(ValidationError) as rejected:
-        validate_call(
-            "automation.points.get", {"target": {"kind": "parameter", "owner": DEVICE, "id": "x", "name": "x"}}
-        )
+        validate_call("automation.points.get", {"target": {"kind": "parameter", "owner": owner, "id": "0"}})
     error = invalid_params("automation.points.get", rejected.value).error
-    assert (error["code"], error["reason"]) == ("invalid_params", "unsupported_scope")
+    assert (error["code"], error["reason"], error.get("next")) == ("invalid_params", "unsupported_scope", next_method)
+
+
+def test_set_takes_display_values_and_curves():
+    points = [
+        {"beat": 32, "value": {"display": "420 Hz"}},
+        {"beat": 60, "value": {"display": "420 Hz"}, "curve": 0.6},
+        {"beat": 64, "value": 0.8, "interpolation": "hold", "curve": -1},
+    ]
+    args = {"target": FREQUENCY, "points": points, "range": {"start": 32, "end": 64}}
+    assert validate_call("automation.points.set", args)[0] == args
 
 
 def test_set_upsert_range_all_and_clear():
@@ -85,7 +107,11 @@ def test_set_upsert_range_all_and_clear():
         {"points": [SET["points"][0], {**SET["points"][0], "value": 0.5}]},
         {"points": [{**SET["points"][0], "value": 1.5}]},
         {"points": [{**SET["points"][0], "interpolation": "bezier"}]},
-        {"points": [{**SET["points"][0], "curve": 0.5}]},
+        {"points": [{**SET["points"][0], "curve": 1.5}]},
+        {"points": [{**SET["points"][0], "curve": -1.01}]},
+        {"points": [{**SET["points"][0], "value": {"display": ""}}]},
+        {"points": [{**SET["points"][0], "value": {"label": "Off"}}]},
+        {"points": [{**SET["points"][0], "value": {"display": "-6 dB", "label": "x"}}]},
         {"range": {"start": 1, "end": 2}},
         {"range": {"start": 5, "end": 4}},
         {"range": "everything"},
@@ -106,3 +132,5 @@ def test_the_owner_union_is_the_automation_row_of_the_owner_matrix():
     adapter: TypeAdapter[Any] = TypeAdapter(AutomationParameterRef)
     assert adapter.validate_python(VOLUME).owner.kind == "track"
     assert adapter.validate_python(GRID).owner.kind == "gridModule"
+    assert adapter.validate_python(FREQUENCY).owner.kind == "device"
+    assert adapter.validate_python(NESTED).owner.chain.kind == "chain"

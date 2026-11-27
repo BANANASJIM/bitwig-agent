@@ -71,24 +71,26 @@ public final class ArrangerNotesTest {
         }
     }
 
-    private static List<double[]> chord() {
+    /** Notes {beat, pitch, velocity, duration, channel} on one channel. */
+    private static List<double[]> chord(int channel) {
         return List.of(
-                new double[] {0, 60, 100, 1}, new double[] {1, 64, 100, 1}, new double[] {2, 67, 90, 1}, new double[] {
-                    3, 72, 127, .5
-                });
+                new double[] {0, 60, 100, 1, channel},
+                new double[] {1, 64, 100, 1, channel},
+                new double[] {2, 67, 90, 1, channel},
+                new double[] {3, 72, 127, .5, channel});
     }
 
     @Test
     void writeAddressesRowsChannelFirst() {
         for (int channel : new int[] {0, 9, 15}) {
             Native host = new Native(true);
-            ArrangerNotes.write(host, "clip", chord(), channel);
+            ArrangerNotes.write(host, "clip", chord(channel));
             assertTrue(host.rows.size() == 4, "one row per pitch");
             for (Native.Row row : host.rows.values())
                 assertTrue(
                         row.channel == channel && row.key >= 60 && row.key <= 72,
                         "row carries the requested channel and the pitch as key");
-            ArrangerNotes.Readback readback = ArrangerNotes.verify(host, "clip", chord(), channel);
+            ArrangerNotes.Readback readback = ArrangerNotes.verify(host, "clip", chord(channel));
             assertTrue(
                     readback.complete
                             && readback.invalidRows == 0
@@ -101,8 +103,8 @@ public final class ArrangerNotesTest {
     void readbackCatchesSwappedRows() {
         // The 0fcbad3 call order (pitch, channel): rows end up with channel 60 and key 0.
         Native host = new Native(false);
-        for (double[] n : chord()) host.addNote("clip", host.newNote(n[0], n[3], n[2] / 127.0), (int) n[1], 0);
-        ArrangerNotes.Readback readback = ArrangerNotes.verify(host, "clip", chord(), 0);
+        for (double[] n : chord(0)) host.addNote("clip", host.newNote(n[0], n[3], n[2] / 127.0), (int) n[1], 0);
+        ArrangerNotes.Readback readback = ArrangerNotes.verify(host, "clip", chord(0));
         assertTrue(
                 readback.invalidRows == 4
                         && !readback.complete
@@ -113,21 +115,21 @@ public final class ArrangerNotesTest {
     @Test
     void readbackFlagsMissingAndExtraNotes() {
         Native host = new Native(true);
-        ArrangerNotes.write(host, "clip", chord().subList(0, 3), 0);
-        ArrangerNotes.Readback missing = ArrangerNotes.verify(host, "clip", chord(), 0);
+        ArrangerNotes.write(host, "clip", chord(0).subList(0, 3));
+        ArrangerNotes.Readback missing = ArrangerNotes.verify(host, "clip", chord(0));
         assertTrue(
                 !missing.complete
                         && missing.json.getAsJsonArray("unverifiedNotes").size() == 1,
                 "a missing note is reported");
         Native wrongChannel = new Native(true);
-        ArrangerNotes.write(wrongChannel, "clip", chord(), 1);
+        ArrangerNotes.write(wrongChannel, "clip", chord(1));
         assertTrue(
-                !ArrangerNotes.verify(wrongChannel, "clip", chord(), 0).complete,
+                !ArrangerNotes.verify(wrongChannel, "clip", chord(0)).complete,
                 "notes on another channel do not verify");
         Native extra = new Native(true);
-        ArrangerNotes.write(extra, "clip", chord(), 0);
+        ArrangerNotes.write(extra, "clip", chord(0));
         extra.addNote("clip", extra.newNote(3.5, .5, .5), 0, 40);
         assertTrue(
-                !ArrangerNotes.verify(extra, "clip", chord(), 0).complete, "an extra note in the clip fails the count");
+                !ArrangerNotes.verify(extra, "clip", chord(0)).complete, "an extra note in the clip fails the count");
     }
 }

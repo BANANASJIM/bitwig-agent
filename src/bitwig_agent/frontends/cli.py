@@ -242,7 +242,7 @@ def method_help(name: str) -> str:
         for f in views.fields(name)
     ]
     lines = [
-        f"{command_line(name)} [--field=value]...    ({'read-only' if info['readOnly'] else 'writes'})",
+        f"{command_line(name)} [--field=value]...    ({views.effect(name)})",
         "",
         info["description"],
         "",
