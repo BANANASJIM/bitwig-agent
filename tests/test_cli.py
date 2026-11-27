@@ -1250,6 +1250,8 @@ def test_a_union_with_a_string_takes_a_bare_word_and_still_parses_json():
     assert args_of("devices.insert", ['--position={"before": 1}']) == {"position": {"before": 1}}
     with pytest.raises(ValueError, match="--insert: not strict JSON"):
         args_of("devices.insert", ["--insert=bare"])
+    assert args_of("notes.set", ["--range=all"]) == {"range": "all"}, "a tagged union with a string member too"
+    assert args_of("notes.set", ['--range={"start": 0, "end": 4}']) == {"range": {"start": 0, "end": 4}}
 
 
 async def test_a_mix_table_is_tracks_list_as_tsv_with_mix_fields(host, monkeypatch):

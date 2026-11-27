@@ -690,7 +690,7 @@ public final class ClipEditTest {
         assertEquals(1, f.services.holds.list().size());
 
         f = riff();
-        f.put(0, 0, .5, 67, 80, 2);
+        f.put(0, 0, .875, 64, 80, .125); // quantizes onto 64@1: two onsets in one cell
         assertUnknown("readback_mismatch", run(f, "clips.quantize", params("target", f.clip(0), "amount", 1)));
         assertEquals(1, f.services.holds.list().size(), "a changed onset count is unknown and holds");
     }

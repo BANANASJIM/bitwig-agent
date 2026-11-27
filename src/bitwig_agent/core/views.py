@@ -260,7 +260,11 @@ def field_types(name: str) -> dict[str, Any]:
         raise ValueError(unknown_method_message(name))
     return {
         key: prop.get("type")
-        or (STRING_UNION if any(member.get("type") == "string" for member in prop.get("anyOf", ())) else None)
+        or (
+            STRING_UNION
+            if any(member.get("type") == "string" for member in [*prop.get("anyOf", ()), *prop.get("oneOf", ())])
+            else None
+        )
         for key, prop in TOOLS[name].model.model_json_schema()["properties"].items()
     }
 

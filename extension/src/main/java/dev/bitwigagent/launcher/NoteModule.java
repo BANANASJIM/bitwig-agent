@@ -72,7 +72,7 @@ public final class NoteModule implements HostModule {
             NativeNotes.Access access = natives.access(op);
             if (access == null) state.acquire(op);
             if (write) {
-                NotePlan plan = new NotePlan(listed, range);
+                NotePlan plan = new NotePlan(listed, range, access != null);
                 if (access != null) writeNative(op, target, range, plan, access);
                 else
                     publicNotes.write(
@@ -252,7 +252,7 @@ public final class NoteModule implements HostModule {
     /** The note stage of a public clips.insert: the listed notes written into the new clip like notes.set. */
     void insertPublic(HostOperation op, LauncherState.Target target, JsonArray notes) {
         List<NotePlan.Listed> listed = NotePlan.listed(notes);
-        NotePlan plan = new NotePlan(listed, null);
+        NotePlan plan = new NotePlan(listed, null, false);
         publicNotes.write(
                 op,
                 target,

@@ -938,19 +938,21 @@ public final class LauncherFake {
     private NoteStep empty;
 
     /**
-     * The cell as the public grid shows it: the first onset inside it, else a sustain from an earlier onset inside the
-     * window. A note whose onset lies before the window shows nothing (X2a native E2E, D1: a note from beat 1.5 was
-     * not seen in the window from beat 2).
+     * The cell as the public grid shows it: a sustain when a note whose onset lies inside the window still sounds at
+     * the cell's start, else the first onset inside the cell. A note whose onset lies before the window shows nothing
+     * (X2a native E2E, D1: a note from beat 1.5 was not seen in the window from beat 2), and an onset inside a cell
+     * whose start lies under an earlier note's sustain is hidden (X2a public E2E, P2: 64@1.75 was not seen in the
+     * 1-beat cell from beat 1 while 64@0.5 sounded until 1.5).
      */
     NoteStep note(int channel, int x, int pitch) {
         TreeMap<Long, Stored> row = rows.get(selected + ":" + channel + ":" + pitch);
         long from = Note.ticks((start + x) * size), to = from + Note.ticks(size);
-        Map.Entry<Long, Stored> on = row == null ? null : row.ceilingEntry(from);
-        if (on != null && on.getKey() >= to) on = null;
-        Map.Entry<Long, Stored> earlier = row == null || on != null ? null : row.lowerEntry(from);
+        Map.Entry<Long, Stored> earlier = row == null ? null : row.lowerEntry(from);
         if (earlier != null
                 && (earlier.getKey() < Note.ticks(start * size)
                         || earlier.getKey() + Note.ticks(earlier.getValue().duration) <= from)) earlier = null;
+        Map.Entry<Long, Stored> on = row == null || earlier != null ? null : row.ceilingEntry(from);
+        if (on != null && on.getKey() >= to) on = null;
         if (on == null && earlier == null) {
             if (empty == null) empty = step("Empty", null);
             return empty;

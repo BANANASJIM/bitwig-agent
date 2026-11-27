@@ -8,11 +8,8 @@ import dev.bitwigagent.core.RangeEdit;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Scheduler;
 import java.util.ArrayList;
-import java.util.BitSet;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.function.Consumer;
@@ -96,7 +93,7 @@ final class PublicNotes {
 
     /**
      * Writes a planned note change: reads the beats the write touches (and, for a listed note nothing seen shields,
-     * the beat of the nearest earlier onset on its row), plans against every onset read, writes the cells that differ
+     * every beat from 0 before it), plans against every onset read, writes the cells that differ
      * window by window and polls each window until its whole content reads as planned. {@code done} gets null when
      * every window did, else the window's mismatch. Onsets must lie on the 1/128-beat grid (refused before anything is
      * selected).
@@ -172,18 +169,24 @@ final class PublicNotes {
                 });
     }
 
-    /** A write reads everything it plans against before writing anything. */
+    /**
+     * A write reads everything it plans against before writing anything; when the deadline cannot cover that read it
+     * writes nothing.
+     */
     private static void requireRead(int visited, List<NoteGrid.Window> windows) {
         if (visited < windows.size())
             throw Errors.unknown(
-                    Reason.DEADLINE, "Too little time to read the region before writing it. Nothing was written.");
+                    Reason.DEADLINE,
+                    "Too little time to read the " + windows.size() + " beat windows this write reads first (up to"
+                            + " beat " + (beatOf(windows.get(windows.size() - 1)) + 1) + ", about 0.25 s each)."
+                            + " Nothing was written: raise timeoutMs (at most 60000).");
     }
 
     /**
-     * A note sustaining into a listed note from before the beats read shows only as its onset, earlier on the row.
-     * For every listed note with no onset on its row between it and the start of the read beats it lies in (and that
-     * run of beats starts after beat 0), finds the nearest earlier onset on the row with 1-beat cells and reads that
-     * beat on the write grid, so the planner sees the note with its duration.
+     * A note sustaining into a listed note from before the beats read shows only at its onset (a coarser cell under an
+     * earlier note's sustain hides it). For every listed note with no onset on its row between it and the start of
+     * the run of read beats it lies in (a run that starts after beat 0), every beat from 0 up to that run is read on
+     * the write grid too, so the planner sees the note with its duration.
      */
     private void lookback(
             HostOperation op,
@@ -192,43 +195,15 @@ final class PublicNotes {
             TreeSet<Long> read,
             List<Note> seen,
             Runnable then) {
-        Map<NotePlan.Listed, Long> open = new HashMap<>(); // listed note -> first beat of its run of read beats
         long reach = 0;
         for (NotePlan.Listed l : listed) {
             long run = l.beat / BEAT;
             while (run > 0 && read.contains(run - 1)) run--;
-            if (run == 0 || shielded(seen, l, run * BEAT)) continue;
-            open.put(l, run);
-            reach = Math.max(reach, run);
+            if (run > 0 && !shielded(seen, l, run * BEAT)) reach = Math.max(reach, run);
         }
-        if (open.isEmpty()) {
-            then.run();
-            return;
-        }
-        Map<Integer, BitSet> onsets = new HashMap<>(); // row -> beats with an onset
-        for (NotePlan.Listed l : open.keySet()) onsets.put(row(l.channel, l.pitch), new BitSet());
-        List<NoteGrid.Window> coarse = coarse(reach);
-        walk(
-                op,
-                target,
-                coarse,
-                (op1, w, next) -> {
-                    for (Map.Entry<Integer, BitSet> row : onsets.entrySet())
-                        for (int x = 0; x < w.steps; x++)
-                            if (NoteGrid.hasState(readable(row.getKey() / 128, x, row.getKey() % 128), "NoteOn"))
-                                row.getValue().set(w.start + x);
-                    next.run();
-                },
-                visited -> {
-                    requireRead(visited, coarse);
-                    TreeSet<Long> extra = new TreeSet<>();
-                    for (Map.Entry<NotePlan.Listed, Long> l : open.entrySet()) {
-                        int beat = onsets.get(row(l.getKey().channel, l.getKey().pitch))
-                                .previousSetBit((int) (l.getValue() - 1));
-                        if (beat >= 0 && !read.contains((long) beat)) extra.add((long) beat);
-                    }
-                    readAll(op, target, fine(extra), seen, then);
-                });
+        TreeSet<Long> earlier = beats(0, reach * BEAT, new TreeSet<>());
+        earlier.removeAll(read);
+        readAll(op, target, fine(earlier), seen, then);
     }
 
     /** Whether an onset on the listed note's row lies in [from, its beat): a note before it ends there or earlier. */
@@ -236,10 +211,6 @@ final class PublicNotes {
         for (Note n : seen)
             if (n.channel == l.channel && n.pitch == l.pitch && n.beat >= from && n.beat < l.beat) return true;
         return false;
-    }
-
-    private static int row(int channel, int pitch) {
-        return channel * 128 + pitch;
     }
 
     /** One cell a write sets or clears, at its window's step. */
@@ -379,14 +350,6 @@ final class PublicNotes {
         NoteStep step = state.clip.getStep(channel, x, pitch);
         if (step == null || step.state() == null) throw Errors.of(Reason.NOT_READY, "Note grid is not readable", true);
         return step;
-    }
-
-    /** Windows of 1-beat cells from beat 0, 128 cells each (the last one shorter), covering [0, beats). */
-    private static List<NoteGrid.Window> coarse(long beats) {
-        List<NoteGrid.Window> out = new ArrayList<>();
-        for (long s = 0; s < beats; s += STEPS)
-            out.add(new NoteGrid.Window(0, 1, (int) s, (int) Math.min(STEPS, beats - s), 0, 128));
-        return out;
     }
 
     /** The write-grid window of each beat, in order: window k is the 128 cells of beat k. */

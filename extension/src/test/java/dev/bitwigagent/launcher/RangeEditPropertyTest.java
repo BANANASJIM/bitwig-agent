@@ -202,7 +202,8 @@ final class RangeEditPropertyTest {
             patch.addProperty("velocity", velocity);
             patches.add(patch);
         }
-        RangeEdit.Change<Note> change = new NotePlan(NotePlan.listed(patches), null).plan(observed, Long.MAX_VALUE);
+        RangeEdit.Change<Note> change =
+                new NotePlan(NotePlan.listed(patches), null, true).plan(observed, Long.MAX_VALUE);
         assertTrue(change.remove.isEmpty() && change.insert.isEmpty());
         assertEquals(patches.size(), change.update.size() + change.unchanged);
         for (RangeEdit.Update<Note> u : change.update) {
@@ -215,7 +216,8 @@ final class RangeEditPropertyTest {
         fresh.addProperty("velocity", velocity);
         patches.add(fresh);
         RpcException error = assertThrows(
-                RpcException.class, () -> new NotePlan(NotePlan.listed(patches), null).plan(observed, Long.MAX_VALUE));
+                RpcException.class,
+                () -> new NotePlan(NotePlan.listed(patches), null, true).plan(observed, Long.MAX_VALUE));
         assertTrue(error.getMessage().contains("is a new note"), error.getMessage());
     }
 

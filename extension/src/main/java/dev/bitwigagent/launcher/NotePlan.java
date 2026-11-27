@@ -67,10 +67,16 @@ public final class NotePlan {
     private final NoteRange range;
     /** The change the last {@link #plan} chose, for the result's summary. */
     RangeEdit.Change<Note> change;
+    /**
+     * "about " when the observed notes are read at their cell's start (the public grid), so messages do not present
+     * a cell value as the note's real time; empty when they are exact.
+     */
+    private final String about;
 
-    NotePlan(List<Listed> listed, NoteRange range) {
+    NotePlan(List<Listed> listed, NoteRange range, boolean exact) {
         this.listed = listed;
         this.range = range;
+        this.about = exact ? "" : "about ";
     }
 
     static String plain(BigDecimal value) {
@@ -199,14 +205,15 @@ public final class NotePlan {
                                         + plain(loopEnd) + ": shorten it to duration <= " + plain(loopEnd - n.beat)
                                         + ", or lengthen the loop (clips.set)");
         }
-        overlaps(RangeEdit.apply(observed, planned), index, range != null, out);
+        overlaps(RangeEdit.apply(observed, planned), index, range != null, about, out);
         refuse(out);
         change = planned;
         return planned;
     }
 
     /** Each written note against its neighbours on its channel and pitch: none may sustain into the next onset. */
-    private static void overlaps(List<Note> after, Map<Note, Integer> written, boolean ranged, List<Object[]> out) {
+    private static void overlaps(
+            List<Note> after, Map<Note, Integer> written, boolean ranged, String about, List<Object[]> out) {
         Map<Integer, List<Note>> rows = new HashMap<>();
         for (Note n : after)
             rows.computeIfAbsent(n.channel * 128 + n.pitch, k -> new ArrayList<>())
@@ -224,18 +231,20 @@ public final class NotePlan {
                             ia,
                             "notes[" + ia + "] on pitch " + a.pitch + " ends at beat " + plain(a.end())
                                     + ", past the onset of " + (ib != null ? "notes[" + ib + "]" : "the note")
-                                    + " at beat " + plain(b.beat) + ": shorten notes[" + ia + "] to duration <= "
-                                    + plain(b.beat - a.beat)
+                                    + " at " + (ib != null ? "" : about) + "beat " + plain(b.beat) + ": shorten notes["
+                                    + ia + "] to duration <= " + (ib != null ? "" : about) + plain(b.beat - a.beat)
                                     + (ib == null && ranged ? ", or include beat " + plain(b.beat) + " in range" : ""));
                 else
                     add(
                             out,
                             ib,
-                            "notes[" + ib + "] starts at beat " + plain(b.beat) + " while the note at beat "
-                                    + plain(a.beat) + " on pitch " + b.pitch + " sustains to beat " + plain(a.end())
+                            "notes[" + ib + "] starts at beat " + plain(b.beat) + " while the note at " + about
+                                    + "beat "
+                                    + plain(a.beat) + " on pitch " + b.pitch + " sustains to " + about + "beat "
+                                    + plain(a.end())
                                     + (ranged
                                             ? ": include beat " + plain(a.beat) + " in range"
-                                            : ": list that note with duration <= " + plain(b.beat - a.beat)));
+                                            : ": list that note with duration <= " + about + plain(b.beat - a.beat)));
             }
         }
     }

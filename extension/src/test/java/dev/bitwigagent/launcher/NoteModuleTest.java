@@ -326,8 +326,9 @@ public final class NoteModuleTest {
         assertTrue(
                 out.get("message")
                         .getAsString()
-                        .contains("notes[0] starts at beat 3 while the note at beat 2 on pitch 50 sustains to beat 3.5:"
-                                + " include beat 2 in range"),
+                        .contains(
+                                "notes[0] starts at beat 3 while the note at about beat 2 on pitch 50 sustains to about beat 3.5:"
+                                        + " include beat 2 in range"),
                 out.toString());
         assertEquals(0, f.writes);
         assertEquals(
@@ -346,8 +347,9 @@ public final class NoteModuleTest {
         assertTrue(
                 overlap.get("message")
                         .getAsString()
-                        .contains("notes[0] starts at beat 0.5 while the note at beat 0 on pitch 60 sustains to beat 1:"
-                                + " list that note with duration <= 0.5"),
+                        .contains(
+                                "notes[0] starts at beat 0.5 while the note at about beat 0 on pitch 60 sustains to about beat 1:"
+                                        + " list that note with duration <= about 0.5"),
                 overlap.toString());
         JsonObject partial = new JsonObject();
         partial.addProperty("beat", 3);
@@ -399,7 +401,7 @@ public final class NoteModuleTest {
     void anUnlistedNoteThatAppearsInAWrittenWindowIsAReadbackMismatch() {
         LauncherFake f = riff();
         f.strayOnWrite = true;
-        JsonObject out = f.call("notes.set", set(f, 0, range(3, 4), note(3, 48, 90, .5)));
+        JsonObject out = f.call("notes.set", set(f, 0, range(3, 4), note(3, 48, 90, .0078125)));
         assertEquals("unknown", out.get("outcome").getAsString(), out.toString());
         assertEquals("readback_mismatch", out.get("reason").getAsString());
         assertEquals(array(), out.getAsJsonObject("mismatch").get("missing"));
@@ -439,32 +441,36 @@ public final class NoteModuleTest {
         JsonObject[] whole = {note(1.5, 52, 83, 1)};
         refused(
                 sustain(4, whole, range(2, 3), note(2, 52, 90, .25)),
-                "notes[0] starts at beat 2 while the note at beat 1.5 on pitch 52 sustains to beat 2.5: include beat 1.5"
+                "notes[0] starts at beat 2 while the note at about beat 1.5 on pitch 52 sustains to about beat 2.5: include beat 1.5"
                         + " in range");
         JsonObject[] midCell = {note(.5, 54, 83, .504)};
         refused(
                 sustain(4, midCell, range(1, 2), note(1, 54, 90, .25)),
-                "notes[0] starts at beat 1 while the note at beat 0.5 on pitch 54 sustains to beat 1.0039997:"
+                "notes[0] starts at beat 1 while the note at about beat 0.5 on pitch 54 sustains to about beat 1.0039997:"
                         + " include beat 0.5 in range");
         JsonObject[] upsert = {note(0, 56, 70, 2)};
         refused(
                 sustain(4, upsert, null, note(1, 56, 90, .25)),
-                "notes[0] starts at beat 1 while the note at beat 0 on pitch 56 sustains to beat 2: list that note with"
-                        + " duration <= 1");
+                "notes[0] starts at beat 1 while the note at about beat 0 on pitch 56 sustains to about beat 2: list that note with"
+                        + " duration <= about 1");
         JsonObject[] p1 = {note(1.9, 52, 83, 1)};
-        refused(sustain(4, p1, range(2, 3), note(2.5, 52, 90, .25)), "the note at beat 1.8984375 on pitch 52");
+        refused(sustain(4, p1, range(2, 3), note(2.5, 52, 90, .25)), "the note at about beat 1.8984375 on pitch 52");
         JsonObject[] far = {note(0, 60, 90, 6)};
         refused(
                 sustain(8, far, range(5, 6), note(5, 60, 90, .25)),
-                "the note at beat 0 on pitch 60 sustains to beat 6");
+                "the note at about beat 0 on pitch 60 sustains to about beat 6");
     }
 
     @Test
-    void theNearestEarlierOnsetIsReadEvenWhenAnotherNoteSitsInItsBeat() {
+    void aNoteWhoseOnsetSitsUnderAnEarlierSustainIsStillFound() {
         JsonObject[] p2 = {note(.5, 52, 83, 1), note(1.75, 52, 83, 1)};
-        refused(sustain(4, p2, range(2, 3), note(2, 52, 90, .25)), "the note at beat 1.75 on pitch 52");
+        refused(sustain(4, p2, range(2, 3), note(2, 52, 90, .25)), "the note at about beat 1.75 on pitch 52");
+    }
+
+    @Test
+    void aNoteWhoseOnsetSitsUnderAnEarlierSustainIsStillFoundOnAnotherChannel() {
         JsonObject[] p3 = {note(.5, 52, 83, 1, 1), note(1.75, 52, 83, 1, 1)};
-        refused(sustain(4, p3, range(2, 3), note(2, 52, 90, .25, 1)), "the note at beat 1.75 on pitch 52");
+        refused(sustain(4, p3, range(2, 3), note(2, 52, 90, .25, 1)), "the note at about beat 1.75 on pitch 52");
     }
 
     @Test
@@ -492,7 +498,30 @@ public final class NoteModuleTest {
                 "the same pitch on another channel");
         refused(
                 sustain(4, otherChannel, range(2, 3), note(2.5, 50, 90, .25, 1)),
-                "the note at beat 1 on pitch 50 sustains to beat 3");
+                "the note at about beat 1 on pitch 50 sustains to about beat 3");
+    }
+
+    @Test
+    void aLookbackTheDeadlineCannotCoverWritesNothing() {
+        LauncherFake f = new LauncherFake();
+        clipAt(f, 0);
+        f.slots[0].length = 64;
+        f.put(0, 0, 0, 60, 90, 1);
+        HostOperation op = f.start(
+                new HostOperation(f.tasks.after(5000)), "notes.set", set(f, 0, range(60, 61), note(60, 60, 90, 1)));
+        f.drain(op);
+        String message = assertUnknown("deadline", op).get("message").getAsString();
+        assertTrue(message.contains("60 beat windows this write reads first (up to beat 60"), message);
+        assertTrue(message.endsWith("Nothing was written: raise timeoutMs (at most 60000)."), message);
+        assertEquals(0, f.writes);
+        assertEquals(
+                "applied",
+                f.startAndDrain(long_(f), "notes.set", set(f, 0, range(60, 61), note(60, 60, 90, 1)))
+                        .result
+                        .join()
+                        .get("outcome")
+                        .getAsString(),
+                "with time for every beat from 0 the write goes ahead");
     }
 
     @Test
@@ -512,7 +541,10 @@ public final class NoteModuleTest {
         LauncherFake f = new LauncherFake();
         clipAt(f, 0);
         f.slots[0].length = 64;
-        JsonObject out = f.call("notes.set", set(f, 0, null, note(0, 60, 90, 1), note(48, 60, 90, 1)));
+        JsonObject out = f.startAndDrain(
+                        long_(f), "notes.set", set(f, 0, null, note(0, 60, 90, 1), note(48, 60, 90, 1)))
+                .result
+                .join();
         assertEquals("applied", out.get("outcome").getAsString());
         assertNotNull(f.at(0, 0, 48, 60));
         assertEquals(2, f.clipNotes(0).size());
