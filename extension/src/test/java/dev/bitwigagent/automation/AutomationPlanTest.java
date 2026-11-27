@@ -189,6 +189,17 @@ final class AutomationPlanTest {
     }
 
     @Test
+    void withARangeAnOmittedFieldIsItsDefaultNotTheOldPointsValue() {
+        Point held = new Point(32, 0.4, false, 0.6);
+        AutomationPlan.Write ranged = plan(List.of(held), new double[] {32, 32}, r(32, 0.4, null));
+        assertEquals(List.of(new Point(32, 0.4, true, 0)), ranged.desired);
+        assertEquals(1, ranged.change.update.size(), "the held point counts as updated");
+        assertEquals(List.of(held), plan(List.of(held), null, r(32, 0.4, null)).desired, "without range it is kept");
+        AutomationPlan.Write reset = plan(stepped(), new double[] {8, 8}, step(8, 0.2, 0), step(8, 0.8, 1));
+        assertEquals(List.of(p(8, 0.2, true), p(8, 0.8, true)), reset.desired.subList(1, 3), "a step: both defaults");
+    }
+
+    @Test
     void displaysAreWhatTheParametersOwnTextReads() {
         AutomationPlan.Write minus6 = plan(List.of(), null, shown(0, "-6 dB"), shown(4, "-6.0 dB"));
         double n = (-6 - AutomationFake.MIN) / (AutomationFake.MAX - AutomationFake.MIN);
