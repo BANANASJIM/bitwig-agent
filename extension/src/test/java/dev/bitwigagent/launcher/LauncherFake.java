@@ -232,16 +232,7 @@ public final class LauncherFake {
             bank.on("getItemAt", a -> slotApis[(Integer) a[0]]);
             bank.on("stop", a -> {
                 playbackDispatches++;
-                if (emitPlaybackState) {
-                    stopQueued = queueStop;
-                    if (!queueStop) {
-                        stopped = true;
-                        for (SlotData data : slots) {
-                            data.playing = false;
-                            data.queued = false;
-                        }
-                    }
-                }
+                if (emitPlaybackState) stop();
                 return null;
             });
             track.attach("clipLauncherSlotBank", bank);
@@ -552,6 +543,30 @@ public final class LauncherFake {
     }
 
     // ---- refs the module hands out, as a test builds them from this world ----
+
+    /** Milliseconds after which a queued stop applies; 0 leaves it queued. */
+    int stopAfterMs;
+
+    /** A stop as Bitwig shows it: queued first when queueStop (applied after stopAfterMs), else at once. */
+    void stop() {
+        stopQueued = queueStop;
+        if (!queueStop) applyStop();
+        else if (stopAfterMs > 0)
+            tasks.schedule(
+                    () -> {
+                        stopQueued = false;
+                        applyStop();
+                    },
+                    stopAfterMs);
+    }
+
+    private void applyStop() {
+        stopped = true;
+        for (SlotData data : slots) {
+            data.playing = false;
+            data.queued = false;
+        }
+    }
 
     private Object returnToArrangement() {
         playbackDispatches++;

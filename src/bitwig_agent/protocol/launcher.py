@@ -42,8 +42,8 @@ LAUNCHER_LIST_DESCRIPTION = (
 LAUNCHER_STOP_DESCRIPTION = (
     'Stop launcher playback on one track, or with target "all" on every track (Bitwig\'s Stop Playback of All Tracks); '
     "does not delete clips or stop the transport. A stopped track renders silent until launcher.returnToArrangement. "
-    "Every track observed stopped returns outcome applied; a queued stop returns outcome sent: observe launcher.list "
-    'before dependent edits. "all" reads back the tracks of the track window (tracks[], complete=false when the project '
+    "Bitwig queues a stop first; the call waits for it. Every track observed stopped: outcome applied; still queued "
+    'when the observation window ends: outcome sent, observe again before dependent edits. "all" reads back the tracks of the track window (tracks[], complete=false when the project '
     "has more, then at most sent). No stop or queue observed: outcome unknown (reason not_observed); never blindly retry."
 )
 LAUNCHER_RETURN_DESCRIPTION = (

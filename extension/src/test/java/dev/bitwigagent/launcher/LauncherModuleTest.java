@@ -313,7 +313,7 @@ public final class LauncherModuleTest {
         JsonObject out = f.call("launcher.stop", stopParams(f));
         assertEquals("unknown", out.get("outcome").getAsString());
         assertEquals("not_observed", out.get("reason").getAsString());
-        assertEquals("not_observed", out.get("playbackState").getAsString());
+        assertEquals("launcher", out.get("playbackState").getAsString(), "the clip still plays");
         assertEquals(1, f.playbackDispatches, "an observation never redispatches the stop");
     }
 
@@ -340,11 +340,7 @@ public final class LauncherModuleTest {
         FakeHost action = FakeHost.of(Action.class, "stopAll");
         action.on("invoke", a -> {
             f.playbackDispatches++;
-            f.stopQueued = f.queueStop;
-            if (!f.queueStop) {
-                f.stopped = true;
-                f.slots[0].playing = false;
-            }
+            f.stop();
             return null;
         });
         f.base.application.on(
@@ -401,6 +397,26 @@ public final class LauncherModuleTest {
         assertEquals("not_observed", out.get("reason").getAsString());
         assertEquals("launcher", state(out, 0));
         assertEquals(1, action.calls("invoke"), "an observation never redispatches");
+    }
+
+    @Test
+    void aQueuedStopIsAwaitedUntilItApplies() {
+        LauncherFake f = new LauncherFake();
+        playing(f);
+        f.queueStop = true;
+        f.stopAfterMs = 200;
+        JsonObject out = f.call("launcher.stop", stopParams(f));
+        assertEquals("applied", out.get("outcome").getAsString(), "Bitwig queues every stop first; the poll waits");
+        assertEquals("stopped", out.get("playbackState").getAsString());
+        LauncherFake g = new LauncherFake();
+        playing(g);
+        g.queueStop = true;
+        g.stopAfterMs = 200;
+        stopAllAction(g);
+        out = g.call("launcher.stop", all());
+        assertEquals("applied", out.get("outcome").getAsString());
+        assertEquals("stopped", state(out, 0));
+        assertEquals(1, g.playbackDispatches);
     }
 
     @Test

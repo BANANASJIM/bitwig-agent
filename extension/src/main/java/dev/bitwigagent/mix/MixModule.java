@@ -430,6 +430,8 @@ public final class MixModule implements HostModule {
         if (p.has("expect")) requireExpectedSend(state, prefix, p.getAsJsonObject("expect"));
         Send send = (Send) state.track.sendBank().getItemAt(slot);
         if (p.has("mode")) {
+            p.addProperty(
+                    "mode", EnumOptions.canonical(send.sendMode(), p.get("mode").getAsString()));
             JsonElement mode = state.meta(prefix + "mode");
             EnumOptions.require(
                     "mode",
@@ -1003,7 +1005,7 @@ public final class MixModule implements HostModule {
     private static void observe(State state, String key, EnumValue source) {
         state.metadataSources.put(key, source);
         source.addValueObserver((EnumValueChangedCallback) v -> {
-            state.metadata.put(key, new JsonPrimitive((String) v));
+            state.metadata.put(key, new JsonPrimitive(EnumOptions.canonical(source, (String) v)));
             state.metaSeq.merge(key, 1L, Long::sum);
         });
     }
@@ -1020,7 +1022,8 @@ public final class MixModule implements HostModule {
         if (source instanceof StringValue) return new JsonPrimitive(((StringValue) source).get());
         if (source instanceof BooleanValue) return new JsonPrimitive(((BooleanValue) source).get());
         if (source instanceof IntegerValue) return new JsonPrimitive(((IntegerValue) source).get());
-        if (source instanceof EnumValue) return new JsonPrimitive(((EnumValue) source).get());
+        if (source instanceof EnumValue)
+            return new JsonPrimitive(EnumOptions.canonical((EnumValue) source, ((EnumValue) source).get()));
         return finite(((RangedValue) source).get());
     }
 

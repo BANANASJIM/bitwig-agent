@@ -381,14 +381,10 @@ public final class LauncherState implements RenderModule.LauncherContent {
 
     // ---- playback ----
 
-    /** Waits for a launch (slot) or a track stop (slot null) to be observed or queued, then completes the result. */
+    /** Waits for a launch to be observed playing or queued, then completes the result. */
     void awaitPlayback(HostOperation op, Target target, Slot slot, JsonObject ref) {
-        Track track = target.track;
-        BooleanSupplier observed = () ->
-                slot == null ? track.isStopped().get() : slot.api.isPlaying().get();
-        BooleanSupplier queued = () -> slot == null
-                ? track.isQueuedForStop().get()
-                : slot.api.isPlaybackQueued().get();
+        BooleanSupplier observed = () -> slot.api.isPlaying().get();
+        BooleanSupplier queued = () -> slot.api.isPlaybackQueued().get();
         scheduler.poll(
                 op,
                 until(op),
@@ -405,9 +401,8 @@ public final class LauncherState implements RenderModule.LauncherContent {
                 observed ? Outcome.APPLIED : queued ? Outcome.SENT : Outcome.UNKNOWN, Verification.API_READBACK);
         out.add("ref", ref);
         if (!observed && !queued) out.addProperty("reason", Reason.NOT_OBSERVED.wire());
-        out.addProperty(
-                "playbackState", observed ? slot == null ? "stopped" : "playing" : queued ? "queued" : "not_observed");
-        if (slot != null) out.add("slot", slotJson(target));
+        out.addProperty("playbackState", observed ? "playing" : queued ? "queued" : "not_observed");
+        out.add("slot", slotJson(target));
         op.result.complete(out);
     }
 

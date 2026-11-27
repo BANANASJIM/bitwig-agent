@@ -225,6 +225,32 @@ public final class MixModuleTest {
     }
 
     @Test
+    void aSendModeIsComparedAndReportedCaseInsensitivelyAgainstTheHostOptions() {
+        HostFixture f = new HostFixture();
+        FakeHost mode = f.tracks[0].child("sendBank").item(0).child("sendMode");
+        mode.data = "auto"; // Bitwig 6.1.7 reports some untouched sends in lower case
+        MixModule module = f.services.mix();
+        JsonObject row = f.call(module, "tracks.get", HostFixture.targeting(HostFixture.A))
+                .getAsJsonArray("sends")
+                .get(0)
+                .getAsJsonObject();
+        assertEquals("AUTO", row.getAsJsonObject("mode").get("value").getAsString(), "reported as the listed id");
+        JsonObject p = HostFixture.json("{\"mode\":\"AUTO\"}");
+        p.add("target", row.get("ref"));
+        JsonObject same = f.call(module, "tracks.sends.set", p);
+        assertEquals("already_matched", same.get("outcome").getAsString(), "AUTO is the mode \"auto\" reports");
+        p.addProperty("mode", "auto");
+        assertEquals(
+                "already_matched",
+                f.call(module, "tracks.sends.set", p).get("outcome").getAsString());
+        assertEquals(0, mode.writes);
+        p.addProperty("mode", "pre");
+        JsonObject pre = f.call(module, "tracks.sends.set", p);
+        assertEquals("applied", pre.get("outcome").getAsString());
+        assertEquals("PRE", mode.data, "the listed id is written");
+    }
+
+    @Test
     void aRenamedTrackIsStaleAsTheTargetButNotAsAnAncestor() {
         HostFixture f = new HostFixture();
         MixModule module = f.services.mix();

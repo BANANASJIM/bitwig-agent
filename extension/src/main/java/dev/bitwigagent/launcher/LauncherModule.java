@@ -95,23 +95,22 @@ public final class LauncherModule implements HostModule {
                 new LauncherState.Target(new LauncherTargets.Loc(t, -1, -1, trackRef, null), track, null);
         state.guard(op, target);
         op.markDispatched();
-        if (stop) {
-            track.clipLauncherSlotBank().stop();
-            state.awaitPlayback(op, target, null, trackRef);
-        } else {
-            track.returnToArrangement();
-            await(op, () -> state.guard(op, target), t, false, trackRef);
-        }
+        if (stop) track.clipLauncherSlotBank().stop();
+        else track.returnToArrangement();
+        await(op, () -> state.guard(op, target), t, stop, trackRef);
     }
 
-    /** Polls the tracks (one, or every existing window track when track is -1) until each reaches the wanted state. */
+    /**
+     * Polls the tracks (one, or every existing window track when track is -1) until each reaches the wanted state or the
+     * observation window ends; a queued stop keeps the poll going, since Bitwig queues a stop before it applies it.
+     */
     private void await(HostOperation op, Runnable guard, int track, boolean stop, JsonObject ref) {
         scheduler.poll(
                 op,
                 state.until(op),
                 () -> {
                     guard.run();
-                    for (int t : tracks(track)) if (reached(playback(t), stop) == Outcome.UNKNOWN) return false;
+                    for (int t : tracks(track)) if (reached(playback(t), stop) != Outcome.APPLIED) return false;
                     return true;
                 },
                 done -> finish(op, tracks(track), stop, ref));
