@@ -51,9 +51,9 @@ public final class MethodSpecsTest {
         methods.add(name, method);
         root.add("methods", methods);
         JsonObject full = bundle();
-        for (String key :
-                new String[] {"limits", "protocol", "outcomes", "errorCodes", "verifications", "reasons", "refs"})
-            root.add(key, full.get(key));
+        for (String key : new String[] {
+            "limits", "protocol", "outcomes", "errorCodes", "verifications", "reasons", "refs", "clipOps"
+        }) root.add(key, full.get(key));
         return root;
     }
 
@@ -151,6 +151,13 @@ public final class MethodSpecsTest {
         JsonObject noKinds = one("a", method(true, true, "", 5000, 10000));
         noKinds.getAsJsonObject("refs").add("roles", new JsonObject());
         malformed(noKinds.toString(), "no ref kinds");
+    }
+
+    @Test
+    void clipOpsComeFromTheBundle() {
+        MethodSpecs.ClipOp legato = MethodSpecs.load().clipOps().get("legato");
+        assertEquals("legato", legato.action);
+        assertEquals(java.util.Map.of("notes", "notes"), legato.verifiedBy);
     }
 
     @Test

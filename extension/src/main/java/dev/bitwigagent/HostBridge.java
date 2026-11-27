@@ -33,6 +33,7 @@ import dev.bitwigagent.host.SelectionLease;
 import dev.bitwigagent.host.TrackRefs;
 import dev.bitwigagent.host.TrackWindow;
 import dev.bitwigagent.host.TransportSafety;
+import dev.bitwigagent.launcher.ClipCommands;
 import dev.bitwigagent.launcher.ClipModule;
 import dev.bitwigagent.launcher.LauncherModule;
 import dev.bitwigagent.launcher.LauncherSettingsModule;
@@ -153,7 +154,14 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
                 trackRefs,
                 notes,
                 new LauncherSettingsModule(scheduler, window, transportSafety, natives.launcherSettings(), holds),
-                arranger));
+                arranger,
+                new ClipCommands(
+                        launcher,
+                        trackRefs,
+                        application,
+                        natives.clipCommands(),
+                        natives.noteWrites(),
+                        specs.clipOps())));
         register(new SceneModule(scheduler, window, transportSafety, lock, launcherTargets, project));
         register(markers);
         register(new MeterModule(scheduler, window, trackRefs, transportSafety));

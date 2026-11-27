@@ -51,11 +51,16 @@ public final class LauncherFake {
     public final Map<String, HostModule> modules = new HashMap<>();
     public final SettingsAccess settings = new SettingsAccess();
     final NotesAccess nativeNotes = new NotesAccess();
+    public final CommandsAccess commands = new CommandsAccess();
+    /** The Bitwig action ids invoked, in order; {@link #onAction} runs each one's effect. */
+    public final List<String> actions = new ArrayList<>();
+
+    public Consumer<String> onAction = id -> {};
     final LaneAccess lane = new LaneAccess();
     NoteStepChangedCallback observer;
     public int scenes = 16;
     /** Tracks that exist; the ones past the first only report content from {@link #extraContent}. */
-    int trackCount = 1;
+    public int trackCount = 1;
 
     final boolean[] extraContent = new boolean[SCENES];
     boolean transportPlaying;
@@ -398,6 +403,16 @@ public final class LauncherFake {
         trackBank.live("scrollPosition", () -> 0);
         trackBank.live("itemCount", () -> 1);
         FakeHost application = base.application;
+        application.on("getAction", a -> {
+            String id = (String) a[0];
+            return FakeHost.of(Action.class, "action")
+                    .on("invoke", b -> {
+                        actions.add(id);
+                        onAction.accept(id);
+                        return null;
+                    })
+                    .proxy(Action.class);
+        });
         application.live("projectName", () -> "Fixture");
         application.live("hasActiveEngine", () -> true);
         FakeHost transport = base.transport;
@@ -441,7 +456,7 @@ public final class LauncherFake {
         services = new TestServices(host.proxy(ControllerHost.class), tasks::now);
         launcher = services.launcher();
         noteModule = services.notes(nativeWrites ? nativeNotes : null);
-        clipModule = services.clips(settings, lane, nativeWrites ? nativeNotes : null);
+        clipModule = services.clips(settings, lane, nativeWrites ? nativeNotes : null, commands);
         sceneModule = services.scene();
         for (HostModule module : List.of(launcher, noteModule, clipModule, sceneModule))
             for (String method : module.methods()) modules.put(method, module);
@@ -660,6 +675,31 @@ public final class LauncherFake {
         }
     }
 
+    /** The clip command bindings: the clip's kind and whether keyboard focus reaches the Clip Launcher. */
+    public final class CommandsAccess implements ClipCommands.Access {
+        public ClipCommands.Kind kind = ClipCommands.Kind.NOTES;
+        public boolean focusable = true;
+        public int focusRequests;
+
+        @Override
+        public void execute(Runnable work) {
+            work.run();
+        }
+
+        @Override
+        public ClipCommands.Kind kind(Object slot, String trackId, String expectedName, Runnable check) {
+            nativeNotes.target(slot, trackId, expectedName, check);
+            return kind;
+        }
+
+        @Override
+        public boolean focusLauncher(Runnable check) {
+            check.run();
+            focusRequests++;
+            return focusable;
+        }
+    }
+
     private int selectedSlotOf(Object slotProxy) {
         ClipLauncherSlotBank bank = tracks[0].clipLauncherSlotBank();
         for (int j = 0; j < HostLimits.SCENES; j++) if (bank.getItemAt(j) == slotProxy) return bankOffset + j;
@@ -689,7 +729,7 @@ public final class LauncherFake {
             return unread;
         }
 
-        private int target(Object slot, String trackId, String expectedName, Runnable check) {
+        int target(Object slot, String trackId, String expectedName, Runnable check) {
             int scene = selectedSlotOf(slot);
             check.run();
             SlotData data = slots[scene];
@@ -896,7 +936,7 @@ public final class LauncherFake {
         trackIdentity.emit(id);
     }
 
-    void observeContent(int scene, boolean content) {
+    public void observeContent(int scene, boolean content) {
         slots[scene].content = content;
         int position = scene - bankOffset;
         if (position >= 0 && position < HostLimits.SCENES) contentNodes[position].emit(content);

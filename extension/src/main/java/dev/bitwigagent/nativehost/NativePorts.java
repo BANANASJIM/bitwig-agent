@@ -13,6 +13,7 @@ import dev.bitwigagent.device.ModulatorEditor;
 import dev.bitwigagent.device.NativeChains;
 import dev.bitwigagent.grid.GridAdapter;
 import dev.bitwigagent.grid.GridRemotePageWriter;
+import dev.bitwigagent.launcher.ClipCommands;
 import dev.bitwigagent.launcher.LauncherSettingsModule;
 import dev.bitwigagent.launcher.NativeNotes;
 import dev.bitwigagent.mix.TrackLifecycleModule;
@@ -67,6 +68,8 @@ public final class NativePorts {
             port("Exact arranger bindings unavailable: ", NativeArrangerAccess::new);
     private final PortHandle<AutomationModule.Access> automation =
             port("Exact automation bindings unavailable: ", NativeAutomationAccess::new);
+    private final PortHandle<ClipCommands.Access> clipCommands =
+            port("Exact clip command bindings unavailable: ", NativeClipCommandAccess::new);
 
     /** The gate opens on the first request that needs it: hashing the jar checks that request for cancellation. */
     public NativePorts(ControllerHost host, Scheduler scheduler) {
@@ -146,6 +149,10 @@ public final class NativePorts {
         return automation;
     }
 
+    public PortHandle<ClipCommands.Access> clipCommands() {
+        return clipCommands;
+    }
+
     /** Every port, for the check that each binds on each shipped entry's jar (compat layer §3.2). */
     List<PortHandle<?>> all() {
         return List.of(
@@ -163,7 +170,8 @@ public final class NativePorts {
                 saveAs,
                 keySignature,
                 arranger,
-                automation);
+                automation,
+                clipCommands);
     }
 
     /** A port whose binding refuses a closed gate as {@code native_unavailable}, not the gate's own host mismatch. */

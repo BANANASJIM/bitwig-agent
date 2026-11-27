@@ -7,7 +7,8 @@ from pydantic import ValidationError
 
 from bitwig_agent.protocol import TOOLS, invalid_params_message, invalid_params_reason, validate_call
 from bitwig_agent.protocol.annotations import EDIT
-from bitwig_agent.protocol.clips import MAX_TRANSFORM_TARGETS
+from bitwig_agent.protocol.bundle import export_bundle
+from bitwig_agent.protocol.clips import CLIP_OPS, MAX_GAIN_DB, MAX_TRANSFORM_TARGETS, TRANSFORM_OPS
 from bitwig_agent.protocol.launcher import ARRANGER_CLIP_REF, CLIP_REF, SCENE_REF, SLOT_REF, TRACK_REF
 
 SLOT = SLOT_REF
@@ -290,12 +291,47 @@ def test_quantize_and_transform():
     for bad in (
         {"targets": [], "op": "doubleContent"},
         {"targets": [CLIP_REF] * (MAX_TRANSFORM_TARGETS + 1), "op": "doubleContent"},
-        {"targets": [CLIP_REF], "op": "reverse"},
+        {"targets": [CLIP_REF], "op": "consolidate"},
         {"targets": [ARRANGER_CLIP_REF], "op": "doubleContent"},
         {"target": CLIP_REF, "op": "doubleContent"},
     ):
         with pytest.raises(ValidationError):
             validate_call("clips.transform", bad)
+
+
+def test_transform_ops_are_the_bundled_native_ops_plus_double_content():
+    schema = TOOLS["clips.transform"].host_model.model_json_schema()["properties"]["op"]
+    assert schema["enum"] == list(TRANSFORM_OPS) == ["doubleContent", *CLIP_OPS]
+    for op in TRANSFORM_OPS:
+        assert validate_call("clips.transform", {"targets": [CLIP_REF], "op": op})[0]["op"] == op
+    bundled = export_bundle()["clipOps"]
+    assert bundled["reverse"] == {"action": "reverse", "verifiedBy": {"notes": "notes", "audio": "none"}}
+    assert set(bundled) == set(CLIP_OPS)
+    for clip_op in CLIP_OPS.values():
+        assert set(clip_op.verified_by) <= {"notes", "audio"}
+        assert set(clip_op.verified_by.values()) <= {"notes", "clips", "none"}
+
+
+def test_clip_commands():
+    for args in (
+        ("clips.duplicate", {"target": CLIP_REF}),
+        ("clips.duplicate", {"target": CLIP_REF, "alias": True}),
+        ("clips.slice", {"target": CLIP_REF, "to": "slicedSampler"}),
+        ("clips.stretch", {"target": CLIP_REF, "tempo": "project"}),
+        ("clips.gain", {"target": CLIP_REF, "deltaDb": -MAX_GAIN_DB}),
+    ):
+        assert validate_call(*args)[0] == args[1]
+        assert TOOLS[args[0]].annotations == EDIT
+    for method, bad in (
+        ("clips.duplicate", {"target": ARRANGER_CLIP_REF}),
+        ("clips.slice", {"target": CLIP_REF, "to": "drumMachine"}),
+        ("clips.stretch", {"target": CLIP_REF, "tempo": 120}),
+        ("clips.gain", {"target": CLIP_REF, "deltaDb": 0}),
+        ("clips.gain", {"target": CLIP_REF, "deltaDb": MAX_GAIN_DB + 1}),
+        ("clips.gain", {"target": CLIP_REF, "deltaDb": 1.5}),
+    ):
+        with pytest.raises(ValidationError):
+            validate_call(method, bad)
 
 
 def test_clips_edit_is_gone_and_its_ops_are_methods():

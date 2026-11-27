@@ -42,7 +42,11 @@ public final class ClipModule implements HostModule {
             "clips.record",
             "clips.transpose",
             "clips.quantize",
-            "clips.transform");
+            "clips.transform",
+            "clips.duplicate",
+            "clips.slice",
+            "clips.stretch",
+            "clips.gain");
     static final List<String> NEXT_ACTION = LauncherSettingsModule.WRITE_ORDER;
     static final List<String> LAUNCH_FIELDS =
             List.of("launchQuantization", "launchMode", "useLoopStartAsQuantizationReference");
@@ -65,13 +69,15 @@ public final class ClipModule implements HostModule {
     private final NoteModule notes;
     private final LauncherSettingsModule settings;
     private final ArrangerModule arranger;
+    private final ClipCommands commands;
 
     public ClipModule(
             LauncherState state,
             TrackRefs trackRefs,
             NoteModule notes,
             LauncherSettingsModule settings,
-            ArrangerModule arranger) {
+            ArrangerModule arranger,
+            ClipCommands commands) {
         this.state = state;
         this.scheduler = state.scheduler;
         this.window = state.window;
@@ -80,6 +86,7 @@ public final class ClipModule implements HostModule {
         this.notes = notes;
         this.settings = settings;
         this.arranger = arranger;
+        this.commands = commands;
     }
 
     @Override
@@ -105,6 +112,9 @@ public final class ClipModule implements HostModule {
                 break;
             case "clips.transpose":
                 if (p.get("semitones").getAsInt() == 0) throw Errors.invalid("semitones must be nonzero");
+                break;
+            case "clips.gain":
+                if (p.get("deltaDb").getAsInt() == 0) throw Errors.invalid("deltaDb must be nonzero");
                 break;
             default:
         }
@@ -201,7 +211,24 @@ public final class ClipModule implements HostModule {
                 record(op, p.getAsJsonObject("target"));
                 break;
             case "clips.transform":
-                transform(op, p.getAsJsonArray("targets"));
+                transform(
+                        op, p.getAsJsonArray("targets"), commands.op(p.get("op").getAsString()));
+                break;
+            case "clips.duplicate":
+                command(
+                        op,
+                        method,
+                        p,
+                        ClipCommands.duplicate(p.has("alias") && p.get("alias").getAsBoolean()));
+                break;
+            case "clips.slice":
+                command(op, method, p, ClipCommands.slice());
+                break;
+            case "clips.stretch":
+                command(op, method, p, ClipCommands.stretch(p.get("tempo").getAsString()));
+                break;
+            case "clips.gain":
+                command(op, method, p, ClipCommands.gain(p.get("deltaDb").getAsInt()));
                 break;
             default:
                 gridOp(op, method.substring("clips.".length()), p);
@@ -1061,13 +1088,25 @@ public final class ClipModule implements HostModule {
         });
     }
 
-    private void transform(HostOperation op, JsonArray refs) {
+    /** One Bitwig clip command on one launcher clip. */
+    private void command(HostOperation op, String method, JsonObject p, ClipCommands.Command command) {
+        state.targets.enterClip(op, p.getAsJsonObject("target"), false, at -> {
+            LauncherState.Target target = state.target(at);
+            LauncherState.ready(target.slot);
+            state.acquire(op);
+            state.requireResolved(target.id(), target.scene());
+            commands.run(op, method, target, command, op.result::complete);
+        });
+    }
+
+    /** {@code command} is the Bitwig command of a native op; null for doubleContent. */
+    private void transform(HostOperation op, JsonArray refs, ClipCommands.Command command) {
         JsonArray refused = new JsonArray();
         Reason[] first = new Reason[1];
         checkAll(op, refs, 0, refused, first, () -> {
             state.acquire(op);
             Batch batch = new Batch(refs.size());
-            transformNext(op, refs, 0, batch);
+            transformNext(op, refs, 0, batch, command);
         });
     }
 
@@ -1115,7 +1154,7 @@ public final class ClipModule implements HostModule {
         else state.targets.lease.move(op, offset, resolve);
     }
 
-    private void transformNext(HostOperation op, JsonArray refs, int i, Batch batch) {
+    private void transformNext(HostOperation op, JsonArray refs, int i, Batch batch, ClipCommands.Command command) {
         if (i == refs.size()) {
             JsonObject out = Results.ofEntries(batch.entries());
             out.add("entries", batch.entries());
@@ -1127,7 +1166,7 @@ public final class ClipModule implements HostModule {
         child.result.whenComplete((result, error) -> {
             if (child.dispatched()) op.markDispatched();
             JsonObject entry = error == null ? result : Errors.entryResult(error);
-            if (batch.record(entry)) transformNext(op, refs, i + 1, batch);
+            if (batch.record(entry)) transformNext(op, refs, i + 1, batch, command);
             else {
                 JsonObject out = Results.ofEntries(batch.entries());
                 out.add("entries", batch.entries());
@@ -1138,17 +1177,22 @@ public final class ClipModule implements HostModule {
                 op,
                 () -> {
                     int offset = state.targets.offsetOf(ref);
-                    state.targets.lease.move(op, offset, () -> transformEntry(op, child, ref, offset));
+                    state.targets.lease.move(op, offset, () -> transformEntry(op, child, ref, offset, command));
                 },
                 0);
     }
 
-    private void transformEntry(HostOperation op, HostOperation child, JsonObject ref, int offset) {
+    private void transformEntry(
+            HostOperation op, HostOperation child, JsonObject ref, int offset, ClipCommands.Command command) {
         try {
             LauncherState.Target target = state.target(state.targets.clip(ref, offset));
             state.requireResolved(target.id(), target.scene());
-            op.markDispatched();
             state.selection.handOff(child);
+            if (command != null) {
+                commands.run(child, "clips.transform", target, command, child.result::complete);
+                return;
+            }
+            op.markDispatched();
             state.bind(
                     child,
                     target,

@@ -37,7 +37,7 @@ Research (finding presets, planning the melody) can run in parallel with prepari
 
 ## Variants and edits
 
-- Copy, then transform, instead of resending notes: `clips copy`, then `clips transpose`, `clips quantize` or `clips transform` (op doubleContent repeats the content in a doubled loop). The host does each transform; read the result's `compared` before and after counts instead of re-reading notes.
+- Copy, then transform, instead of resending notes: `clips copy`, then `clips transpose`, `clips quantize` or `clips transform` (op doubleContent repeats the content in a doubled loop; reverse, legato, quantizeLength, quantizeToKey and the other ops run Bitwig's own clip command). The host does each transform; read the result's `compared` before and after counts instead of re-reading notes. Audio clips: `clips transform` normalize/autoFade, `clips gain`, `clips stretch`, `clips slice --to slicedSampler`; these answer `sent`, so capture audio to check. Clip commands need the Clip Launcher shown in the Arrange view (else not_ready).
 - Prefer a short loop over writing every repetition ([loop + operators](#loop--operators)), and keep `range` writes small. `notes get` with `exact:false` snaps onsets to cells: quantize recorded takes before editing them on that path.
 - `clips set` changes one clip's name, color, loop and launch behavior, each field with its own outcome.
 - Scenes: `scenes list`, then `scenes set`, `scenes launch`, `scenes duplicate`, `scenes delete`. A scene launch is not a one-clip audition: it plays every track's slot in that row.

@@ -3,7 +3,7 @@ from __future__ import annotations
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Annotated, Any, Literal, NamedTuple, Self
 
-from pydantic import Discriminator, Field, Tag, model_validator
+from pydantic import Discriminator, Field, Tag, field_validator, model_validator
 
 from bitwig_agent.protocol.annotations import EDIT, RETRIGGER, STEER
 from bitwig_agent.protocol.base import (
@@ -35,6 +35,7 @@ from bitwig_agent.protocol.values import Expect
 
 MAX_ARRANGER_CLIP_BEATS = 65536
 MAX_TRANSFORM_TARGETS = 16
+MAX_GAIN_DB = 24
 COLOR = r"^#[0-9a-fA-F]{6}$"
 
 
@@ -529,9 +530,75 @@ class ClipQuantizeArgs(ClipTargetArgs):
     amount: float = Field(gt=0, le=1)
 
 
+class ClipOp(NamedTuple):
+    """A clips.transform op Bitwig runs as its own command on the selected clip, under launcher focus."""
+
+    action: str
+    """The Bitwig action id."""
+    verified_by: dict[str, str]
+    """By clip kind it takes (notes, audio): notes (the clip's notes changed), clips (a clip appeared on the track) or
+    none (outcome sent)."""
+
+
+CLIP_OPS: dict[str, ClipOp] = {
+    "reverse": ClipOp("reverse", {"notes": "notes", "audio": "none"}),
+    "reversePattern": ClipOp("reverse_pattern", {"notes": "notes"}),
+    "legato": ClipOp("legato", {"notes": "notes"}),
+    "quantizeLength": ClipOp("fixed_length", {"notes": "notes"}),
+    "quantizeToKey": ClipOp("quantize_to_key", {"notes": "notes"}),
+    "makeUnique": ClipOp("make_unique", {"notes": "none", "audio": "none"}),
+    "mergeDuplicatePatterns": ClipOp("merge_duplicate_patterns", {"notes": "none", "audio": "none"}),
+    "sliceAtRepeats": ClipOp("slice_at_repeats", {"notes": "clips", "audio": "clips"}),
+    "normalize": ClipOp("normalize", {"audio": "none"}),
+    "autoFade": ClipOp("auto_fade", {"audio": "none"}),
+    "resetFades": ClipOp("reset_fades", {"audio": "none"}),
+}
+"""The native clips.transform ops (the bundle's clipOps, which the extension dispatches from)."""
+TRANSFORM_OPS = ("doubleContent", *CLIP_OPS)
+
+
+def bundle_clip_ops() -> dict[str, Any]:
+    return {name: {"action": op.action, "verifiedBy": op.verified_by} for name, op in CLIP_OPS.items()}
+
+
+def _ops_taking(kind: str) -> str:
+    return ", ".join(name for name, op in CLIP_OPS.items() if kind in op.verified_by)
+
+
 class ClipTransformArgs(StatusArgs):
     targets: Annotated[list[LauncherClipRef], Field(min_length=1, max_length=MAX_TRANSFORM_TARGETS)]
-    op: Literal["doubleContent"]
+    op: str = Field(json_schema_extra={"enum": list(TRANSFORM_OPS)})
+
+    @field_validator("op")
+    @classmethod
+    def validate_op(cls, value: str) -> str:
+        if value not in TRANSFORM_OPS:
+            raise ValueError(f"op must be one of {', '.join(TRANSFORM_OPS)}")
+        return value
+
+
+class ClipDuplicateArgs(ClipTargetArgs):
+    alias: bool = omitted(description="true: the copy is an alias of the clip (Bitwig's Duplicate as Alias).")
+
+
+class ClipSliceArgs(ClipTargetArgs):
+    to: Literal["slicedSampler"]
+
+
+class ClipStretchArgs(ClipTargetArgs):
+    tempo: Literal["detected", "project"]
+
+
+class ClipGainArgs(ClipTargetArgs):
+    deltaDb: int = Field(
+        ge=-MAX_GAIN_DB, le=MAX_GAIN_DB, description="Whole dB, nonzero; relative to the current gain."
+    )
+
+    @model_validator(mode="after")
+    def validate_delta(self) -> Self:
+        if self.deltaDb == 0:
+            raise ValueError("deltaDb must be nonzero")
+        return self
 
 
 class NotesGetArgs(ClipTargetArgs):
@@ -667,11 +734,42 @@ CLIPS_QUANTIZE_DESCRIPTION = (
     "(sub-cell positions are not observable); amount 1 with no visible movement is unknown/not_observed (idempotent, "
     "no hold). Below amount 1 an unobserved outcome holds the slot; never retry."
 )
+NATIVE_COMMAND = (
+    "Bitwig's own command runs on the clip it selects: the clip is selected (selectionSideEffect replaced: the "
+    "previous clip selection is not restored), keyboard focus is moved to the Clip Launcher and read back first, and a "
+    "launcher that is not shown (or a dialog holding focus) is not_applied/not_ready with nothing sent: show the Clip "
+    "Launcher in the Arrange view. Bitwig 6.1.4/6.1.7 only. Each command is one Bitwig Undo step."
+)
 CLIPS_TRANSFORM_DESCRIPTION = (
-    "Apply op to each launcher clip of targets in order: doubleContent doubles the loop and repeats the content "
-    "(selects the clip; verified by the loop length doubled and the first half unchanged). Every target is checked "
-    "before any is written; one stale target refuses the whole batch (entries). Then it writes in order and stops at "
-    "the first entry that is not applied, already_matched or sent (later entries not_applied, not_reached)."
+    "Apply op to each launcher clip of targets in order. doubleContent doubles the loop and repeats the content "
+    "(selects the clip; verified by the loop length doubled and the first half unchanged). The other ops are Bitwig "
+    "commands: note clips take " + _ops_taking("notes") + "; audio clips take " + _ops_taking("audio") + ". "
+    "Verified by the clip's notes changed (native readback, compared counts) for note-clip reverse, reversePattern, "
+    "legato, quantizeLength and quantizeToKey; by a new clip on the track for sliceAtRepeats (created: refs); the "
+    "others are sent (nothing to read back). A clip of a kind the op does not take is not_applied/unsupported_scope. "
+    + NATIVE_COMMAND
+    + " Every target is checked before any is written; one stale target refuses the whole batch (entries). Then it "
+    "writes in order and stops at the first entry that is not applied, already_matched or sent (later entries "
+    "not_applied, not_reached). An unobserved verified op is unknown and holds the slot; never retry."
+)
+CLIPS_DUPLICATE_DESCRIPTION = (
+    "Duplicate one launcher clip in place with Bitwig's Duplicate (alias:true: Duplicate as Alias); Bitwig puts the "
+    "copy in a slot below. Verified by a clip appearing in an empty slot of the track's scene window: created lists "
+    "the new refs. " + NATIVE_COMMAND + " An unobserved duplicate is unknown and holds the slot; never retry."
+)
+CLIPS_SLICE_DESCRIPTION = (
+    "Slice one launcher audio clip into a new track with a sliced Sampler (Bitwig's Slice to sliced Sampler, no "
+    "dialog). Verified by a new track appearing: track is its ref (devices.list and launcher.list show the Sampler "
+    "and its note clip). " + NATIVE_COMMAND + " An unobserved slice is unknown and holds the slot; never retry."
+)
+CLIPS_STRETCH_DESCRIPTION = (
+    "Set one launcher audio clip's tempo: detected (Bitwig's Detect Event Tempo) or project (Set Event to current "
+    "Project Tempo). Outcome sent: nothing to read back; listen or capture to check. " + NATIVE_COMMAND
+)
+CLIPS_GAIN_DESCRIPTION = (
+    "Change one launcher audio clip's gain by deltaDb (whole dB, nonzero, relative, not idempotent): composed of "
+    "Bitwig's Gain +6dB/+1dB (or -6dB/-1dB) commands, listed in actions. Outcome sent: nothing to "
+    "read back; capture before and after to compare. " + NATIVE_COMMAND
 )
 NOTES_GET_DESCRIPTION = (
     "Read the notes of one launcher clip: every note of every channel, in the record notes.set and clips.insert "
@@ -825,9 +923,41 @@ SPECS: dict[str, ToolSpec] = {
         ClipTransformArgs,
         CLIPS_TRANSFORM_DESCRIPTION,
         False,
-        examples=({"targets": [CLIP_REF], "op": "doubleContent"},),
+        examples=({"targets": [CLIP_REF], "op": "doubleContent"}, {"targets": [CLIP_REF], "op": "reverse"}),
         annotations=EDIT,
-        summary="Apply op (doubleContent: double the loop and repeat its content) to each launcher clip in targets. Every target is checked before any is written; one stale target refuses the batch. Then it writes in order and stops at the first entry that is not applied, already_matched or sent. Selects each clip.",
+        summary="Apply op to each launcher clip in targets: doubleContent, or a Bitwig clip command (reverse, legato, normalize, ...; moves focus to the Clip Launcher). Every target is checked first; then it writes in order and stops at the first entry that is not applied, already_matched or sent. Selects each clip.",
+    ),
+    "clips.duplicate": ToolSpec(
+        ClipDuplicateArgs,
+        CLIPS_DUPLICATE_DESCRIPTION,
+        False,
+        examples=({"target": CLIP_REF}, {"target": CLIP_REF, "alias": True}),
+        annotations=EDIT,
+        summary="Duplicate a launcher clip in place (alias:true for an alias); returns the new refs in created. Selects the clip and focuses the Clip Launcher.",
+    ),
+    "clips.slice": ToolSpec(
+        ClipSliceArgs,
+        CLIPS_SLICE_DESCRIPTION,
+        False,
+        examples=({"target": CLIP_REF, "to": "slicedSampler"},),
+        annotations=EDIT,
+        summary="Slice a launcher audio clip into a new sliced-Sampler track; returns the new track ref. Selects the clip and focuses the Clip Launcher.",
+    ),
+    "clips.stretch": ToolSpec(
+        ClipStretchArgs,
+        CLIPS_STRETCH_DESCRIPTION,
+        False,
+        examples=({"target": CLIP_REF, "tempo": "detected"},),
+        annotations=EDIT,
+        summary="Set a launcher audio clip's tempo to the detected or the project tempo; outcome sent. Selects the clip and focuses the Clip Launcher.",
+    ),
+    "clips.gain": ToolSpec(
+        ClipGainArgs,
+        CLIPS_GAIN_DESCRIPTION,
+        False,
+        examples=({"target": CLIP_REF, "deltaDb": 6},),
+        annotations=EDIT,
+        summary="Change a launcher audio clip's gain by whole dB (relative); outcome sent. Selects the clip and focuses the Clip Launcher.",
     ),
     "notes.get": ToolSpec(
         NotesGetArgs,

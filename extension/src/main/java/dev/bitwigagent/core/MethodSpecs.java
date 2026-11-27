@@ -150,15 +150,36 @@ public final class MethodSpecs {
         }
     }
 
+    /** A clips.transform op Bitwig runs as its own command: the action id and, by clip kind, how it is verified. */
+    public static final class ClipOp {
+        public final String action;
+        public final Map<String, String> verifiedBy;
+
+        private ClipOp(JsonObject object) {
+            action = object.get("action").getAsString();
+            Map<String, String> map = new TreeMap<>();
+            for (Map.Entry<String, JsonElement> entry :
+                    object.getAsJsonObject("verifiedBy").entrySet())
+                map.put(entry.getKey(), entry.getValue().getAsString());
+            verifiedBy = Collections.unmodifiableMap(map);
+        }
+    }
+
     private final Map<String, Spec> hostMethods;
+    private final Map<String, ClipOp> clipOps;
     private final Limits limits;
     private final Vocabulary vocabulary;
     private final Map<String, RefRoles> refRoles;
     private final Map<String, String> refReads;
     private final List<String> parameterOwners;
 
-    private MethodSpecs(Map<String, Spec> hostMethods, Limits limits, Vocabulary vocabulary, JsonObject refs) {
+    private MethodSpecs(
+            Map<String, Spec> hostMethods, Limits limits, Vocabulary vocabulary, JsonObject refs, JsonObject clipOps) {
         this.hostMethods = Collections.unmodifiableMap(hostMethods);
+        Map<String, ClipOp> ops = new TreeMap<>();
+        for (Map.Entry<String, JsonElement> entry : clipOps.entrySet())
+            ops.put(entry.getKey(), new ClipOp(entry.getValue().getAsJsonObject()));
+        this.clipOps = Collections.unmodifiableMap(ops);
         this.limits = limits;
         this.vocabulary = vocabulary;
         Map<String, RefRoles> roles = new TreeMap<>();
@@ -196,7 +217,8 @@ public final class MethodSpecs {
                 if (flag(method, "host")) specs.put(entry.getKey(), spec(entry.getKey(), method, limits.minTimeoutMs));
             }
             if (specs.isEmpty()) throw new IllegalStateException("no host methods");
-            return new MethodSpecs(specs, limits, vocabulary, root.getAsJsonObject("refs"));
+            return new MethodSpecs(
+                    specs, limits, vocabulary, root.getAsJsonObject("refs"), root.getAsJsonObject("clipOps"));
         } catch (RuntimeException e) {
             throw new IllegalStateException("Protocol bundle " + RESOURCE + " is malformed: " + e.getMessage(), e);
         }
@@ -300,6 +322,11 @@ public final class MethodSpecs {
 
     public List<String> parameterOwners() {
         return parameterOwners;
+    }
+
+    /** By op name, the clips.transform ops Bitwig runs as its own commands. */
+    public Map<String, ClipOp> clipOps() {
+        return clipOps;
     }
 
     public boolean contains(String method) {

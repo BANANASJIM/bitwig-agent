@@ -20,6 +20,7 @@ import dev.bitwigagent.host.TransportSafety;
 import dev.bitwigagent.render.RenderModule;
 import java.util.*;
 import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 /**
@@ -288,6 +289,21 @@ public final class LauncherState implements RenderModule.LauncherContent {
                 },
                 ok,
                 timeout);
+    }
+
+    /**
+     * Runs {@code work} through {@code executor} (onto the native document thread), then {@code then} with its value
+     * on the controller thread; a failure in either fails {@code op}.
+     */
+    <T> void onNative(HostOperation op, Consumer<Runnable> executor, Supplier<T> work, Consumer<T> then) {
+        executor.accept(() -> {
+            try {
+                T value = work.get();
+                scheduler.schedule(op, () -> then.accept(value), 0);
+            } catch (RuntimeException | Error failure) {
+                op.fail(failure);
+            }
+        });
     }
 
     // ---- binding the cursor clip ----
