@@ -11,8 +11,8 @@ from bitwig_agent.errors import bridge_error, unknown_result
 from bitwig_agent.protocol import TOOLS, export_bundle, validate_call
 from bitwig_agent.protocol.base import leaf_rule_holds
 from bitwig_agent.protocol.devices import DEVICE_REF, INSERT_CAUTION, TRACK_REF
+from bitwig_agent.protocol.modulators import DEVICE_PARAMETER_REF, GRID_PARAMETER_REF
 from bitwig_agent.protocol.modulators import DEVICE_REF as GRID_DEVICE
-from bitwig_agent.protocol.modulators import GRID_PARAMETER_REF
 
 FILTER = {"kind": "file", "path": "/devices/Filter+.bwdevice"}
 NEW_DEVICE = {**DEVICE_REF, "index": 1, "name": "Filter+"}
@@ -252,6 +252,16 @@ def test_a_mapping_target_on_another_device_is_refused_before_the_insert():
     args = {"to": GRID_DEVICE, "typeName": "LFO", "map": [{"target": other, "amount": 0.3}]}
     assert "map[0].target" in refusal(host, "modulators.insert", args)["message"]
     assert host.calls == []
+
+
+def test_a_mapping_may_target_a_parameter_of_the_device_itself():
+    host = Host()
+    args = {"to": GRID_DEVICE, "typeName": "LFO", "map": [{"target": DEVICE_PARAMETER_REF, "amount": 0.3}]}
+    assert call(host, "modulators.insert", args)["outcome"] == "applied"
+    assert host.calls[-1] == ("modulators.map", {"source": LFO, "target": DEVICE_PARAMETER_REF, "amount": 0.3})
+    elsewhere = {**DEVICE_PARAMETER_REF, "owner": DEVICE_REF | {"index": 3}}
+    args["map"] = [{"target": elsewhere, "amount": 0.3}]
+    assert "map[0].target" in refusal(Host(), "modulators.insert", args)["message"]
 
 
 def test_the_host_never_sees_the_composed_fields():

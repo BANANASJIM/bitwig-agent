@@ -64,8 +64,8 @@ VARIANTS = members(AnyRef)
 OWNER_MATRIX: dict[Any, tuple[set[str], dict[str, str]]] = {
     SetParameterRef: ({"device", "remotePage", "modulator"}, {"gridModule": "grid.apply", "track": "tracks.set"}),
     AutomationParameterRef: ({"track", "gridModule", "device"}, {"remotePage": "parameters.list"}),
-    MappingParameterRef: ({"gridModule", "modulator"}, {}),
-    RemoteSlotParameterRef: ({"gridModule"}, {}),
+    MappingParameterRef: ({"gridModule", "modulator", "device"}, {}),
+    RemoteSlotParameterRef: ({"gridModule", "device"}, {}),
 }
 
 
@@ -120,7 +120,7 @@ def test_each_method_takes_only_its_owners_and_names_where_the_others_go():
                 adapter.validate_python(ref)
             assert invalid_params_reason(rejected.value) == ("unsupported_scope", next.get(owner))
     schema = TypeAdapter(RemoteSlotParameterRef).json_schema()
-    assert [branch["$ref"] for branch in schema["oneOf"]] == ["#/$defs/GridParameterRef"]
+    assert [branch["$ref"] for branch in schema["oneOf"]] == ["#/$defs/GridParameterRef", "#/$defs/DeviceParameterRef"]
     with pytest.raises(ValidationError) as malformed:
         TypeAdapter(SetParameterRef).validate_python({"kind": "parameter", "owner": DEVICE})
     assert invalid_params_reason(malformed.value) == ("invalid_params", None), "only an owner refusal is a scope error"

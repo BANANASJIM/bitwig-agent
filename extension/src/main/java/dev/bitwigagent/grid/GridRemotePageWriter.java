@@ -9,12 +9,14 @@ import dev.bitwigagent.core.Refs;
 import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.RpcException;
 import dev.bitwigagent.core.Verification;
+import dev.bitwigagent.device.DirectParameters;
 import dev.bitwigagent.host.DeviceSources;
 import java.util.*;
 
 /**
- * One user Remote Controls page in a Grid device's preset-page list (the list the UI's "Add New Page" uses; device
- * pages refuse Grid module parameters): define (create, or change the page of that name) its eight slots, or delete it. Each native
+ * One user Remote Controls page in a device's preset-page list (the list the UI's "Add New Page" uses; device pages
+ * refuse Grid module parameters): define (create, or change the page of that name) its eight slots from the device's
+ * own parameters or, on a Grid device, its modules' parameters, or delete it. Each native
  * step is its own undo-aware model change; there is no outer group, retry or rollback. Device, module and plugin
  * pages are listed for name conflicts but never edited.
  */
@@ -50,6 +52,8 @@ public final class GridRemotePageWriter {
         boolean mappable(Object parameter, Object device);
         /** The page's own eligibility predicate for this parameter. */
         boolean eligible(Object page, Object parameter);
+        /** The device's direct parameters, for slots on the device's own parameters. */
+        DirectParameters.Lookup direct();
 
         Object slot(Object page, int index);
 
@@ -79,21 +83,21 @@ public final class GridRemotePageWriter {
     }
 
     public JsonObject define(DeviceSources.Source source, Request request, Runnable check, Runnable dispatch) {
-        GridSnapshotReader.NativeTarget target = values.bindTarget(source, check);
+        GridSnapshotReader.NativeTarget target = values.bindDevice(source, check);
         Object device = target.target;
         Host host = host(device);
         Slot[] wanted = resolve(source, target, device, request, check);
         Object existing = existing(host, request.pageName);
         if (existing != null)
             for (Slot slot : wanted)
-                if (slot != null && !nativeAccess.eligible(existing, slot.binding.parameter))
+                if (slot != null && !nativeAccess.eligible(existing, slot.parameter))
                     throw Errors.notApplied(
                             Reason.UNSUPPORTED_SCOPE,
                             "Remote Controls page refuses " + slot.describe() + " (native page eligibility).");
         GridParameterContext.Capture context =
                 contexts.requireRemoteWritable(device, host.host, host.pages, null, check);
         values.guardTarget(target);
-        for (Slot slot : wanted) if (slot != null) values.guardParameter(slot.binding);
+        for (Slot slot : wanted) if (slot != null) slot.guard.run();
         if (existing != existing(host, request.pageName))
             throw Errors.notApplied(Reason.TARGET_CHANGED, "The named Remote Controls page changed before dispatch.");
         contexts.requireRemoteWritable(device, host.host, host.pages, context, check);
@@ -120,7 +124,7 @@ public final class GridRemotePageWriter {
                 operations.add(operation("rename", -1));
                 // The page exists now: its own predicate is authoritative before any slot is mapped.
                 for (Slot slot : wanted)
-                    if (slot != null && !nativeAccess.eligible(page, slot.binding.parameter))
+                    if (slot != null && !nativeAccess.eligible(page, slot.parameter))
                         throw Errors.unknown(
                                 Reason.UNSUPPORTED_SCOPE,
                                 "The new page refuses " + slot.describe()
@@ -139,7 +143,7 @@ public final class GridRemotePageWriter {
                     nativeAccess.clearSlot(page, index);
                     operations.add(operation("clear", index));
                 } else {
-                    boolean sameTarget = current != null && nativeAccess.slotTarget(current) == slot.binding.parameter;
+                    boolean sameTarget = current != null && nativeAccess.slotTarget(current) == slot.parameter;
                     if (sameTarget && slot.spec.labelMatches(nativeAccess.slotLabel(current))) continue;
                     if (!dispatched) {
                         dispatch.run();
@@ -152,8 +156,7 @@ public final class GridRemotePageWriter {
                         operations.add(operation("clear", index));
                         check.run();
                     }
-                    nativeAccess.mapSlot(
-                            page, index, slot.spec.label == null ? "" : slot.spec.label, slot.binding.parameter);
+                    nativeAccess.mapSlot(page, index, slot.spec.label == null ? "" : slot.spec.label, slot.parameter);
                     operations.add(operation("map", index));
                 }
             }
@@ -198,7 +201,7 @@ public final class GridRemotePageWriter {
 
     public JsonObject deletePage(DeviceSources.Source source, JsonObject ref, Runnable check, Runnable dispatch) {
         String pageName = ref.get("name").getAsString();
-        GridSnapshotReader.NativeTarget target = values.bindTarget(source, check);
+        GridSnapshotReader.NativeTarget target = values.bindDevice(source, check);
         Host host = host(target.target);
         Object page = deletable(host, ref);
         int shown = nativeAccess.visiblePages(host.host).indexOf(page);
@@ -376,7 +379,7 @@ public final class GridRemotePageWriter {
             if (want == null
                     ? slot != null
                     : slot == null
-                            || nativeAccess.slotTarget(slot) != want.binding.parameter
+                            || nativeAccess.slotTarget(slot) != want.parameter
                             || !want.spec.labelMatches(nativeAccess.slotLabel(slot)))
                 throw Errors.notApplied(
                         Reason.READBACK_MISMATCH, "Native slot " + index + " readback differs from the request.");
@@ -399,19 +402,14 @@ public final class GridRemotePageWriter {
             if (!Refs.matches(spec.device, source.ref(), false))
                 throw Errors.notApplied(
                         Reason.UNSUPPORTED_SCOPE, "slot " + index + " names a parameter of another device.");
-            GridSnapshotReader.ParameterBinding binding =
-                    values.bindParameter(source, spec.moduleId, spec.parameterId, check);
-            Slot slot = new Slot(index, spec, binding);
-            if (!SCALARS.contains(binding.kind))
-                throw Errors.notApplied(
-                        Reason.UNSUPPORTED_SCOPE,
-                        slot.describe() + " is a " + binding.kind.name().toLowerCase(Locale.ROOT)
-                                + " control; only scalar Grid parameters map to Remote Controls.");
-            if (!nativeAccess.mappable(binding.parameter, device))
+            Slot slot = spec.moduleId == null
+                    ? direct(index, spec, device, source.ref())
+                    : module(index, spec, source, check);
+            if (!nativeAccess.mappable(slot.parameter, device))
                 throw Errors.notApplied(
                         Reason.UNSUPPORTED_SCOPE,
                         slot.describe() + " is not a remote-mappable parameter of this device.");
-            Integer previous = seen.put(binding.parameter, index);
+            Integer previous = seen.put(slot.parameter, index);
             if (previous != null)
                 throw Errors.notApplied(
                         Reason.INVALID_PARAMS, "slots " + previous + " and " + index + " name the same parameter.");
@@ -420,19 +418,45 @@ public final class GridRemotePageWriter {
         return wanted;
     }
 
+    /** A Grid module's scalar parameter, bound in the device's graph. */
+    private Slot module(int index, SlotSpec spec, DeviceSources.Source source, Runnable check) {
+        GridSnapshotReader.ParameterBinding binding =
+                values.bindParameter(source, spec.moduleId, spec.parameterId, check);
+        Slot slot = new Slot(index, spec, binding.parameter, () -> values.guardParameter(binding));
+        if (!SCALARS.contains(binding.kind))
+            throw Errors.notApplied(
+                    Reason.UNSUPPORTED_SCOPE,
+                    slot.describe() + " is a " + binding.kind.name().toLowerCase(Locale.ROOT)
+                            + " control; only scalar Grid parameters map to Remote Controls.");
+        return slot;
+    }
+
+    /** One of the device's own parameters, by its parameters.list ref (id, and name when the ref carries one). */
+    private Slot direct(int index, SlotSpec spec, Object device, JsonObject deviceRef) {
+        Object parameter = DirectParameters.resolve(nativeAccess.direct(), device, deviceRef, spec.ref);
+        return new Slot(index, spec, parameter, () -> {
+            if (DirectParameters.resolve(nativeAccess.direct(), device, deviceRef, spec.ref) != parameter)
+                throw Errors.notApplied(Reason.TARGET_CHANGED, "The device parameter changed during the operation.");
+        });
+    }
+
     private static final class Slot {
         final int index;
         final SlotSpec spec;
-        final GridSnapshotReader.ParameterBinding binding;
+        final Object parameter;
+        /** Throws when the parameter is no longer the one bound. */
+        final Runnable guard;
 
-        Slot(int index, SlotSpec spec, GridSnapshotReader.ParameterBinding binding) {
+        Slot(int index, SlotSpec spec, Object parameter, Runnable guard) {
             this.index = index;
             this.spec = spec;
-            this.binding = binding;
+            this.parameter = parameter;
+            this.guard = guard;
         }
 
         String describe() {
-            return "slot " + index + " (" + spec.moduleId + "/" + quote(spec.parameterId) + ")";
+            return "slot " + index + " (" + (spec.moduleId == null ? "" : spec.moduleId + "/") + quote(spec.parameterId)
+                    + ")";
         }
 
         /** The slot as read back: its parameter and the label it now has, empty meaning Bitwig's default. */
@@ -469,7 +493,7 @@ public final class GridRemotePageWriter {
 
     // ---- requests --------------------------------------------------------------------------------------------
 
-    /** One slot: the gridModule-owned parameter ref, and the module and parameter it names. */
+    /** One slot: the parameter ref, and the module (null for the device's own parameter) and parameter it names. */
     static final class SlotSpec {
         final JsonObject ref, device;
         final UUID moduleId;
@@ -480,8 +504,9 @@ public final class GridRemotePageWriter {
             this.ref = ref;
             this.label = label;
             JsonObject owner = ref.getAsJsonObject("owner");
-            this.device = owner.getAsJsonObject("device");
-            this.moduleId = UUID.fromString(owner.get("id").getAsString());
+            boolean module = "gridModule".equals(Refs.kind(owner));
+            this.device = module ? owner.getAsJsonObject("device") : owner;
+            this.moduleId = module ? UUID.fromString(owner.get("id").getAsString()) : null;
             this.parameterId = ref.get("id").getAsString();
         }
 
@@ -509,13 +534,13 @@ public final class GridRemotePageWriter {
                     continue;
                 }
                 JsonObject entry = element.getAsJsonObject(), ref = entry.getAsJsonObject("parameter");
-                if (!"gridModule".equals(Refs.kind(ref.getAsJsonObject("owner"))))
+                if (!Set.of("gridModule", "device").contains(Refs.kind(ref.getAsJsonObject("owner"))))
                     throw Errors.notApplied(
-                            Reason.UNSUPPORTED_SCOPE, "A page slot takes a parameter owned by a Grid module.");
+                            Reason.UNSUPPORTED_SCOPE, "A page slot takes a parameter of the device or a Grid module.");
                 SlotSpec slot = new SlotSpec(
                         ref, entry.has("label") ? entry.get("label").getAsString() : null);
                 if (!pairs.add(slot.moduleId + "\n" + slot.parameterId))
-                    throw Errors.notApplied(Reason.INVALID_PARAMS, "slots must not repeat a module/parameter pair.");
+                    throw Errors.notApplied(Reason.INVALID_PARAMS, "slots must not repeat a parameter.");
                 slots.add(slot);
             }
             return new Request(p.get("name").getAsString(), slots);

@@ -459,7 +459,7 @@ public final class NativeGridAdapter implements GridAdapter, GridSnapshotReader.
         result.add("voicing", voicing);
         JsonObject remotePages = capability(
                 gateError == null ? remotePageError : gateError,
-                "one_named_user_preset_page_per_call_8_slots_scalar_grid_parameters_device_module_plugin_pages_read_only");
+                "one_named_user_preset_page_per_call_8_slots_device_or_scalar_grid_parameters_device_module_plugin_pages_read_only");
         remotePages.addProperty("methods", "devices.remote.define,devices.remote.delete");
         remotePages.addProperty(
                 "operation",

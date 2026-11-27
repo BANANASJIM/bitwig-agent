@@ -3,6 +3,7 @@ package dev.bitwigagent.nativehost;
 import com.google.gson.JsonObject;
 import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.Reason;
+import dev.bitwigagent.device.DirectParameters;
 import dev.bitwigagent.device.ModulatorEditor;
 import dev.bitwigagent.device.ModulatorSnapshotReader;
 import dev.bitwigagent.grid.GridNames;
@@ -19,7 +20,8 @@ import java.util.function.Consumer;
  * Exact public descriptors for device-modulator edits. Each native operation is the one Bitwig itself uses:
  * the modulator browser's insertion point (as in Bitwig's own TestModulatorGrid), modulation source add/clear (each
  * wrapped in a named native undo transaction), the auxiliary device grid's delete (shared with Grid module delete)
- * and the external-controller raw write already used for Grid parameters.
+ * and the external-controller raw write already used for Grid parameters. A device's own (direct) parameters come
+ * from {@link NativeDirectParameters}.
  */
 public final class NativeModulatorEditAccess implements ModulatorEditor.Access {
     private final NativeHost.Access bindings;
@@ -28,6 +30,7 @@ public final class NativeModulatorEditAccess implements ModulatorEditor.Access {
     private final GridParameterContext parameterContexts;
     private final GridTopologyContext topologyContexts;
     private final NativeGridParameterWriter rawWriter;
+    private final NativeDirectParameters direct;
     private final Class<?> modulatorType,
             moduleType,
             deviceType,
@@ -76,6 +79,7 @@ public final class NativeModulatorEditAccess implements ModulatorEditor.Access {
     public NativeModulatorEditAccess(NativeHost.Access bindings, NativeGridAdapter gridAccess)
             throws ReflectiveOperationException {
         this.bindings = bindings;
+        direct = new NativeDirectParameters(bindings);
         targets = new DeviceSources.Native(new NativeDeviceTargetAccess(bindings));
         grid = new GridSnapshotReader(gridAccess);
         parameterContexts = new GridParameterContext(new NativeGridParameterContext(bindings, null, null, null, null));
@@ -374,6 +378,11 @@ public final class NativeModulatorEditAccess implements ModulatorEditor.Access {
     public boolean canModulate(Object source, Object target) {
         return !Boolean.TRUE.equals(bindings.invoke(skipped, source))
                 && Boolean.TRUE.equals(bindings.invoke(accepts, source, target));
+    }
+
+    @Override
+    public DirectParameters.Lookup direct() {
+        return direct;
     }
 
     @Override
