@@ -196,7 +196,8 @@ def overview() -> str:
             "Methods (required fields; <verb> --help lists the rest):",
             *method_index(),
             "",
-            "Input: --field=value; a string field is taken literally, any other field as JSON.",
+            "Input: --field=value; a string field is taken literally, any other field as JSON (a field that may",
+            "  also be a string takes a value that is not JSON literally: --position=start).",
             "  A non-string value may be @file or - (stdin). ARGS is one JSON object: inline, @file or -.",
             "  Field names are the protocol's (--dryRun, --timeoutMs). Flags and ARGS merge; a repeat is an error.",
             "  A ref field also takes --<kind>=REF (--track, --clip, --device ...) when REF's own kind matches.",
@@ -259,7 +260,9 @@ class Flag:
 
 
 def bind(flag: Flag, tokens: list[str], inputs: Inputs) -> Any:
-    """The value of one flag: a bare boolean is true; otherwise `=VALUE` or the next token, as a literal string or JSON."""
+    """The value of one flag: a bare boolean is true; otherwise `=VALUE` or the next token, as a literal string or JSON.
+
+    A field whose union admits a string takes a value that is not JSON as that string."""
     if flag.kind == "boolean" and not flag.equals:
         if tokens and tokens[0] in ("true", "false"):
             raise ValueError(f"--{flag.name} is a bare flag: write --{flag.name}={tokens[0]}")
@@ -269,7 +272,14 @@ def bind(flag: Flag, tokens: list[str], inputs: Inputs) -> Any:
         if not tokens or (tokens[0] != "-" and tokens[0].startswith("-")):
             raise ValueError(f"--{flag.name} needs a value: --{flag.name}=VALUE")
         value = tokens.pop(0)
-    return value if flag.kind == "string" else inputs.json(value, f"--{flag.name}")
+    if flag.kind == "string":
+        return value
+    try:
+        return inputs.json(value, f"--{flag.name}")
+    except ValueError:
+        if flag.kind != views.STRING_UNION or value == "-" or value.startswith("@"):
+            raise
+        return value
 
 
 def set_view(view: View, name: str, value: Any) -> None:

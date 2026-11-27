@@ -1229,3 +1229,10 @@ async def test_catalog_rows_print_as_records_and_filters_reach_the_host(host, mo
     )
     assert out.stdout.splitlines() == ["name\tpath", "Delay+\t/x/Delay+.bwdevice"]
     assert host.requests[-1]["params"] == {"query": "delay", "category": "Delay"}
+
+
+def test_a_union_with_a_string_takes_a_bare_word_and_still_parses_json():
+    assert args_of("devices.insert", ["--position=start"]) == {"position": "start"}
+    assert args_of("devices.insert", ['--position={"before": 1}']) == {"position": {"before": 1}}
+    with pytest.raises(ValueError, match="--insert: not strict JSON"):
+        args_of("devices.insert", ["--insert=bare"])
