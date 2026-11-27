@@ -131,6 +131,7 @@ py311-mcp-min = ["py311", "mcp-min", "dev", "native-music", "package"]
 [tool.pixi.feature.dev.tasks]
 test = "pytest -q"
 surface = "python scripts/surface.py"
+capabilities = "python scripts/capabilities.py"
 remap = { cmd = "python -m remap", env = { PYTHONPATH = "scripts" } }
 
 [tool.pixi.feature.java.tasks]

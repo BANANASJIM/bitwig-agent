@@ -16,6 +16,7 @@ The Python package and the Java extension are released as a matched pair: update
 
 ### Added
 
+- [What Bitwig Agent can do](docs/capabilities.md): a capability map generated from the code, by Bitwig User Guide task, showing what is natively verified, available but not yet verified, partial or not supported, and which methods do each task (#169).
 - Recording: `transport.set` writes Global Record, overdub, automation write and `automationWriteMode`; new `clips.record` for a launcher slot; track inputs can be hardware audio buses and controller note inputs; each host write declares its transport requirement, shown by `help` as `Requires:` (#156).
 - File placement: `tracks.insert {file}` makes a Sampler track from an audio file, `chains.insert` can fill a new chain with `insert`, and `clips.import` places a file on the arranger at `{track, start}` (#161).
 - Note operators (`chance`, `repeat`, `recurrence`, `occurrence`, `muted` and more) and note expressions on the note record (#153).

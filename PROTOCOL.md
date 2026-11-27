@@ -463,7 +463,7 @@ One cell is one bar at the current time signature (4 beats, with a note, when it
 - **Identity:** the ref is the clip's start and name, compared on every write; there is no persistent clip identity. Moving a clip makes its old ref `target_not_found`.
 - **Aliases:** renaming an alias clip renames the shared content (the name lives on the clip content).
 
-**Not covered:** automation clips, take/comp lanes, other clip lanes, group-track (meta) clips, effect/master tracks, splitting, fades, looping or other clip properties, audio file placement, cross-track copies, and arranger note editing after creation. Offline, every binding resolved against the inspected 6.1.4 JAR. Native behavior is established only by the native tests listed in VERIFICATION.
+**Not covered:** take/comp lanes, other clip lanes, group-track (meta) clips and effect/master tracks. Which clip, fade and automation clip tasks are supported, and which are natively verified, is in the generated capability map: [arranger clips](docs/capabilities.md#arranger-clips), [audio events](docs/capabilities.md#audio-events) and [automation](docs/capabilities.md#automation). Offline, every binding resolved against the inspected 6.1.4 JAR. Native behavior is established only by the native tests listed in VERIFICATION.
 
 ### Arranger automation points (version-gated)
 

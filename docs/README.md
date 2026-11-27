@@ -6,6 +6,7 @@ These guides describe the public implementation and supported user workflows. Th
 
 | Goal | Guide |
 |---|---|
+| See what Bitwig Agent can do and what is natively verified | [Capability map](capabilities.md) |
 | Install the released Python tools and matching extension | [Quickstart](../README.md#quickstart), then [installation details](../INSTALL.md) |
 | Choose persistent pipx, one-off pipx run or Arch/AUR installation | [pipx alternatives](../INSTALL.md#persistent-pipx-installation-and-one-off-runs) · [Arch/AUR](../INSTALL.md#arch-linux-aur) |
 | Connect an MCP client without changing global settings automatically | [MCP connection](../README.md#3-connect-your-mcp-client) |
