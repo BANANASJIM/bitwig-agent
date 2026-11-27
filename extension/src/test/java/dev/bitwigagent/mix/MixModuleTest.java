@@ -178,6 +178,53 @@ public final class MixModuleTest {
     }
 
     @Test
+    void aSendModeIsReadWithTheHostOptionsAndWrittenWithReadback() {
+        HostFixture f = new HostFixture();
+        MixModule module = f.services.mix();
+        FakeHost mode = f.tracks[0].child("sendBank").item(0).child("sendMode");
+        JsonObject row = f.call(module, "tracks.get", HostFixture.targeting(HostFixture.A))
+                .getAsJsonArray("sends")
+                .get(0)
+                .getAsJsonObject();
+        assertEquals("AUTO", row.getAsJsonObject("mode").get("value").getAsString());
+        assertEquals(3, row.getAsJsonObject("mode").getAsJsonArray("options").size(), "options come from the host");
+        JsonObject p = HostFixture.json("{\"mode\":\"PRE\",\"expect\":{\"mode\":\"AUTO\"}}");
+        p.add("target", row.get("ref"));
+        JsonObject result = f.call(module, "tracks.sends.set", p);
+        assertEquals("applied", result.get("outcome").getAsString());
+        assertEquals("applied", outcome(result, "mode"));
+        assertEquals("PRE", mode.data);
+        assertEquals(1, mode.writes);
+        assertEquals(
+                "PRE",
+                f.call(module, "tracks.get", HostFixture.targeting(HostFixture.A))
+                        .getAsJsonArray("sends")
+                        .get(0)
+                        .getAsJsonObject()
+                        .getAsJsonObject("mode")
+                        .get("value")
+                        .getAsString(),
+                "the read shows the written mode");
+        p.remove("expect");
+        assertEquals(
+                "already_matched",
+                f.call(module, "tracks.sends.set", p).get("outcome").getAsString());
+        assertEquals(1, mode.writes, "a mode already shown is not written");
+        p.addProperty("mode", "SIDE");
+        HostOperation refused = f.submit(module, "tracks.sends.set", p);
+        f.next();
+        assertFalse(assertRpcError("invalid_params", refused).unknown, "a mode the host does not list is refused");
+        assertEquals(1, mode.writes);
+        mode.notifyWrites = false;
+        p.addProperty("mode", "POST");
+        HostOperation silent = f.submit(module, "tracks.sends.set", p, f.tasks.after(300));
+        while (!silent.result.isDone()) f.next();
+        assertEquals(
+                "unknown", silent.result.join().get("outcome").getAsString(), "a write never read back is not applied");
+        assertEquals(2, mode.writes);
+    }
+
+    @Test
     void aRenamedTrackIsStaleAsTheTargetButNotAsAnAncestor() {
         HostFixture f = new HostFixture();
         MixModule module = f.services.mix();

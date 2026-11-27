@@ -71,6 +71,9 @@ public final class LauncherFake {
     boolean emitPlaybackState = true, queueStop, stopQueued;
     boolean deferGridChanges;
     boolean applyStop = true;
+    /** Whether Track/Transport.returnToArrangement un-stops the track and stops its launcher clips. */
+    boolean applyReturn = true;
+
     boolean deferCreate, failCreate, failImport, emitCreateContent = true, applyName = true;
     Double pendingSize;
     Integer pendingStart;
@@ -236,6 +239,7 @@ public final class LauncherFake {
                 return null;
             });
             track.attach("clipLauncherSlotBank", bank);
+            track.on("returnToArrangement", a -> returnToArrangement());
             FakeHost devices = FakeHost.of(DeviceBank.class, "devices");
             devices.live("exists", () -> true);
             devices.live("scrollPosition", () -> 0);
@@ -388,6 +392,7 @@ public final class LauncherFake {
         application.live("hasActiveEngine", () -> true);
         FakeHost transport = base.transport;
         transport.live("isPlaying", () -> transportPlaying);
+        transport.on("returnToArrangement", a -> returnToArrangement());
         recordNode = transport.put("isArrangerRecordEnabled", record);
         transport.live("isArrangerAutomationWriteEnabled", () -> arrangerAutomation);
         transport.live("isClipLauncherAutomationWriteEnabled", () -> launcherAutomation);
@@ -537,6 +542,18 @@ public final class LauncherFake {
     }
 
     // ---- refs the module hands out, as a test builds them from this world ----
+
+    private Object returnToArrangement() {
+        playbackDispatches++;
+        if (applyReturn) {
+            stopped = false;
+            for (SlotData data : slots) {
+                data.playing = false;
+                data.queued = false;
+            }
+        }
+        return null;
+    }
 
     public JsonObject track() {
         return Refs.track(trackId, trackName);

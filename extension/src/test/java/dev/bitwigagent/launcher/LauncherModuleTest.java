@@ -3,7 +3,9 @@ package dev.bitwigagent.launcher;
 import static dev.bitwigagent.RpcAssert.*;
 import static org.junit.jupiter.api.Assertions.*;
 
+import com.bitwig.extension.controller.api.Action;
 import com.google.gson.*;
+import dev.bitwigagent.FakeHost;
 import dev.bitwigagent.core.HostOperation;
 import dev.bitwigagent.core.RpcException;
 import java.nio.file.Files;
@@ -324,6 +326,156 @@ public final class LauncherModuleTest {
         p.add("target", old);
         RpcException error = assertRpcError("target_changed", f.startAndDrain("launcher.stop", p));
         assertEquals(f.track(), error.current);
+        assertEquals(0, f.playbackDispatches);
+    }
+
+    // ---- stop all and returnToArrangement ----
+
+    private static JsonObject all() {
+        return JsonParser.parseString("{\"target\":\"all\"}").getAsJsonObject();
+    }
+
+    /** Installs Bitwig's stop-all action; invoking it stops (or queues the stop of) the fixture's track. */
+    private static FakeHost stopAllAction(LauncherFake f) {
+        FakeHost action = FakeHost.of(Action.class, "stopAll");
+        action.on("invoke", a -> {
+            f.playbackDispatches++;
+            f.stopQueued = f.queueStop;
+            if (!f.queueStop) {
+                f.stopped = true;
+                f.slots[0].playing = false;
+            }
+            return null;
+        });
+        f.base.application.on(
+                "getAction", a -> LauncherModule.STOP_ALL_ACTION.equals(a[0]) ? action.proxy(Action.class) : null);
+        return action;
+    }
+
+    private static void playing(LauncherFake f) {
+        occupy(f, 0, "Riff");
+        f.slots[0].playing = true;
+        f.stopped = false;
+    }
+
+    private static String state(JsonObject result, int track) {
+        return result.getAsJsonArray("tracks")
+                .get(track)
+                .getAsJsonObject()
+                .get("playbackState")
+                .getAsString();
+    }
+
+    @Test
+    void stopAllInvokesTheHostActionAndReadsBackEveryTrack() {
+        LauncherFake f = new LauncherFake();
+        playing(f);
+        FakeHost action = stopAllAction(f);
+        JsonObject out = f.call("launcher.stop", all());
+        assertEquals("applied", out.get("outcome").getAsString());
+        assertEquals("api_readback", out.get("verification").getAsString());
+        assertEquals("all", out.get("target").getAsString());
+        assertTrue(out.get("complete").getAsBoolean());
+        assertEquals(1, out.getAsJsonArray("tracks").size());
+        assertEquals(
+                f.track(), out.getAsJsonArray("tracks").get(0).getAsJsonObject().get("ref"));
+        assertEquals("stopped", state(out, 0));
+        assertEquals(1, action.calls("invoke"));
+    }
+
+    @Test
+    void aQueuedStopAllIsSentAndAnUnobservedOneIsUnknown() {
+        LauncherFake f = new LauncherFake();
+        playing(f);
+        f.queueStop = true;
+        stopAllAction(f);
+        JsonObject out = f.call("launcher.stop", all());
+        assertEquals("sent", out.get("outcome").getAsString(), "a queued stop does not claim completion");
+        assertEquals("queued", state(out, 0));
+        LauncherFake g = new LauncherFake();
+        playing(g);
+        FakeHost action = stopAllAction(g);
+        action.on("invoke", a -> null);
+        out = g.call("launcher.stop", all());
+        assertEquals("unknown", out.get("outcome").getAsString());
+        assertEquals("not_observed", out.get("reason").getAsString());
+        assertEquals("launcher", state(out, 0));
+        assertEquals(1, action.calls("invoke"), "an observation never redispatches");
+    }
+
+    @Test
+    void stopAllWithoutTheHostActionWritesNothing() {
+        LauncherFake f = new LauncherFake();
+        playing(f);
+        f.base.application.on("getAction", a -> null);
+        RpcException error = assertRpcError("unknown_name", f.startAndDrain("launcher.stop", all()));
+        assertFalse(error.unknown);
+        assertTrue(f.slots[0].playing);
+    }
+
+    @Test
+    void aProjectBeyondTheTrackWindowIsAtMostSent() {
+        LauncherFake f = new LauncherFake();
+        playing(f);
+        stopAllAction(f);
+        f.base.bank.live("itemCount", () -> 100000);
+        JsonObject out = f.call("launcher.stop", all());
+        assertEquals("sent", out.get("outcome").getAsString(), "tracks outside the window are not read back");
+        assertFalse(out.get("complete").getAsBoolean());
+        assertEquals("stopped", state(out, 0));
+    }
+
+    @Test
+    void returnToArrangementOfOneTrackReadsBackArrangerPlayback() {
+        LauncherFake f = new LauncherFake();
+        playing(f);
+        JsonObject out = f.call("launcher.returnToArrangement", stopParams(f));
+        assertEquals("applied", out.get("outcome").getAsString());
+        assertEquals("arranger", out.get("playbackState").getAsString());
+        assertEquals(f.track(), out.get("ref"));
+        assertTrue(out.get("complete").getAsBoolean());
+        assertEquals(1, f.playbackDispatches);
+        assertFalse(f.stopped || f.slots[0].playing);
+    }
+
+    @Test
+    void returnToArrangementOfAllTracksGoesThroughTheTransport() {
+        LauncherFake f = new LauncherFake();
+        assertTrue(f.stopped, "the fixture track starts stopped from the launcher");
+        JsonObject out = f.call("launcher.returnToArrangement", all());
+        assertEquals("applied", out.get("outcome").getAsString());
+        assertEquals("arranger", state(out, 0));
+        assertEquals("all", out.get("target").getAsString());
+        assertEquals(1, f.base.transport.calls("returnToArrangement"));
+        assertEquals(0, f.base.tracks[0].calls("returnToArrangement"), "one transport call, not one per track");
+    }
+
+    @Test
+    void anUnobservedReturnIsUnknownAndUncoveredScenesAreAtMostSent() {
+        LauncherFake f = new LauncherFake();
+        playing(f);
+        f.applyReturn = false;
+        JsonObject out = f.call("launcher.returnToArrangement", stopParams(f));
+        assertEquals("unknown", out.get("outcome").getAsString());
+        assertEquals("not_observed", out.get("reason").getAsString());
+        assertEquals("launcher", out.get("playbackState").getAsString());
+        assertEquals(1, f.playbackDispatches, "never redispatched");
+        LauncherFake g = new LauncherFake();
+        g.scenes = 40;
+        out = g.call("launcher.returnToArrangement", stopParams(g));
+        assertEquals("sent", out.get("outcome").getAsString(), "a clip beyond the scene window is not read back");
+        assertFalse(out.get("complete").getAsBoolean());
+        assertEquals("arranger", out.get("playbackState").getAsString());
+    }
+
+    @Test
+    void returnRefusesAStaleTrackRef() {
+        LauncherFake f = new LauncherFake();
+        JsonObject old = f.track();
+        f.trackName = "Renamed";
+        JsonObject p = new JsonObject();
+        p.add("target", old);
+        assertRpcError("target_changed", f.startAndDrain("launcher.returnToArrangement", p));
         assertEquals(0, f.playbackDispatches);
     }
 }

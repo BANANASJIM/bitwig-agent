@@ -61,6 +61,7 @@ class TrackSetArgs(TrackArgs):
 class SendExpect(Expect):
     value: UnitValue = omitted()
     enabled: bool = omitted()
+    mode: Nonempty = omitted()
 
 
 class TrackSendSetArgs(StatusArgs):
@@ -69,12 +70,13 @@ class TrackSendSetArgs(StatusArgs):
     enabled: bool = omitted(
         description="Turn the send on or off. A level write already turns it on (autoEnabled in the result)."
     )
+    mode: Nonempty = omitted(description="Pre/post-fader tap: one of the mode options tracks.get returns for the send.")
     expect: SendExpect = omitted(description="Current bare values a write requires; a mismatch writes nothing.")
 
     @model_validator(mode="after")
     def validate_send(self) -> Self:
-        if not self.model_fields_set & {"value", "enabled"}:
-            raise ValueError("at least one of value or enabled is required")
+        if not self.model_fields_set & {"value", "enabled", "mode"}:
+            raise ValueError("at least one of value, enabled or mode is required")
         return self
 
 
@@ -116,9 +118,9 @@ class TrackGroupArgs(StatusArgs):
 
 
 TRACKS_LIST_DESCRIPTION = "Discover tracks in the flat bounded track window (tree pre-order). Each row has ref (a track ref to pass back), index, name, type, isGroup, groupExpanded (groups), parent (the group's track ref, null at top level), depth and parentResolved, plus the mix columns volume and pan {value 0..1, display}, mute, solo, arm and sends [{name, display, enabled}] (null while unobserved; tracks.get has refs and completeness); tree.complete says every parent was observed. A mix table is --format=tsv --fields=name,volume.display,pan.display,mute,solo. All indices are zero-based. Inspect window completeness before choosing targets."
-TRACKS_GET_DESCRIPTION = "Read one track's mix state and bounded sends. ref is the track ref; volume and pan are {value 0..1, display, ref} (ref is a parameter ref for automation.points.*), pan 0.5 is centre; monitorMode and crossFadeMode are {value, options} with the host's own options; send rows carry their send ref, value {value, display}, enabled, preFader and effectTrack (a track ref). Fields may be null after target changes; inspect observationsComplete and sendObservationsComplete rather than treating partial observations as current."
+TRACKS_GET_DESCRIPTION = "Read one track's mix state and bounded sends. ref is the track ref; volume and pan are {value 0..1, display, ref} (ref is a parameter ref for automation.points.*), pan 0.5 is centre; monitorMode and crossFadeMode are {value, options} with the host's own options; send rows carry their send ref, value {value, display}, enabled, mode {value, options} (pre/post-fader tap), preFader (the effective tap) and effectTrack (a track ref). Fields may be null after target changes; inspect observationsComplete and sendObservationsComplete rather than treating partial observations as current."
 TRACKS_SET_DESCRIPTION = "Set only the given fields of one track by its ref; omitted fields stay unchanged. Returns ref (the track after the write), outcome (the worst field's) and a per-field outcome with reason; a field already at the value is already_matched. volume and pan take the value tracks.get returned or {display}: the API has no dB setter, so the extension bisects the normalized value against the host's own displayed text and verifies the final display (displayWrite carries the probe count and the final observed display); several fader moves are written while it searches. An unreadable display restores the original value and reports not_applied (unknown when the restore is not confirmed). expect compares bare current values first. Never retry unknown."
-TRACKS_SENDS_SET_DESCRIPTION = 'Set one send, addressed by the send ref tracks.get returned (a send\'s name is compared, so a reordered send is stale). value is normalized 0..1 or {display: "-12 dB"}, verified by display readback; enabled switches the send; a level write already turns a disabled send on (autoEnabled in the result). Written last-wins: level first, then enabled. expect compares bare current values first. Inspect outcome and fields[].outcome/reason; never retry unknown.'
+TRACKS_SENDS_SET_DESCRIPTION = 'Set one send, addressed by the send ref tracks.get returned (a send\'s name is compared, so a reordered send is stale). value is normalized 0..1 or {display: "-12 dB"}, verified by display readback; enabled switches the send; mode sets the pre/post-fader tap (one of the mode options tracks.get lists); a level write already turns a disabled send on (autoEnabled in the result). Written in order: level, enabled, mode, each read back. expect compares bare current values first. Inspect outcome and fields[].outcome/reason; never retry unknown.'
 METERS_GET_DESCRIPTION = f"Read VU meter peak and RMS (left/right, steps 0..127; the public API publishes no dB mapping) over windowMs for 1..{TRACK_WINDOW} track refs. Meters only move while audio renders, so start playback first (transport.set playing=true; consider audio.route silent). Returns per track ref, peakMax, rmsMax, rmsMean, callbacks, silent. Not LUFS: use audio.capture + audio.analyze mode=loudness for that."
 TRACKS_SELECT_DESCRIPTION = "Select a track in the host UI by its ref. Returns outcome sent: the command was dispatched and navigation is not observed; a selected snapshot does not acknowledge it. Inspect the actual UI and possible automatic arming before dependent edits; never blindly retry. Reads do not require selection."
 TRACKS_INSERT_DESCRIPTION = 'Insert and name a top-level track. position is "start", "end" (default) or {before|after: trackRef} of a top-level track of the same list (main tracks for audio/instrument, effect tracks for effect; groups count, their children do not). In a project with groups, tracks.list tree.complete must be true. Returns ref of the new track. An unresolved insertion holds further inserts (reason unresolved); inspect actual state, never blindly retry or reset to bypass ambiguity.'
@@ -148,8 +150,9 @@ SPECS: dict[str, ToolSpec] = {
         examples=(
             {"target": EXAMPLE_SEND, "value": 0.5},
             {"target": EXAMPLE_SEND, "value": {"display": "-12 dB"}, "enabled": True, "expect": {"value": 0.25}},
+            {"target": EXAMPLE_SEND, "mode": "PRE"},
         ),
-        summary='Set one send by the send ref tracks.get returned. value is normalized 0..1 or {display: "-12 dB"}; a level write turns a disabled send on. expect compares bare current values first. Check fields[].outcome; never retry unknown.',
+        summary='Set one send by the send ref tracks.get returned. value is normalized 0..1 or {display: "-12 dB"}; a level write turns a disabled send on; mode sets the pre/post-fader tap. expect compares bare current values first. Check fields[].outcome; never retry unknown.',
     ),
     "meters.get": ToolSpec(
         MetersGetArgs, METERS_GET_DESCRIPTION, True, examples=({"targets": [EXAMPLE_TRACK], "windowMs": 1000},)

@@ -167,7 +167,7 @@ public final class TestServices {
     }
 
     public LauncherModule launcher() {
-        return new LauncherModule(launcherState(), trackRefs);
+        return new LauncherModule(launcherState(), trackRefs, application, transport);
     }
 
     public NoteModule notes() {

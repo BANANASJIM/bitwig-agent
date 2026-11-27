@@ -94,6 +94,7 @@ INSPECT: dict[str, str] = {
     "modulators.map": "modulators.get",
     "modulators.unmap": "modulators.get",
     "launcher.stop": "launcher.list",
+    "launcher.returnToArrangement": "launcher.list",
     "clips.insert": "launcher.list",
     "clips.import": "launcher.list",
     "clips.delete": "launcher.list",

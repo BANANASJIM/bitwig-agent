@@ -2,6 +2,7 @@ import pytest
 from pydantic import ValidationError
 
 from bitwig_agent.protocol import TOOLS, invalid_params_reason, validate_call
+from bitwig_agent.protocol.annotations import resolve
 from bitwig_agent.protocol.launcher import SCENE_REF, TRACK_REF
 from bitwig_agent.protocol.limits import SCENE_WINDOW
 from bitwig_agent.protocol.scenes import MAX_SCENES_PER_INSERT
@@ -10,9 +11,15 @@ from bitwig_agent.protocol.scenes import MAX_SCENES_PER_INSERT
 def test_launcher_list_and_stop_take_a_track_ref():
     assert validate_call("launcher.list", {"target": TRACK_REF})[0] == {"target": TRACK_REF}
     assert validate_call("launcher.list", {"target": TRACK_REF, "sceneOffset": 32})[0]["sceneOffset"] == 32
-    assert validate_call("launcher.stop", {"target": TRACK_REF})[0] == {"target": TRACK_REF}
+    for method in ("launcher.stop", "launcher.returnToArrangement"):
+        assert validate_call(method, {"target": TRACK_REF})[0] == {"target": TRACK_REF}
+        assert validate_call(method, {"target": "all"})[0] == {"target": "all"}
+        assert not TOOLS[method].read_only
+        assert TOOLS[method].inspect == "launcher.list"
     assert TOOLS["launcher.list"].read_only
-    assert not TOOLS["launcher.stop"].read_only
+    assert resolve("launcher.returnToArrangement", TOOLS["launcher.returnToArrangement"].annotations) == resolve(
+        "launcher.stop", TOOLS["launcher.stop"].annotations
+    )
 
 
 @pytest.mark.parametrize(
@@ -22,7 +29,9 @@ def test_launcher_list_and_stop_take_a_track_ref():
         ("launcher.list", {"target": TRACK_REF["id"]}),
         ("launcher.list", {"target": TRACK_REF, "sceneOffset": -1}),
         ("launcher.list", {"target": SCENE_REF}),
-        ("launcher.stop", {"target": "all"}),
+        ("launcher.stop", {"target": "All"}),
+        ("launcher.returnToArrangement", {}),
+        ("launcher.returnToArrangement", {"target": "master"}),
         ("launcher.stop", {"target": {**TRACK_REF, "extra": 1}}),
         ("launcher.stop", {"trackId": TRACK_REF["id"]}),
     ],
