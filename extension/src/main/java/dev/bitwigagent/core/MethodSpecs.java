@@ -59,7 +59,8 @@ public final class MethodSpecs {
                 maxMessageBytes,
                 defaultPort,
                 maxClipLength,
-                responseGraceMs;
+                responseGraceMs,
+                pointBeatDivisor;
         public final double beatGrid, durationResolution, normalizedTolerance, maxCurve;
 
         private Limits(JsonObject object) {
@@ -74,6 +75,7 @@ public final class MethodSpecs {
             defaultPort = integer(object, "defaultPort");
             maxClipLength = integer(object, "maxClipLength");
             responseGraceMs = integer(object, "responseGraceMs");
+            pointBeatDivisor = integer(object, "pointBeatDivisor");
             beatGrid = object.get("beatGrid").getAsDouble();
             durationResolution = object.get("durationResolution").getAsDouble();
             normalizedTolerance = object.get("normalizedTolerance").getAsDouble();
@@ -86,6 +88,7 @@ public final class MethodSpecs {
                     || defaultPort > 65535
                     || maxClipLength < 1
                     || responseGraceMs < 2
+                    || pointBeatDivisor < 1
                     || !(beatGrid > 0)
                     || !(durationResolution > 0)
                     || !(normalizedTolerance > 0)
