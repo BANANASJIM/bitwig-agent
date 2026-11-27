@@ -72,7 +72,7 @@ Tasks marked † are less common and not counted above.
 
 | Task | Status | How |
 |---|---|---|
-| Search preset files by name, device, folder or category | ◑ Partial, not yet verified: Searches preset files by name, folder, creator and category; no tags, collections or favorites. | [`presets.search`](../PROTOCOL.md#device-chain-edits-and-preset-search) |
+| Search preset files by name, folder, creator and category | ◑ Partial, not yet verified: Searches preset files by name, folder, creator and category; no tags, collections or favorites. | [`presets.search`](../PROTOCOL.md#device-chain-edits-and-preset-search) |
 | Browse the device catalog | ◔ Available, not yet verified | [`devices.catalog`](../PROTOCOL.md#domain-controls) |
 | Insert a device or preset | ◔ Available, not yet verified | [`devices.insert`](../PROTOCOL.md#device-chain-edits-and-preset-search) |
 | Drop a sample on a track to get a Sampler | ◑ Partial, not yet verified: Makes a plain Sampler; the drop modifiers for other Sampler setups are not available. | [`tracks.insert`](../PROTOCOL.md#domain-controls), [`devices.insert`](../PROTOCOL.md#device-chain-edits-and-preset-search) |
@@ -129,8 +129,8 @@ Tasks marked † are less common and not counted above.
 
 | Task | Status | How |
 |---|---|---|
-| Enable or bypass a device | ◔ Available, not yet verified | [`devices.set`](../PROTOCOL.md#chains-and-the-devices-inside-them) |
-| List a device chain, read device state, select a device | ◔ Available, not yet verified | [`devices.list`](../PROTOCOL.md#core-discovery-and-direct-parameters), [`devices.get`](../PROTOCOL.md#chains-and-the-devices-inside-them), [`devices.select`](../PROTOCOL.md#chains-and-the-devices-inside-them) |
+| Enable or bypass a device | ◔ Available, not yet verified | [`devices.set`](../PROTOCOL.md#domain-controls) |
+| List a device chain, read device state, select a device | ◔ Available, not yet verified | [`devices.list`](../PROTOCOL.md#core-discovery-and-direct-parameters), [`devices.get`](../PROTOCOL.md#domain-controls), [`devices.select`](../PROTOCOL.md#domain-controls) |
 | Delete a device | ◔ Available, not yet verified | [`devices.delete`](../PROTOCOL.md#device-chain-edits-and-preset-search) |
 | Duplicate or copy a device | ◑ Partial, not yet verified: Top-level devices only, duplicated in place; not devices inside chains, not to another track. | [`devices.duplicate`](../PROTOCOL.md#device-chain-edits-and-preset-search) |
 | Read and set device parameters, including mix knobs | ◔ Available, not yet verified | [`parameters.list`](../PROTOCOL.md#core-discovery-and-direct-parameters), [`parameters.set`](../PROTOCOL.md#core-discovery-and-direct-parameters) |

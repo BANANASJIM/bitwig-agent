@@ -226,6 +226,11 @@ def test_every_link_lands_on_a_section_that_documents_the_method_in_the_rows_cha
             assert documented, (method, anchor)
             in_chapter = [a for a in anchors[method] if a.startswith(chapter)]
             assert method in generator.PINNED or not in_chapter or anchor in in_chapter, (title, method, anchor)
+            own = f"`{method}`" in heading + first or any(
+                generator.leads(line) == [method] or (method in generator.leads(line) and not line.startswith("|"))
+                for line in lines
+            )
+            assert own or anchor in in_chapter, ("only a cross-reference row names it", title, method, anchor)
             checked += 1
     assert checked == page.count("](../PROTOCOL.md#")
     assert "[`clips.set`](../PROTOCOL.md#arranger-clips-version-gated)" in page

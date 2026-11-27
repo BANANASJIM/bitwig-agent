@@ -91,12 +91,15 @@ def leads(line: str) -> list[str]:
 
 
 def protocol_anchors(text: str) -> dict[str, list[str]]:
-    """By method, the sections documenting it, best first: a heading naming it, its reference table rows, then the
-    paragraphs it opens."""
+    """By method, the sections documenting it, best first: a heading naming it, a table row naming it alone (its
+    reference row), a row naming it among others, then the paragraphs it opens."""
     ranked: dict[str, list[tuple[int, str]]] = {}
     for anchor, (heading, lines) in sections(text).items():
         found = [(0, m) for m in re.findall(METHOD, heading)]
-        found += [(1 if line.startswith("|") else 2, m) for line in lines for m in leads(line)]
+        for line in lines:
+            methods = leads(line)
+            rank = (1 if len(methods) == 1 else 2) if line.startswith("|") else 3
+            found += [(rank, m) for m in methods]
         for rank, method in found:
             if (rank, anchor) not in ranked.setdefault(method, []):
                 ranked[method].append((rank, anchor))
