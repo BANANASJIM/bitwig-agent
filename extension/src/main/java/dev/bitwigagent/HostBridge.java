@@ -116,15 +116,7 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
                 new LauncherState(host, scheduler, window, transportSafety, selection, lock, holds, launcherTargets);
         register(new LauncherModule(launcher, trackRefs));
         RenderModule render = new RenderModule(
-                scheduler,
-                window,
-                trackRefs,
-                project,
-                transportSafety,
-                natives,
-                holds,
-                null,
-                slot -> launcher.hasAnyContent(slot));
+                scheduler, window, trackRefs, project, transportSafety, natives, holds, null, launcher);
         NoteModule notes = new NoteModule(launcher);
         register(notes);
         ArrangerModule arranger =

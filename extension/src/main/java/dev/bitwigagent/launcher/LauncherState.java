@@ -16,6 +16,7 @@ import dev.bitwigagent.host.LauncherStructureLock;
 import dev.bitwigagent.host.SelectionLease;
 import dev.bitwigagent.host.TrackWindow;
 import dev.bitwigagent.host.TransportSafety;
+import dev.bitwigagent.render.RenderModule;
 import java.util.*;
 import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
@@ -25,14 +26,15 @@ import java.util.function.Supplier;
  * how an operation binds it, and the unresolved native mutations. Every operation here runs inside a scene window
  * lease and addresses slots by absolute scene.
  */
-public final class LauncherState {
+public final class LauncherState implements RenderModule.LauncherContent {
     // Bitwig 6.1.3 debounces step-size grid regeneration by 100ms before queuing controller delivery.
     // This margin avoids consuming that known old cache; it is not a configuration acknowledgement.
     static final int NOTE_GRID_SETTLE_MS = 150;
     private static final int NOTE_GRID_SIZE = 128;
 
     /** Whether any slot of scenes 0-15 of the track in this bank slot holds a clip; null while one is unobserved. */
-    public Boolean hasAnyContent(int track) {
+    @Override
+    public Boolean hasContent(int track) {
         boolean any = false;
         for (int j = 0; j < Math.min(HostLimits.SCENES, window.sceneCount()); j++) {
             Slot slot = slots[track][j];
@@ -40,6 +42,24 @@ public final class LauncherState {
             any |= slot.observedContent;
         }
         return any;
+    }
+
+    /** Whether a launcher clip of scenes 0-15 of the track is playing or queued (overriding the arranger); null while unobserved. */
+    @Override
+    public Boolean playing(int track) {
+        boolean any = false;
+        for (int j = 0; j < Math.min(HostLimits.SCENES, window.sceneCount()); j++) {
+            Slot slot = slots[track][j];
+            if (!slot.playingReady || !slot.queuedReady) return null;
+            any |= slot.api.isPlaying().get() || slot.api.isPlaybackQueued().get();
+        }
+        return any;
+    }
+
+    /** Whether the track was stopped from the launcher (Track.isStopped); null while unobserved. */
+    @Override
+    public Boolean stopped(int track) {
+        return stopReady[track] ? window.at(track).isStopped().get() : null;
     }
 
     /** One slot of the window, the track it sits on and the scene it holds now. */

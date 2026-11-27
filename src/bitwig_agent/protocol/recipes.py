@@ -49,7 +49,7 @@ RECIPES = (
     "existing patch run grid.export and edit what it returns. Union is a multi-wave oscillator (sawtooth by default); "
     "pitch and gate reach it and the ADSR by pre-cord, without a cable. KEYTRACK 0 keeps the cutoff fixed, because a "
     "keytracked filter in a Poly Grid darkens low notes. Applying it again is a no-op. "
-    f"modules: {_json(BASS_MODULES)}. connections: {_json(BASS_CONNECTIONS)}. "
+    f"spec (grid.apply fields besides target, pruneAll included): {_json(BASS_SPEC)}. "
     "Tune it live with a partial apply (works while the transport plays; only module entries with name and params, "
     f"no type, and no pruneAll): {_json(BASS_TWEAK)}. Voicing is the default single true-mono voice, right for a bass; "
     "voicing:{voices:N} changes it (see grid.apply). Then play a clip through the track and check meters.get or "

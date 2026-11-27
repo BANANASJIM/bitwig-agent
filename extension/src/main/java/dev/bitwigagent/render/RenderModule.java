@@ -81,10 +81,29 @@ public final class RenderModule implements HostModule, JobsModule.Source {
         }
     }
 
-    /** What the launcher holds, observed: true when the track in this bank slot has any launcher clip, null when unobserved. */
+    /**
+     * What the launcher reports for the track in a bank slot, each null when unobserved. A track renders what it is set to
+     * play: the arranger only while it follows it; a launcher clip it plays (or queues) overrides the arranger, and a track
+     * stopped from the launcher renders silent until playback is switched back to the arranger.
+     */
     public interface LauncherContent {
+        /** True when the track holds any launcher clip. */
         Boolean hasContent(int slot);
+
+        /** True when one of its launcher clips is playing or queued, so it overrides the arranger. */
+        default Boolean playing(int slot) {
+            return null;
+        }
+
+        /** True when the track was stopped from the launcher (Track.isStopped), so it overrides the arranger with silence. */
+        default Boolean stopped(int slot) {
+            return null;
+        }
     }
+
+    static final String SWITCH_FIX =
+            "actions.invoke actionId=switch_playback_to_arranger_for_all_tracks (every track follows the arranger again)";
+    static final String COPY_FIX = "clips.copy its launcher clip onto the arranger (to {track, startBeats})";
 
     public interface Access {
         void execute(Runnable work);
@@ -125,6 +144,7 @@ public final class RenderModule implements HostModule, JobsModule.Source {
         final Export export;
         final Map<String, Clips> before = new LinkedHashMap<>();
         final List<String> warnings = new ArrayList<>();
+        final Set<String> fixes = new LinkedHashSet<>();
         final Map<String, String> typesBefore = new LinkedHashMap<>();
         volatile boolean dispatched, settled, reported, returned, abandoned;
         volatile Handle handle;
@@ -443,15 +463,7 @@ public final class RenderModule implements HostModule, JobsModule.Source {
                     };
                     if (export) {
                         for (int i = 0; i < ids.size(); i++)
-                            if (slots[i] >= 0
-                                    && launcher != null
-                                    && Boolean.TRUE.equals(launcher.hasContent(slots[i]))) {
-                                Clips lane = bridge.clips(proxies.get(i), ids.get(i), check);
-                                if (!overlaps(lane.rows, start, end))
-                                    next.warnings.add(
-                                            ids.get(i)
-                                                    + " has launcher clips but no arranger clip in the exported range, so it renders silent: clips.copy its launcher clip onto the arranger (to {track, startBeats}) first");
-                            }
+                            if (slots[i] >= 0 && launcher != null) warnOverride(next, bridge, check, i, slots[i]);
                         next.plan.refresh(next.export.overwrite);
                         next.handle =
                                 bridge.export(project, proxies, ids, next.plan.basePaths(), next.export, check, before);
@@ -470,6 +482,50 @@ public final class RenderModule implements HostModule, JobsModule.Source {
             settle(next, previous);
             throw error;
         }
+    }
+
+    /**
+     * Warns, per requested track, when its render differs from the arranger content in range or is silent: it plays a
+     * launcher clip (renders that), it was stopped from the launcher (silent), or it follows an arranger holding no clip in
+     * range while only the launcher has clips (silent).
+     */
+    private void warnOverride(Job job, Access bridge, Runnable check, int i, int slot) {
+        String id = job.ids.get(i);
+        boolean playing = Boolean.TRUE.equals(launcher.playing(slot)),
+                stopped = Boolean.TRUE.equals(launcher.stopped(slot)),
+                content = Boolean.TRUE.equals(launcher.hasContent(slot));
+        if (!playing && !stopped && !content) return;
+        boolean empty = !overlaps(bridge.clips(job.proxies.get(i), id, check).rows, job.start, job.end);
+        if (playing) {
+            job.fixes.add("switch");
+            if (empty) job.fixes.add("copy");
+            job.warnings.add(id
+                    + " is playing a launcher clip, which overrides the arranger, so it renders that clip, not the arranger"
+                    + (empty ? " (the arranger holds no clip in the exported range)" : " clips in the exported range")
+                    + ". Fix: " + SWITCH_FIX + " and export again"
+                    + (empty ? "; with the arranger empty there, " + COPY_FIX + " first, or it renders silent" : ""));
+        } else if (stopped) {
+            job.fixes.add("switch");
+            if (empty && content) job.fixes.add("copy");
+            job.warnings.add(id
+                    + " was stopped from the launcher, which overrides the arranger, so it renders silent whatever the arranger holds. Fix: "
+                    + SWITCH_FIX + " and export again"
+                    + (empty && content ? "; the arranger holds no clip in the range, so " + COPY_FIX + " first" : ""));
+        } else if (empty) {
+            job.fixes.add("copy");
+            job.warnings.add(id
+                    + " follows the arranger, which holds no clip in the exported range, so it renders silent (launcher clips are rendered only while it plays one). Fix: "
+                    + COPY_FIX + ", then export again");
+        }
+    }
+
+    /** What to do after a warned export; the files are already written. */
+    private static String fixNext(Set<String> fixes) {
+        List<String> steps = new ArrayList<>();
+        if (fixes.contains("switch")) steps.add(SWITCH_FIX);
+        if (fixes.contains("copy")) steps.add(COPY_FIX + " where the arranger is empty in range");
+        return "The files are written as warned. To render what you intend: " + String.join("; ", steps)
+                + ", then export again with overwrite.";
     }
 
     /** Whether any arranger.list row of a lane overlaps [start, end). */
@@ -681,6 +737,7 @@ public final class RenderModule implements HostModule, JobsModule.Source {
                 JsonArray warnings = new JsonArray();
                 for (String warning : current.warnings) warnings.add(warning);
                 result.add("warnings", warnings);
+                result.addProperty("next", fixNext(current.fixes));
             }
             result.addProperty("verification", "native_job_latch_and_file_headers");
         }
