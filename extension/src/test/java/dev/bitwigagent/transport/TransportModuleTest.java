@@ -10,6 +10,7 @@ import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.HostOperation;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Scheduler;
+import dev.bitwigagent.core.ValueMatch;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
@@ -575,6 +576,17 @@ public final class TransportModuleTest {
                 result.get("outcome").getAsString().matches("applied|already_matched")
                         && result.getAsJsonArray("observedOutsideOptions").size() == 0,
                 "a listed value still writes and clears the flag");
+    }
+
+    @Test
+    void beatAndTempoFieldsReadBackWithinOneMillionth() {
+        for (String key : List.of("tempo", "position", "loopStart", "loopLength")) {
+            ValueMatch rule = TransportModule.rule(key);
+            assertTrue(rule.matches(new JsonPrimitive(120.0), new JsonPrimitive(120.0 + 5e-7)), key + " within 1e-6");
+            assertFalse(rule.matches(new JsonPrimitive(120.0), new JsonPrimitive(120.0 + 1e-5)), key + " beyond 1e-6");
+        }
+        assertSame(ValueMatch.NORMALIZED, TransportModule.rule("metronomeVolume"));
+        assertSame(ValueMatch.EXACT, TransportModule.rule("timeSignature"));
     }
 
     @Test

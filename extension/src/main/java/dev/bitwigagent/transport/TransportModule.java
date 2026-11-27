@@ -447,7 +447,7 @@ public final class TransportModule implements HostModule {
                 (EnumValueChangedCallback) v -> value.set(new JsonPrimitive(EnumOptions.listed(source, (String) v))));
     }
 
-    private static ValueMatch rule(String key) {
+    static ValueMatch rule(String key) {
         if (key.equals("metronomeVolume")) return ValueMatch.NORMALIZED;
         if (BEATS_AND_TEMPO_KEYS.contains(key)) return BEATS_AND_TEMPO;
         return ValueMatch.EXACT;
