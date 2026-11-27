@@ -127,6 +127,23 @@ final class AutomationPlanTest {
     }
 
     @Test
+    void threePointsAtOneBeatRoundTripAndMustAllBeListedWithoutARange() {
+        List<Point> lane = List.of(p(4, 0.1, true), p(4, 0.5, false), p(4, 0.9, true));
+        Observed observed = lane(lane);
+        List<AutomationPlan.Request> asRead = List.of(
+                new AutomationPlan.Request(4, 0.1, null, true, 0.0, 0),
+                new AutomationPlan.Request(4, 0.5, null, false, 0.0, 1),
+                new AutomationPlan.Request(4, 0.9, null, true, 0.0, 2));
+        assertTrue(new AutomationPlan(null, asRead, AutomationLane.ALL).apply(observed).empty, "get then set(all)");
+        RpcException fewer = assertThrows(
+                RpcException.class, () -> new AutomationPlan(null, asRead.subList(0, 2), null).apply(observed));
+        assertEquals("beat 4 holds 3 points (a step); list all of them in order, or give a range", fewer.getMessage());
+        AutomationPlan third =
+                new AutomationPlan(null, List.of(step(4, 0.1, 0), step(4, 0.5, 1), step(4, 0.7, 2)), null);
+        assertEquals(List.of(p(4, 0.1, true), new Point(4, 0.5, false, 0), p(4, 0.7, true)), after(lane, third));
+    }
+
+    @Test
     void withoutARangeListedPointsUpdateTheStepInOrder() {
         List<Point> lane = stepped();
         Observed observed = lane(lane);

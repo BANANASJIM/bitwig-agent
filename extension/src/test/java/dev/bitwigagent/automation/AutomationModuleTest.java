@@ -77,16 +77,9 @@ public final class AutomationModuleTest {
         assertTrue(
                 step.get(0).beat == step.get(1).beat && step.get(0).ordinal == 0 && step.get(1).ordinal == 1,
                 "two beats that snap together are a step, in array order");
-        bad(
-                "automation.points.set",
-                set(points(point(1, 0.5, "hold"), point(1.0000003, 0.5, "hold"), point(1, 0.2, "hold"))));
-        assertEquals(
-                "a beat holds at most 2 points (a step)",
-                assertRpcError(
-                                "invalid_params",
-                                () -> AutomationModule.points(set(
-                                        points(point(2, 0.1, "hold"), point(2, 0.2, "hold"), point(2, 0.3, "hold")))))
-                        .getMessage());
+        List<AutomationPlan.Request> three = AutomationModule.points(
+                set(points(point(2, 0.1, "hold"), point(2, 0.2, "hold"), point(2, 0.3, "hold"))));
+        assertEquals(2, three.get(2).ordinal, "a beat holds any number of points, in array order");
         assertEquals(
                 0,
                 AutomationModule.points(set(points(point(1, 0.5, "hold"), point(2, 0.5, "hold"))))

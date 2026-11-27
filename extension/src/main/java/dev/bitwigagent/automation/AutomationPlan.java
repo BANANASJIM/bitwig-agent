@@ -8,6 +8,7 @@ import dev.bitwigagent.core.DisplayScale;
 import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.RangeEdit;
 import dev.bitwigagent.core.Reason;
+import java.math.BigDecimal;
 import java.util.*;
 import java.util.function.Function;
 
@@ -132,10 +133,10 @@ public final class AutomationPlan implements Function<Observed, AutomationPlan.W
                 throw Errors.notApplied(
                         Reason.INVALID_TARGET,
                         "beat "
-                                + new java.math.BigDecimal(beat.getKey())
+                                + new BigDecimal(beat.getKey())
                                         .stripTrailingZeros()
                                         .toPlainString() + " holds " + held
-                                + " points (a step); list all of them in order, or" + " give a range");
+                                + " points (a step); list all of them in order, or give a range");
         }
     }
 
