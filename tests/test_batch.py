@@ -156,6 +156,12 @@ def test_an_unknown_call_without_its_own_next_is_inspected_and_never_resent():
     )
 
 
+def test_a_stopping_error_with_its_own_next_gives_it_in_the_hint():
+    stale = batch.call_path.Error(bridge_error("target_changed", "Stale ref.", "tracks.list").error)
+    result = batch.report([WRITE, WRITE], [stale])
+    assert result["next"] == "Call 1 (transport.set) stopped: tracks.list Call 2 was not run."
+
+
 def test_a_stopping_insert_that_already_created_its_device_is_never_resent():
     refused = bridge_error("unsupported_unit", "Cutoff shows a text display.")
     host = test_configured_insert.Host(**{"parameters.set": [refused]})
@@ -176,7 +182,9 @@ def test_mcp_refuses_a_timeout_inside_a_call_and_takes_malformed_calls_to_valida
     refused = batch.refuse_call_timeouts({"calls": [WRITE, {"method": "tracks.set", "params": {"timeoutMs": 1000}}]})
     assert refused is not None
     assert refused.error["code"] == "invalid_params"
-    assert refused.error["message"].startswith("Call 2 (tracks.set): timeoutMs is not accepted")
+    assert "Call 2 (tracks.set): timeoutMs is not accepted" in refused.error["message"]
+    assert refused.error["entries"][0] == NOT_REACHED
+    assert refused.error["entries"][1]["reason"] == "invalid_params"
     for args in ({"calls": [WRITE]}, {"calls": "x"}, {"calls": [1, {"params": 2}]}, {}):
         assert batch.refuse_call_timeouts(args) is None
 
@@ -232,6 +240,7 @@ async def test_mcp_batch_tool_runs_writes_in_order_and_returns_one_entry_each(mc
     assert timed.is_error is True
     assert timed.structured_content["code"] == "invalid_params"
     assert "timeoutMs" in timed.structured_content["message"]
+    assert [e.get("outcome") or e.get("code") for e in timed.structured_content["entries"]] == ["invalid_params"]
 
     refused = await mcp_session.call_tool("batch", {"calls": [WRITE, {"method": "tracks.list"}]})
     assert refused.is_error is True
