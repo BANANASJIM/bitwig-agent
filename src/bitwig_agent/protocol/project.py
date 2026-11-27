@@ -7,6 +7,7 @@ from pydantic import Field, model_validator
 from bitwig_agent.protocol.annotations import EDIT, SET, STEER
 from bitwig_agent.protocol.base import (
     UTF16_BYTES_PER_UNIT,
+    Nonempty,
     StatusArgs,
     StrictModel,
     ToolSpec,
@@ -55,6 +56,20 @@ class ProjectSaveAsArgs(StrictModel):
         return self
 
 
+KEY_CHOICE = "an option label of project.key.get (case-insensitive) or its integer value; Bitwig's own list"
+
+
+class ProjectKeySetArgs(StatusArgs):
+    root: int | Nonempty = omitted(description=f"Root Key: {KEY_CHOICE} (e.g. 'D' or 2).")
+    scale: int | Nonempty = omitted(description=f"Scale: {KEY_CHOICE} (e.g. 'Minor' or its pitch-class mask 1453).")
+
+    @model_validator(mode="after")
+    def require_change(self) -> Self:
+        if not self.model_fields_set - {"timeoutMs"}:
+            raise ValueError("project.key.set requires root or scale")
+        return self
+
+
 class StatusDetailArgs(StatusArgs):
     detail: Literal["full"] = omitted(
         description="full adds each domain's binding and coverage section; omitted, status is the brief project state."
@@ -71,6 +86,9 @@ PROJECT_SAVE_AS_DESCRIPTION = (
 )
 PROJECT_ACTIVATE_ENGINE_DESCRIPTION = 'Activate the audio engine for the current project (native "Activate Engine For Project" action, dispatched once, never retried). After a Bitwig restart the recovered project can have engineActive=false: clip launches then return not_observed and captures are silent. outcome applied only when hasActiveEngine is observed true within the request deadline (already_matched if it already was); otherwise outcome unknown, reason not_observed. clips.launch, audio.capture and grid.probe refuse with engine_inactive until this succeeds.'
 
+PROJECT_KEY_GET_DESCRIPTION = "Read the project Key Signature (the transport bar's Root Key and Scale) from Bitwig's native model: root and scale are {value, label, options:[{value, label}]} with Bitwig's own option lists (root 0..11; scale value is a pitch-class bit mask, e.g. Major 2741, Minor 1453; label null for a mask outside the list), scaleName is Bitwig's own name of the current scale ('minor', or 'custom [...]'). verification native_readback. Needs the native gate (exact supported Bitwig and JAR hash): native_unavailable otherwise, the public API has no key signature."
+PROJECT_KEY_SET_DESCRIPTION = "Set the project Key Signature: root and/or scale, each an option label from project.key.get (case-insensitive, e.g. root 'D', scale 'Minor') or its integer value. A choice outside Bitwig's own list is invalid_params before anything is written. Changed fields are written in one native transaction, one Undo step ('Set Key Signature'), then read back from the model: per-field outcome applied/already_matched with verification native_readback, or unknown with readback_mismatch (inspect project.key.get, never retry; further key writes are refused until ack). Recording or automation write blocks it (unsafe_state); playback may run. native_unavailable without the native gate."
+
 
 SPECS: dict[str, ToolSpec] = {
     "status": ToolSpec(StatusDetailArgs, STATUS_DESCRIPTION, True, examples=({}, {"detail": "full"})),
@@ -84,4 +102,11 @@ SPECS: dict[str, ToolSpec] = {
         annotations=EDIT,
     ),
     "project.activateEngine": ToolSpec(StatusArgs, PROJECT_ACTIVATE_ENGINE_DESCRIPTION, False, annotations=STEER),
+    "project.key.get": ToolSpec(StatusArgs, PROJECT_KEY_GET_DESCRIPTION, True),
+    "project.key.set": ToolSpec(
+        ProjectKeySetArgs,
+        PROJECT_KEY_SET_DESCRIPTION,
+        False,
+        examples=({"root": "D", "scale": "Minor"}, {"scale": 2741}),
+    ),
 }

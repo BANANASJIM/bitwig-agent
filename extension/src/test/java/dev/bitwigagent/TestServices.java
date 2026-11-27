@@ -43,6 +43,7 @@ import dev.bitwigagent.mix.MeterModule;
 import dev.bitwigagent.mix.MixModule;
 import dev.bitwigagent.mix.TrackLifecycleModule;
 import dev.bitwigagent.project.ContextModule;
+import dev.bitwigagent.project.KeySignatureModule;
 import dev.bitwigagent.project.ProjectModule;
 import dev.bitwigagent.recovery.AckModule;
 import dev.bitwigagent.render.RenderModule;
@@ -243,6 +244,10 @@ public final class TestServices {
 
     public ProjectModule projectModule(ProjectModule.SaveAsAccess access) {
         return new ProjectModule(scheduler, application, project, projectState, natives, holds, access);
+    }
+
+    public KeySignatureModule keySignature(KeySignatureModule.Access access) {
+        return new KeySignatureModule(scheduler, project, transportSafety, natives, holds, access);
     }
 
     public RenderModule render(RenderModule.Access access) {

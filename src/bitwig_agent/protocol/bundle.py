@@ -22,8 +22,8 @@ def export_bundle() -> dict[str, Any]:
                 "inspect": spec.inspect,
                 "defaultTimeoutMs": spec.default_timeout_ms,
                 "maxTimeoutMs": spec.max_timeout_ms,
-                "description": spec.description,
-                "inputSchema": spec.model.model_json_schema(),
+                "description": spec.wire_description or spec.description,
+                "inputSchema": spec.host_model.model_json_schema(),
             }
             for name, spec in TOOLS.items()
         },

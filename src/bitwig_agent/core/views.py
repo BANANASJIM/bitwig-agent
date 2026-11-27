@@ -9,7 +9,6 @@ from typing import Any
 
 from bitwig_agent.client import package_version
 from bitwig_agent.protocol import (
-    CLIENT_SIDE,
     TOOLS,
     ToolSpec,
     unknown_arguments_message,
@@ -63,10 +62,6 @@ def read_only(name: str) -> bool:
 def records(name: str) -> str | None:
     """The top-level array of objects a read returns, when it has one: the key row output prints."""
     return TOOLS[name].records
-
-
-def is_composed(name: str) -> bool:
-    return name in CLIENT_SIDE
 
 
 def index(prefix: str = "") -> dict[str, dict[str, Any]]:

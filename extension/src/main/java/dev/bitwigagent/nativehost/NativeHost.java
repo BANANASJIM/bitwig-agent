@@ -118,17 +118,27 @@ public final class NativeHost {
         /** The host class bound to {@code key} in this version's name table. */
         Class<?> type(String key) throws ClassNotFoundException {
             requireAvailable();
-            return hostType(classes.get(key).getAsString());
+            return hostType(entry(classes, key).getAsString());
         }
 
         /** The host member name bound to {@code key}, for lookups the exact descriptors below do not cover. */
         String name(String key) {
             requireAvailable();
-            return members.getAsJsonObject(key).get("name").getAsString();
+            return entry(members, key).getAsJsonObject().get("name").getAsString();
         }
 
         private Class<?> owner(String key) throws ClassNotFoundException {
-            return type(members.getAsJsonObject(key).get("owner").getAsString());
+            requireAvailable();
+            return type(entry(members, key).getAsJsonObject().get("owner").getAsString());
+        }
+
+        /** A key this version's table lacks fails only the feature that uses it. */
+        private JsonElement entry(JsonObject table, String key) {
+            JsonElement entry = table.get(key);
+            if (entry == null || entry.isJsonNull())
+                throw Errors.notApplied(
+                        Reason.NATIVE_UNAVAILABLE, "Bitwig " + hostVersion + " has no native binding for " + key + ".");
+            return entry;
         }
 
         private Class<?> hostType(String name) throws ClassNotFoundException {

@@ -2,9 +2,10 @@
 
 import asyncio
 import math
-import struct
 
 import pytest
+from audio_golden import sine as golden_sine
+from audio_golden import write
 
 from bitwig_agent.audio import loudness, pipewire
 from bitwig_agent.errors import BridgeError
@@ -15,16 +16,11 @@ RATE = 48000
 
 def write_float_wav(path, channels, rate=RATE):
     """32-bit float WAV, so the file carries the exact synthetic samples (no 16-bit rounding)."""
-    n = len(channels[0])
-    data = b"".join(struct.pack(f"<{len(channels)}f", *(ch[i] for ch in channels)) for i in range(n))
-    fmt = struct.pack("<HHIIHH", 3, len(channels), rate, rate * 4 * len(channels), 4 * len(channels), 32)
-    body = b"WAVEfmt " + struct.pack("<I", 16) + fmt + b"data" + struct.pack("<I", len(data)) + data
-    path.write_bytes(b"RIFF" + struct.pack("<I", len(body)) + body)
+    write(path, channels, rate, 32, is_float=True)
 
 
 def sine(db, hz, seconds, rate=RATE, phase=0.0):
-    amp = 10 ** (db / 20)
-    return [amp * math.sin(2 * math.pi * hz * i / rate + phase) for i in range(int(seconds * rate))]
+    return golden_sine(hz, seconds, rate, db=db, phase=phase)
 
 
 def analyze(path, **args):

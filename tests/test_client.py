@@ -9,7 +9,7 @@ from pydantic import ValidationError
 from bitwig_agent.client import BridgeClient, configured_port, package_version, supported_bitwig
 from bitwig_agent.core import composed
 from bitwig_agent.errors import BridgeError
-from bitwig_agent.protocol import CLIENT_SIDE, TOOLS, validate_call
+from bitwig_agent.protocol import COMPOSED, TOOLS, validate_call
 from bitwig_agent.protocol.base import PROTOCOL
 from bitwig_agent.protocol.grid import TARGET as GRID
 from bitwig_agent.protocol.limits import MAX_MESSAGE_BYTES
@@ -232,5 +232,5 @@ async def test_oversized_grid_get_response_says_to_lower_module_limit(host):
     assert "includeParameters=false" in caught.value.error["message"]
 
 
-def test_client_side_set_matches_handlers():
-    assert frozenset(composed.HANDLERS) == CLIENT_SIDE
+def test_composed_set_matches_handlers():
+    assert frozenset(composed.HANDLERS) == COMPOSED
