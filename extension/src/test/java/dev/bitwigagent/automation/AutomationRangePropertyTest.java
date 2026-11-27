@@ -142,6 +142,13 @@ final class AutomationRangePropertyTest {
     }
 
     @Property
+    void writingTheCanonicalRecordsOfALaneRestoresItWhateverWasWrittenOver(@ForAll("cases") Case c) {
+        List<Native> over = AutomationFake.natives(points(written(c)));
+        AutomationPlan restore = new AutomationPlan(null, asListed(c.lane), AutomationLane.ALL);
+        assertEquals(c.lane, points(AutomationFake.execute(over, restore.apply(observed(over, List.of())))));
+    }
+
+    @Property
     void replayingARequestIsAlreadyMatched(@ForAll("cases") Case c) {
         List<Native> after = written(c);
         assertTrue(plan(after, c).change.isEmpty());
@@ -156,8 +163,9 @@ final class AutomationRangePropertyTest {
         for (Point p : c.lane) before.put(p.beat, p);
         for (AutomationPlan.Request r : c.listed) {
             Point written = byBeat.get(r.beat), was = before.get(r.beat);
-            double curve = r.curve != null ? r.curve : was == null ? 0 : was.curve;
-            assertEquals(curve, written.curve, "a given curve is written, an omitted one kept or 0");
+            double curve = r.curve != null ? r.curve : c.range != null || was == null ? 0 : was.curve;
+            assertEquals(curve, written.curve, "a given curve is written; omitted: 0 with a range, else kept or 0");
+            if (r.linear == null && c.range != null) assertTrue(written.linear, "omitted with a range: linear");
             if (r.display != null)
                 assertTrue(DisplayScale.reads(r.display, AutomationFake.display(written.value)), "display round trip");
             else assertEquals(new Point(0, r.value, true, 0).value, written.value);
