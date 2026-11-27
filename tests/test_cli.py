@@ -899,15 +899,21 @@ async def test_batch_runs_lines_in_order_and_prints_one_result_line_each(host, m
     assert [r["method"] for r in host.requests] == ["tracks.set", "transport.set"]
 
 
-async def test_batch_stops_at_the_first_unsuccessful_outcome_with_its_code(host, monkeypatch):
+@pytest.mark.parametrize(
+    ("outcomes", "code", "printed"),
+    [(["applied", "unknown", "applied"], 3, 2), (["sent", "already_matched", "applied"], 0, 3)],
+)
+async def test_batch_continues_past_success_and_stops_at_the_first_unsuccessful_outcome(
+    host, monkeypatch, outcomes, code, printed
+):
     monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
-    outcomes = iter(["applied", "unknown", "applied"])
-    host.reply = lambda request: {"id": request["id"], "result": {"outcome": next(outcomes)}}
+    replies = iter(outcomes)
+    host.reply = lambda request: {"id": request["id"], "result": {"outcome": next(replies)}}
     stdin = lines_of(*({"method": "transport.set", "params": {"playing": False}},) * 3)
     out = await cli.execute(["batch", "-"], stdin=lambda: stdin)
-    assert out.code == 3
-    assert out.stdout.splitlines() == ['{"outcome":"applied"}', '{"outcome":"unknown"}']
-    assert len(host.requests) == 2
+    assert out.code == code
+    assert [json.loads(line)["outcome"] for line in out.stdout.splitlines()] == outcomes[:printed]
+    assert len(host.requests) == printed
 
 
 async def test_batch_stops_at_the_first_error_and_names_the_line(host, monkeypatch):
