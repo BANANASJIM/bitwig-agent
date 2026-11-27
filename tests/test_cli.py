@@ -16,7 +16,6 @@ from bitwig_agent.frontends import cli
 from bitwig_agent.frontends.cli import main
 from bitwig_agent.protocol import TOOLS, invalid_params_message, validate_call
 from bitwig_agent.protocol.base import REASONS, TRACK, StatusArgs, ToolSpec
-from bitwig_agent.protocol.clips import NOTE_WINDOW
 from bitwig_agent.protocol.grid import DEVICE
 from bitwig_agent.protocol.grid import TARGET as GRID
 from bitwig_agent.protocol.launcher import CLIP_REF, SLOT_REF, TRACK_REF
@@ -61,17 +60,17 @@ async def test_typed_arguments_forward_without_null_defaults(host, monkeypatch):
 
 async def test_nested_note_arguments_and_raw_json_are_equivalent(host, monkeypatch):
     monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
-    edits = [
-        {"op": "set", "beat": 0, "pitch": 60, "velocity": 90, "duration": 1},
-        {"op": "clear", "beat": 1, "pitch": 64},
+    notes = [
+        {"beat": 0, "pitch": 60, "velocity": 90, "duration": 1},
+        {"beat": 1, "pitch": 64, "velocity": 70},
     ]
-    args = {**NOTE_WINDOW, "edits": edits}
+    args = {"target": CLIP_REF, "range": {"start": 0, "end": 4}, "notes": notes}
     typed = flags("notes.set", args)
     for argv in [["notes.set", *typed], ["notes.set", json.dumps(args)]]:
         payload, code = await execute(argv)
         assert code == 0, payload
         assert host.requests[-1]["params"] == args
-    assert "duration" not in host.requests[-1]["params"]["edits"][1]
+    assert "duration" not in host.requests[-1]["params"]["notes"][1]
 
 
 @pytest.mark.parametrize(
@@ -540,13 +539,13 @@ def test_nested_unknown_argument_names_full_path_and_siblings():
         "length": 4,
         "notes": [
             {"beat": 0, "pitch": 60, "velocity": 0.8, "duration": 1},
-            {"beat": 1, "pitch": 62, "velocity": 0.8, "duration": 1, "channel": 2},
+            {"beat": 1, "pitch": 62, "velocity": 0.8, "duration": 1, "chanel": 2},
         ],
     }
     with pytest.raises(ValidationError) as error:
         validate_call("clips.insert", args)
     message = invalid_params_message("clips.insert", error.value)
-    assert "notes[1].channel" in message
+    assert "notes[1].chanel" in message
     assert "Accepted at notes[]: " in message
     assert "duration" in message
     assert "velocity" in message

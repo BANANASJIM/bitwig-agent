@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from decimal import ROUND_FLOOR, ROUND_HALF_UP, Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Annotated, Any, Literal, NamedTuple, Self
 
 from pydantic import Discriminator, Field, Tag, model_validator
@@ -21,150 +21,188 @@ from bitwig_agent.protocol.base import (
 from bitwig_agent.protocol.launcher import ARRANGER_CLIP_REF, CLIP_REF, SLOT_REF, TRACK_REF
 from bitwig_agent.protocol.limits import (
     BEAT_GRID,
-    BEAT_GRID_DIVISOR,
-    BEAT_GRID_LABEL,
+    DURATION_RESOLUTION,
     DURATION_RESOLUTION_DIVISOR,
     MAX_CLIP_BEATS,
 )
 from bitwig_agent.protocol.refs import ArrangerClipRef, Beats, ClipRef, LauncherClipRef, SlotRef, TrackRef
 from bitwig_agent.protocol.values import Expect
 
-MIDI_PITCH_COUNT = 128
 MAX_ARRANGER_CLIP_BEATS = 65536
 MAX_TRANSFORM_TARGETS = 16
 COLOR = r"^#[0-9a-fA-F]{6}$"
 
 
-class ClipNote(StrictModel):
-    beat: float = Field(ge=0, le=MAX_BEAT, description="Onset in beats from the clip start, on a grid of 1/128 beat.")
-    pitch: int = Field(ge=0, le=127)
-    velocity: int = Field(ge=1, le=127)
-    duration: float = Field(ge=BEAT_GRID, le=MAX_CLIP_BEATS)
+NOTE_RESOLUTION = Decimal(1) / DURATION_RESOLUTION_DIVISOR
 
 
-ONSET_GRID = Decimal(1) / BEAT_GRID_DIVISOR
+def canonical(value: float) -> Decimal:
+    """A beat or duration as Bitwig stores it: the nearest multiple of 1/1048576 beat."""
+    return (Decimal(str(value)) / NOTE_RESOLUTION).quantize(Decimal(1), rounding=ROUND_HALF_UP) * NOTE_RESOLUTION
 
 
 def plain(value: Decimal) -> str:
     return format(value.normalize(), "f")
 
 
-DURATION_STEP = Decimal(1) / DURATION_RESOLUTION_DIVISOR
+Channel = Annotated[int, Field(ge=0, le=15, description="MIDI channel 0..15; omitted means 0.")]
+NoteBeat = Annotated[float, Field(ge=0, le=MAX_BEAT, description="Onset in beats from the clip start.")]
+Pitch = Annotated[int, Field(ge=0, le=127)]
+Velocity = Annotated[int, Field(ge=1, le=127, description="MIDI velocity 1..127.")]
+Duration = Annotated[float, Field(ge=DURATION_RESOLUTION, le=MAX_CLIP_BEATS)]
 
 
-def stored_duration(duration: Decimal) -> Decimal:
-    """The duration Bitwig stores for a requested one: the nearest multiple of its duration resolution."""
-    return (duration / DURATION_STEP).quantize(Decimal(1), rounding=ROUND_HALF_UP) * DURATION_STEP
+class ClipNote(StrictModel):
+    """One note as notes.get reads it and clips.insert writes it."""
+
+    beat: NoteBeat
+    pitch: Pitch
+    velocity: Velocity
+    duration: Duration
+    channel: Channel = omitted()
 
 
-class NoteWindow(NamedTuple):
-    grid: Decimal
-    start: int
-    steps: int
-    pitch: int
-    pitches: int
+class NotePatch(StrictModel):
+    """One listed note of notes.set: a note at (channel, pitch, beat) gets the fields given; a new one needs all."""
+
+    beat: NoteBeat
+    pitch: Pitch
+    velocity: Velocity = omitted(description="Required for a new note; omitted keeps an existing note's velocity.")
+    duration: Duration = omitted(description="Required for a new note; omitted keeps an existing note's duration.")
+    channel: Channel = omitted()
 
 
 class Span(NamedTuple):
     position: int
+    channel: int
     pitch: int
-    is_set: bool
-    beat: Decimal
-    end: Decimal  # as Bitwig stores it: what every rule judges
-    requested_end: Decimal  # what messages show
+    beat: Decimal  # as Bitwig stores it: what every rule judges
+    shown: Decimal  # as requested: what messages show
+    end: Decimal | None  # as Bitwig stores it, None when the duration is omitted
+    requested_end: Decimal  # what messages show (the onset when the duration is omitted)
 
 
-def window_problem(at: str, span: Span, window: NoteWindow) -> str | None:
-    step, rest = divmod(span.beat, window.grid)
-    window_end = (window.start + window.steps) * window.grid
-    if rest:
-        return f"{at} beat {plain(span.beat)} does not align with stepSize {plain(window.grid)}: use a multiple of it"
-    if not (
-        window.start <= step < window.start + window.steps
-        and window.pitch <= span.pitch < window.pitch + window.pitches
-    ):
-        return (
-            f"{at} (beat {plain(span.beat)}, pitch {span.pitch}) is outside the window: beats "
-            f"{plain(window.start * window.grid)} to {plain(window_end)}, pitches {window.pitch} to "
-            f"{window.pitch + window.pitches - 1}"
+def spans(notes: list[Any]) -> list[Span]:
+    out = []
+    for index, note in enumerate(notes):
+        beat = canonical(note.beat)
+        duration = None if note.duration is None else Decimal(str(note.duration))
+        out.append(
+            Span(
+                index,
+                note.channel or 0,
+                note.pitch,
+                beat,
+                Decimal(str(note.beat)),
+                None if duration is None else beat + canonical(note.duration),
+                Decimal(str(note.beat)) + (duration or 0),
+            )
         )
-    if span.end > window_end:
+    return out
+
+
+class NoteRange(StrictModel):
+    start: NoteBeat
+    end: Annotated[float, Field(gt=0, le=MAX_BEAT)]
+    pitches: Annotated[list[Pitch], Field(min_length=2, max_length=2)] = omitted(
+        description="[low, high], both included: only these pitches belong to the range."
+    )
+
+    @model_validator(mode="after")
+    def validate_bounds(self) -> Self:
+        if self.end <= self.start:
+            raise ValueError("range.end must be greater than range.start")
+        if self.pitches is not None and self.pitches[0] > self.pitches[1]:
+            raise ValueError("range.pitches is [low, high] with low <= high")
+        return self
+
+
+RANGE_DESCRIPTION = (
+    '"all" (the whole clip, outside the loop too) or {start, end, pitches?}: notes whose onset lies in '
+    "[start, end) and whose pitch lies in pitches [low, high] (default all)."
+)
+Range = Annotated[NoteRange | Literal["all"], Field(description=RANGE_DESCRIPTION)]
+
+
+def range_problem(at: str, span: Span, range_: NoteRange) -> str | None:
+    start, end = canonical(range_.start), canonical(range_.end)
+    shown_start, shown_end = Decimal(str(range_.start)), Decimal(str(range_.end))
+    if span.beat < start:
         return (
-            f"{at} ends at beat {plain(span.requested_end)}, past the window end {plain(window_end)}: shorten it to "
-            f"duration <= {plain(window_end - span.beat)}"
+            f"{at} beat {plain(span.shown)} is before range.start {plain(shown_start)}: move it inside, or lower "
+            "range.start"
+        )
+    if span.beat >= end:
+        return (
+            f"{at} beat {plain(span.shown)} is outside range [{plain(shown_start)}, {plain(shown_end)}): move it "
+            f"inside, or raise range.end above {plain(span.shown)}"
+        )
+    if range_.pitches is not None and not range_.pitches[0] <= span.pitch <= range_.pitches[1]:
+        low, high = range_.pitches
+        return (
+            f"{at} pitch {span.pitch} is outside range.pitches [{low}, {high}]: move it inside, or widen range.pitches"
         )
     return None
 
 
-def onset_problem(at: str, span: Span) -> str | None:
-    if not span.beat % ONSET_GRID:
-        return None
-    low = (span.beat / ONSET_GRID).to_integral_value(rounding=ROUND_FLOOR) * ONSET_GRID
-    return f"{at} beat {plain(span.beat)} is not on the {BEAT_GRID_LABEL}-beat grid: use {plain(low)} or {plain(low + ONSET_GRID)}"
-
-
 def length_problem(at: str, span: Span, length: Decimal) -> str | None:
-    if not span.is_set or span.end <= length:
+    if span.end is None or span.end <= length:
         return None
     if span.beat >= length:
-        return f"{at} starts at beat {plain(span.beat)}, at or past the clip length {plain(length)}"
+        return f"{at} starts at beat {plain(span.shown)}, at or past the clip length {plain(length)}"
     return (
         f"{at} ends at beat {plain(span.requested_end)}, past the clip length {plain(length)}: shorten it to duration <= "
-        f"{plain(length - span.beat)}"
+        f"{plain(length - span.shown)}"
     )
 
 
-def collision_problems(spans: list[Span], field: str) -> list[tuple[int, str]]:
-    """Repeated cells, then sets that start before an earlier same-pitch set ends."""
+def collision_problems(listed: list[Span], field: str) -> list[tuple[int, str]]:
+    """Repeated notes, then listed notes that start before an earlier one on the same channel and pitch ends."""
     found = []
-    cells: dict[tuple[str, int], int] = {}
-    for span in spans:
-        first = cells.setdefault((plain(span.beat), span.pitch), span.position)
+    cells: dict[tuple[int, int, Decimal], int] = {}
+    for span in listed:
+        first = cells.setdefault((span.channel, span.pitch, span.beat), span.position)
         if first != span.position:
-            found.append(
-                (span.position, f"{field}[{span.position}] repeats the beat and pitch of {field}[{first}]: remove one")
-            )
-    holders: dict[int, Span] = {}  # per pitch, the set seen so far that ends last
-    for span in sorted(spans, key=lambda s: (s.beat, s.position)):
-        if not span.is_set:
-            continue
-        holder = holders.get(span.pitch)
-        if holder is not None and holder.beat != span.beat and holder.end > span.beat:
             found.append(
                 (
                     span.position,
-                    f"{field}[{span.position}] starts at beat {plain(span.beat)} before {field}[{holder.position}] on pitch "
-                    f"{span.pitch} ends at beat {plain(holder.requested_end)}: shorten {field}[{holder.position}] to duration <= "
-                    f"{plain(span.beat - holder.beat)}",
+                    f"{field}[{span.position}] repeats the channel, beat and pitch of {field}[{first}]: remove one",
                 )
             )
-        if holder is None or span.end > holder.end:
-            holders[span.pitch] = span
+    holders: dict[tuple[int, int], Span] = {}  # per channel and pitch, the note seen so far that ends last
+    for span in sorted(listed, key=lambda s: (s.beat, s.position)):
+        row = (span.channel, span.pitch)
+        holder = holders.get(row)
+        if holder is not None and holder.end is not None and holder.beat != span.beat and holder.end > span.beat:
+            found.append(
+                (
+                    span.position,
+                    f"{field}[{span.position}] starts at beat {plain(span.shown)} before {field}[{holder.position}] on pitch "
+                    f"{span.pitch} ends at beat {plain(holder.requested_end)}: shorten {field}[{holder.position}] to "
+                    f"duration <= {plain(span.shown - holder.shown)}",
+                )
+            )
+        if span.end is not None and (holder is None or holder.end is None or span.end > holder.end):
+            holders[row] = span
     return found
 
 
-def note_violations(
-    notes: list[Any], field: str, length: Decimal | None = None, window: NoteWindow | None = None
-) -> list[str]:
-    """Every grid and clip rule the entries break, in request order, with the extension's texts.
+def note_violations(notes: list[Any], field: str, length: Decimal | None = None, range_: Any = None) -> list[str]:
+    """Every rule the listed notes break on their own, in request order, with the extension's texts.
 
-    Note ends are judged as Bitwig stores them; the extension derives or checks the window itself.
+    Rules that need the clip (overlap with an unlisted note, a new note without velocity or duration) are the
+    extension's.
     """
-    spans = []
-    for index, note in enumerate(notes):
-        beat = Decimal(str(note.beat))
-        is_set = getattr(note, "op", "set") == "set"
-        duration = Decimal(str(note.duration)) if is_set else Decimal(0)
-        spans.append(Span(index, note.pitch, is_set, beat, beat + stored_duration(duration), beat + duration))
+    listed = spans(notes)
     found: list[tuple[int, str]] = []
-    for span in spans:
+    for span in listed:
         at = f"{field}[{span.position}]"
         problems = (
-            window_problem(at, span, window) if window is not None else onset_problem(at, span),
             length_problem(at, span, length) if length is not None else None,
+            range_problem(at, span, range_) if isinstance(range_, NoteRange) else None,
         )
         found += [(span.position, text) for text in problems if text]
-    found += collision_problems(spans, field)
+    found += collision_problems(listed, field)
     return [text for _, text in sorted(found, key=lambda item: item[0])]
 
 
@@ -215,9 +253,9 @@ class ClipInsertArgs(StatusArgs):
     length: Annotated[float, Field(ge=BEAT_GRID, le=MAX_ARRANGER_CLIP_BEATS)] = omitted(
         description="Arranger position only: the clip length."
     )
-    notes: Annotated[list[ClipNote], Field(min_length=1, max_length=256)] = omitted()
-    channel: Annotated[int, Field(ge=0, le=15)] = omitted()
-    detail: Literal["compact", "full"] = omitted()
+    notes: Annotated[list[ClipNote], Field(min_length=1)] = omitted(
+        description="The new clip's notes, in the record notes.get reads; they must fit the length."
+    )
 
     @model_validator(mode="after")
     def validate_shape(self) -> Self:
@@ -227,14 +265,9 @@ class ClipInsertArgs(StatusArgs):
             raise ValueError("a launcher slot takes loop:{length}, not length")
         if not launcher and ("length" not in supplied or "loop" in supplied):
             raise ValueError("an arranger position takes length, not loop")
-        if "notes" not in supplied:
-            if {"channel", "detail"} & supplied:
-                raise ValueError("channel and detail are only valid together with notes")
-            return self
-        if not launcher and "detail" in supplied:
-            raise ValueError("detail applies to launcher slots only")
-        length = Decimal(str(self.loop.length if launcher else self.length))
-        refuse_violations("notes", note_violations(self.notes, "notes", length))
+        if "notes" in supplied:
+            length = Decimal(str(self.loop.length if launcher else self.length))
+            refuse_violations("notes", note_violations(self.notes, "notes", length))
         return self
 
 
@@ -362,74 +395,23 @@ class ClipTransformArgs(StatusArgs):
     op: Literal["doubleContent"]
 
 
-GRID_FIELDS = {"stepSize", "startStep", "steps", "pitchStart", "pitchCount"}
+class NotesGetArgs(ClipTargetArgs):
+    range: Range = omitted(description="Limits the notes returned; default the whole clip. " + RANGE_DESCRIPTION)
 
 
-class NoteWindowArgs(ClipTargetArgs):
-    channel: Annotated[int, Field(ge=0, le=15)] = omitted()
-    stepSize: Annotated[float, Field(ge=BEAT_GRID, le=4)] = omitted()
-    startStep: Annotated[int, Field(ge=0, le=1048576)] = omitted()
-    steps: Annotated[int, Field(ge=1, le=128)] = omitted()
-    pitchStart: Annotated[int, Field(ge=0, le=127)] = omitted()
-    pitchCount: Annotated[int, Field(ge=1, le=MIDI_PITCH_COUNT)] = omitted()
-
-    @property
-    def explicit_window(self) -> bool:
-        return bool(GRID_FIELDS & self.model_fields_set)
+class NotesSetArgs(ClipTargetArgs):
+    notes: list[NotePatch] = Field(
+        description="Without range: written in place (inserted or updated), nothing removed. With range: the notes "
+        "of the range become exactly these."
+    )
+    range: Range = omitted()
 
     @model_validator(mode="after")
-    def validate_pitch_window(self) -> Self:
-        supplied = GRID_FIELDS & self.model_fields_set
-        if supplied and supplied != GRID_FIELDS:
-            raise ValueError(
-                "stepSize, startStep, steps, pitchStart and pitchCount must be supplied together or all omitted"
-            )
-        if supplied and self.pitchStart + self.pitchCount > MIDI_PITCH_COUNT:
-            raise ValueError(f"pitchStart + pitchCount must not exceed {MIDI_PITCH_COUNT}")
+    def validate_notes(self) -> Self:
+        if "range" not in self.model_fields_set and not self.notes:
+            raise ValueError('notes is empty: give range (e.g. "all") to clear that range, or list notes to write')
+        refuse_violations("notes", note_violations(self.notes, "notes", range_=self.range))
         return self
-
-
-class NoteEdit(StrictModel):
-    op: Literal["set", "clear"]
-    beat: float = Field(ge=0, le=MAX_BEAT)
-    pitch: int = Field(ge=0, le=127)
-    velocity: Annotated[int, Field(ge=1, le=127)] = omitted()
-    duration: Annotated[float, Field(ge=BEAT_GRID, le=MAX_CLIP_BEATS)] = omitted()
-
-    @model_validator(mode="after")
-    def validate_operation(self) -> Self:
-        supplied = self.model_fields_set & {"velocity", "duration"}
-        if self.op == "set" and supplied != {"velocity", "duration"}:
-            raise ValueError("set requires velocity and duration")
-        if self.op == "clear" and supplied:
-            raise ValueError("clear forbids velocity and duration")
-        return self
-
-
-class NoteEditArgs(NoteWindowArgs):
-    edits: list[NoteEdit] = Field(min_length=1, max_length=256)
-    detail: Literal["compact", "full"] = omitted()
-
-    @model_validator(mode="after")
-    def validate_edits(self) -> Self:
-        window = (
-            NoteWindow(Decimal(str(self.stepSize)), self.startStep, self.steps, self.pitchStart, self.pitchCount)
-            if self.explicit_window
-            else None
-        )
-        refuse_violations("edits", note_violations(self.edits, "edits", window=window))
-        return self
-
-
-NOTE_WINDOW = {
-    "target": CLIP_REF,
-    "channel": 0,
-    "stepSize": 0.25,
-    "startStep": 0,
-    "steps": 16,
-    "pitchStart": 0,
-    "pitchCount": 128,
-}
 
 
 CLIPS_GET_DESCRIPTION = (
@@ -440,28 +422,27 @@ CLIPS_GET_DESCRIPTION = (
     "playback or persistence proof."
 )
 NOTE_RULES = (
-    f"Note rules: beats on a {BEAT_GRID_LABEL}-beat grid; any duration (Bitwig stores it to 1/1048576 beat, and "
-    "readback is compared at that step); no two notes on one beat and pitch, no same-pitch overlap. Every broken rule "
-    "is refused at once (each with its index and a fix) and nothing is written. "
+    "A note is {beat, pitch, velocity 1..127, duration, channel (omitted = 0)}, the record notes.get reads. Beats and "
+    "durations are compared as Bitwig stores them (1/1048576 beat). No two notes on one channel, pitch and beat; no "
+    "overlap on one channel and pitch. Every broken rule is refused at once, each with its index and a fix, and "
+    "nothing is written. "
 )
-NOTE_WINDOWS = (
-    "On the inspected Bitwig 6.1.4 JAR all notes of the call are one Undo step (undo=one_step), written before "
-    "the clip is selected; a refused cell writes nothing. They are read back through 128-step windows of the finest "
-    "power-of-two grid that aligns every onset; a span too long for one uses several windows of the coarsest aligning "
-    "grid in the same call: windows[] has each window's result and outcome is the worst. Without that JAR each note "
-    "is its own Undo step (undo=per_note) and after a window that does not succeed the rest are not_reached, their "
-    "indices in notReached. "
+NOTE_PATHS = (
+    "With the native note binding (Bitwig 6.1.4/6.1.7) the write is one Undo step (undo=one_step) and is read back "
+    "natively without selecting anything (exact=true, verification=native_readback). Without it the public API "
+    "writes note by note: onsets on the 1/128-beat grid, one per cell, one Undo step each (undo=per_note), the clip "
+    "selected and read back through its note grid (exact=false, verification=api_readback). "
 )
 CLIPS_INSERT_DESCRIPTION = (
     "Create a named MIDI clip in an EMPTY launcher slot (to: a slot ref from launcher.list, scene included; loop "
     "{length} sets loop length and playback stop) or on an instrument track's arranger timeline (to {track, "
-    "start}, length; refused on overlap, never overwrites). Optional notes (beat, pitch, velocity, "
-    "duration; optional channel, default 0) are written in the same call and must fit the length. "
+    "start}, length; refused on overlap, never overwrites). Optional notes are written in the same call and must "
+    "fit the length. "
     + NOTE_RULES
-    + "Launcher: the note result is noteWrite, in notes.set's shape (detail=full for the full one). "
-    + NOTE_WINDOWS
-    + "A launcher create selects the clip in the host UI. Returns the new clip's ref. An unobserved create is "
-    "outcome unknown (reason not_observed): inspect, then ack the hold; never retry."
+    + "Launcher: the note result is noteWrite, in notes.set's shape. "
+    + NOTE_PATHS
+    + "Returns the new clip's ref. An unobserved create is outcome unknown (reason not_observed): inspect, then ack "
+    "the hold; never retry."
 )
 CLIPS_IMPORT_DESCRIPTION = (
     "Import a local audio or clip file into an EMPTY launcher slot (to: a slot ref). Occupied slots reject; no "
@@ -528,34 +509,27 @@ CLIPS_TRANSFORM_DESCRIPTION = (
     "the first entry that is not applied, already_matched or sent (later entries not_applied, not_reached)."
 )
 NOTES_GET_DESCRIPTION = (
-    "Read a clip/channel/grid/pitch window. Selects the target clip in the host UI (moves the editor cursor; see "
-    "context.get). channel is zero-based MIDI 0..15; beat 0 is clip start. stepSize=0.25,startStep=0,steps=16 "
-    "covers four beats. Omit all five grid fields (channel defaults to 0) to read the whole clip loop over all "
-    "pitches at 1/32 (loop <=16 beats) or 1/16 note, 128 steps max; if the loop is longer, windowCoversLoop=false "
-    "and continuation gives the next explicit window. Rows are {beat, pitch, velocity 1..127, duration}: the "
-    "unit notes.set takes; channel is the window's. At most 2048 onsets returned: inspect completeWindow, "
-    "notesInWindow, notesReturned, continuingAtWindowStart (notes sustaining into the window start) and subdivide "
-    "steps or pitchCount when incomplete. Grid data is only scheduled-settled (gridReadiness), not a host-data "
-    "barrier; late callbacks lack window identity. One onset per grid cell: sub-step and multiple onsets per cell "
-    "are not exposed; the read never covers the whole clip (use the loop window)."
+    "Read the notes of one launcher clip: every note of every channel, in the record notes.set and clips.insert "
+    "take, sorted by beat then pitch; channel is omitted when 0. range ({start, end, pitches?}) only limits the "
+    "output. Result: ref, loop, count (notes in the range), complete (false when the response cap cut the list: "
+    "read the rest by range), exact and notes. exact=true: read natively (Bitwig 6.1.4/6.1.7), no selection, onsets "
+    "exact. exact=false: the public API's note grid, onsets snapped to onsetResolution, one onset per cell, the clip "
+    "selected (a failure after that is unknown)."
 )
 NOTES_SET_DESCRIPTION = (
-    "Edit up to 256 onset cells. Selects the target clip in the host UI (moves the editor cursor; see context.get). "
-    "The window (stepSize,startStep,steps,pitchStart,pitchCount; all five or none) may be omitted: it is then "
-    "derived from the onsets and the pitch range (echoed with derived=true). "
-    + NOTE_WINDOWS
-    + "channel defaults to 0. Each set requires op=set, absolute beat, MIDI pitch, integer velocity 1..127 and "
-    "duration; clear requires only op=clear,beat,pitch. "
+    "Write the notes of one launcher clip. Without range: each listed note is written in place (identity: channel, "
+    "pitch, beat; inserted when absent, given fields updated when present) and nothing is removed. With range "
+    '("all" or {start, end, pitches?}): the notes whose onset lies in it become exactly the listed ones (notes:[] '
+    "clears it); every listed note must lie in it. The recipe for removing or moving notes: notes.get the range, "
+    "edit the list, notes.set the same range. A new note needs velocity and duration; a listed note may not "
+    "overlap a note left in place, and every written note must end within the clip loop. "
     + NOTE_RULES
-    + "With an explicit window, beats align exactly to stepSize instead and every note must end inside it. "
-    "Notes must fit the observed clip loop; sustains are protected, no clear-all, and already-matching cells are not "
-    "rewritten. Result is compact: outcome is the worst over every edit (applied, already_matched, or unknown with "
-    "a reason); summary {requested, dispatched, alreadyMatched, verified, unverified}; unverifiedEdits lists only "
-    "unverified edits (index, outcome, reason, observed cell). detail=full also returns the window's note listing "
-    "(as notes.get) and every edit. Verification is per-cell readback after scheduled grid settling "
-    "(gridReadiness), not a host-data barrier. Verify unverified edits with notes.get. No automatic retry."
+    + NOTE_PATHS
+    + "Result: outcome (already_matched when nothing differs, so a replay converges), summary {inserted, updated, "
+    "removed, unchanged}, undo, exact, count (notes in the clip after the write, native). Never retry unknown: "
+    "notes.get first."
 )
-_EDIT = {"op": "set", "beat": 0.0, "pitch": 60, "velocity": 90, "duration": 1.0}
+_NOTE = {"beat": 0, "pitch": 60, "velocity": 90, "duration": 1}
 
 
 SPECS: dict[str, ToolSpec] = {
@@ -652,21 +626,26 @@ SPECS: dict[str, ToolSpec] = {
         summary="Apply op (doubleContent: double the loop and repeat its content) to each launcher clip in targets. Every target is checked before any is written; one stale target refuses the batch. Then it writes in order and stops at the first entry that is not applied, already_matched or sent. Selects each clip.",
     ),
     "notes.get": ToolSpec(
-        NoteWindowArgs,
+        NotesGetArgs,
         NOTES_GET_DESCRIPTION,
         False,
-        examples=({"target": CLIP_REF}, NOTE_WINDOW),
+        examples=({"target": CLIP_REF}, {"target": CLIP_REF, "range": {"start": 0, "end": 4, "pitches": [36, 42]}}),
         annotations=STEER,
-        summary="Read a clip's notes in a channel, grid and pitch window; selects the clip in the host UI. Omit the window to read the whole loop. Rows {beat, pitch, velocity, duration} are what notes.set takes. At most 2048 onsets: if completeWindow is false, subdivide.",
+        summary="Read every note of a launcher clip, all channels, as records {beat, pitch, velocity, duration, channel?} that notes.set takes; range limits the output. exact=false means the public note grid (onsets snapped, clip selected).",
     ),
     "notes.set": ToolSpec(
-        NoteEditArgs,
+        NotesSetArgs,
         NOTES_SET_DESCRIPTION,
         False,
         examples=(
-            {"target": CLIP_REF, "edits": [_EDIT]},
-            {**NOTE_WINDOW, "edits": [_EDIT]},
+            {"target": CLIP_REF, "notes": [_NOTE]},
+            {
+                "target": CLIP_REF,
+                "range": {"start": 0, "end": 4, "pitches": [42, 42]},
+                "notes": [_NOTE | {"pitch": 42}],
+            },
+            {"target": CLIP_REF, "range": "all", "notes": []},
         ),
-        summary="Edit up to 256 onset cells of a clip; selects the clip. set: op, beat, pitch, velocity 1..127, duration (any length); clear: op, beat, pitch. Beats on the 1/128 grid or on stepSize of an explicit window (omit it to derive). Never retry unknown.",
+        summary="Write a launcher clip's notes. Without range: insert or update the listed notes, remove nothing. With range ('all' or {start, end, pitches?}): that region becomes exactly the listed notes. Replays are already_matched. Never retry unknown.",
     ),
 }

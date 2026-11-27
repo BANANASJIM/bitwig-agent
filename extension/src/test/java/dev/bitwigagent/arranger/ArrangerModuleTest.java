@@ -88,7 +88,6 @@ public final class ArrangerModuleTest {
             boolean failAfterWrite, failBeforeWrite;
             int calls, writes, lists;
             List<double[]> lastNotes;
-            int lastChannel;
             double lastStart, lastLength;
             Object lastSlot;
             String lastName, lastOp;
@@ -151,11 +150,9 @@ public final class ArrangerModuleTest {
                     double length,
                     String name,
                     List<double[]> noteList,
-                    int channel,
                     Runnable check,
                     Runnable before) {
                 lastNotes = noteList;
-                lastChannel = channel;
                 lastStart = start;
                 lastLength = length;
                 lastName = name;
@@ -325,12 +322,15 @@ public final class ArrangerModuleTest {
     void anInsertPassesNotesChannelAndPositionAndShapesTheRef() {
         Fixture x = new Fixture("Instrument");
         JsonObject p = x.insert(8, 4);
-        p.add("notes", notes(note(0, 60, 100, 1), note(2, 64, 90, 0.5)));
-        p.addProperty("channel", 2);
+        JsonObject second = note(2, 64, 90, 0.5);
+        second.addProperty("channel", 2);
+        p.add("notes", notes(note(0, 60, 100, 1), second));
         JsonObject result = x.call("clips.insert", p);
         assertEquals("applied", result.get("outcome").getAsString());
-        assertTrue(x.lane.writes == 1 && x.lane.lastNotes.size() == 2 && x.lane.lastChannel == 2);
-        assertArrayEquals(new double[] {2, 64, 90, 0.5}, x.lane.lastNotes.get(1), "beat, pitch, velocity, duration");
+        assertTrue(x.lane.writes == 1 && x.lane.lastNotes.size() == 2);
+        assertArrayEquals(
+                new double[] {2, 64, 90, 0.5, 2}, x.lane.lastNotes.get(1), "beat, pitch, velocity, duration, channel");
+        assertEquals(0, x.lane.lastNotes.get(0)[4], "channel defaults to 0 per note");
         assertTrue(x.lane.lastStart == 8 && x.lane.lastLength == 4 && x.lane.lastName.equals("Verse"));
         assertEquals(arrangerClip(x.f.track(), 8, "Verse"), result.get("ref"));
         assertFalse(result.has("trackId") || result.has("lane"));
@@ -346,7 +346,7 @@ public final class ArrangerModuleTest {
     void anInsertWithoutNotesPassesNone() {
         Fixture x = new Fixture("Instrument");
         x.call("clips.insert", x.insert(0, 4));
-        assertTrue(x.lane.lastNotes.isEmpty() && x.lane.lastChannel == 0);
+        assertTrue(x.lane.lastNotes.isEmpty());
     }
 
     @Test
@@ -363,10 +363,14 @@ public final class ArrangerModuleTest {
                 "invalid_params", () -> ArrangerModule.notes(notes(note(0, 60, 100, 2), note(1, 60, 100, 1)), 4));
         assertRpcError("invalid_params", () -> ArrangerModule.notes(notes(note(0, 60, 100, 1), note(0, 60, 90, 1)), 4));
         assertRpcError("invalid_params", () -> ArrangerModule.notes(notes(note(3.5, 60, 100, 1)), 4));
-        assertRpcError("invalid_params", () -> ArrangerModule.notes(notes(note(0.001, 60, 100, 1)), 4));
+        assertEquals(
+                1,
+                ArrangerModule.notes(notes(note(0.001, 60, 100, 1)), 4).size(),
+                "any onset is a note; it is stored to 1/1048576 beat");
         assertEquals(
                 0.45,
                 ArrangerModule.notes(notes(note(0, 60, 100, 0.45)), 4).get(0)[3],
+                1e-6,
                 "durations need not align to the onset grid");
         assertEquals(
                 2,

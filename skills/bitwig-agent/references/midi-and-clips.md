@@ -14,9 +14,12 @@ Fields, limits and result shapes come from `<path> --help`; this page is the wor
 
 1. `bitwig-agent context get` once: it answers "what is open and selected" and does not move the selection. "The clip I just recorded" is its `cursorClip`.
 2. Check playback and the recording and automation-write flags before writing. Unknown is not false. Do not change tempo, start playback or switch safety modes just to write notes.
-3. `notes get` the clip, then `notes set` only the cells that change. Read the result's `outcome`; it names the cells it could not verify, so read back only those.
+3. `notes get` the clip: every note, as records `{beat, pitch, velocity, duration, channel?}`. Then write with the same records:
+   - Change some notes (velocity, length) or add notes: `notes set` with just those notes and no `range`. Nothing else is touched or removed; `velocity` or `duration` may be left out to keep the current value.
+   - Rewrite a passage, delete or move notes: `notes get` the range, edit the list, `notes set` the same `range` (`{start, end, pitches?}`; `pitches:[42,42]` is one drum row). The range becomes exactly your list.
+4. Read the result: `summary {inserted, updated, removed, unchanged}` says what changed, so you need not read the clip again to confirm the rest is intact. `already_matched` means it was already so. After `unknown`, `notes get` before anything else; never resend blindly.
 
-Note calls select the clip in the editor (that is what moves `cursorClip`), so do not run them alongside work that depends on the selection. A `notes get` result is a bounded window, not a backup: keep the original clip and edit a copy when the change is creative, and never clear all notes to make room.
+A `range` write deletes what you leave out of it, so give the smallest range that holds the change, and on a clip the user recorded keep the original and edit a copy when the change is creative. If `exact` is false the host has no native note binding: onsets snap to `onsetResolution`, only one onset per cell is visible, and these calls select the clip (moving `cursorClip`), so do not run them alongside work that depends on the selection.
 
 ## Make a new part
 
@@ -32,7 +35,7 @@ Research (finding presets, planning the melody) can run in parallel with prepari
 ## Variants and edits
 
 - Copy, then transform, instead of resending notes: `clips copy`, then `clips transpose`, `clips quantize` or `clips transform`.
-- Quantize recorded takes before editing; `notes get` snaps onsets to cells.
+- Prefer a short loop over writing every repetition, and keep `range` writes small. `notes get` with `exact:false` snaps onsets to cells: quantize recorded takes before editing them on that path.
 - `clips set` changes one clip's name, color, loop and launch behavior, each field with its own outcome.
 - Scenes: `scenes list`, then `scenes set`, `scenes launch`, `scenes duplicate`, `scenes delete`. A scene launch is not a one-clip audition: it plays every track's slot in that row.
 

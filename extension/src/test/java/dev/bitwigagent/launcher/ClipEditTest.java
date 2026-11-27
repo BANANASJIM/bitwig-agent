@@ -25,8 +25,8 @@ public final class ClipEditTest {
         f.slots[0].content = true;
         f.slots[0].name = "Riff";
         f.put(0, 0, 0, 60, 100, 4);
-        f.put(0, 0, 8, 64, 90, 4);
-        f.put(0, 0, 3, 67, 80, 2);
+        f.put(0, 0, 1, 64, 90, 4);
+        f.put(0, 0, .375, 67, 80, 2);
         return f;
     }
 
@@ -602,8 +602,8 @@ public final class ClipEditTest {
         JsonObject c = r.getAsJsonObject("compared");
         assertEquals("applied", r.get("outcome").getAsString());
         assertEquals(1, f.transposes);
-        assertTrue(f.notes.containsKey(LauncherFake.key(0, 0, 0, 62)));
-        assertFalse(f.notes.containsKey(LauncherFake.key(0, 0, 0, 60)));
+        assertNotNull(f.at(0, 0, 0, 62));
+        assertNull(f.at(0, 0, 0, 60));
         assertEquals(3, c.get("notesBefore").getAsInt());
         assertEquals(3, c.get("notesAfter").getAsInt());
         assertEquals(60, c.get("pitchMinBefore").getAsInt());
@@ -618,7 +618,7 @@ public final class ClipEditTest {
     @Test
     void transposeRefusalsChangeNothing() {
         LauncherFake f = riff();
-        f.put(0, 0, 16, 120, 90, 2);
+        f.put(0, 0, 2, 120, 90, 2);
         assertRpcError("invalid_params", run(f, "clips.transpose", params("target", f.clip(0), "semitones", 12)));
         assertEquals(0, f.transposes);
         assertTrue(f.services.holds.list().isEmpty());
@@ -676,7 +676,7 @@ public final class ClipEditTest {
         JsonObject r = f.call("clips.quantize", params("target", f.clip(0), "amount", 1));
         JsonObject c = r.getAsJsonObject("compared");
         assertEquals("applied", r.get("outcome").getAsString());
-        assertTrue(f.notes.containsKey(LauncherFake.key(0, 0, 4, 67)));
+        assertNotNull(f.at(0, 0, .5, 67));
         assertEquals(1, f.quantizes);
         assertEquals(3, c.get("notesBefore").getAsInt());
         assertEquals(3, c.get("notesAfter").getAsInt());
@@ -690,7 +690,7 @@ public final class ClipEditTest {
         assertEquals(1, f.services.holds.list().size());
 
         f = riff();
-        f.put(0, 0, 4, 67, 80, 2);
+        f.put(0, 0, .5, 67, 80, 2);
         assertUnknown("readback_mismatch", run(f, "clips.quantize", params("target", f.clip(0), "amount", 1)));
         assertEquals(1, f.services.holds.list().size(), "a changed onset count is unknown and holds");
     }

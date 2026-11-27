@@ -89,9 +89,9 @@ def test_advertised_description_fits_the_limit_and_keeps_its_example(name):
 
 def test_core_write_tools_carry_hand_written_summaries_with_their_call_critical_facts():
     expected = {
-        "notes.set": ("velocity", "duration", "stepSize"),
+        "notes.set": ("velocity", "range", "already_matched"),
         "clips.set": ("first failure", "stopped"),
-        "notes.get": ("2048", "completeWindow"),
+        "notes.get": ("range", "exact", "onsets snapped"),
         "devices.insert": ("requestedIdentifierVerified",),
         "tracks.set": ("pan 0.5", "display"),
         "grid.apply": ("dryRun", "customName"),
