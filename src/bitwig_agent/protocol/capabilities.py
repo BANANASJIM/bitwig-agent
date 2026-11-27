@@ -66,7 +66,7 @@ TAXONOMY = (
     Capability("arrange.tracks.ungroup", "Ungroup tracks", tier="medium"),
     Capability("arrange.tracks.select", "Select a track", tier="medium"),
     Capability("arrange.tracks.meter", "Read track level meters", tier="medium"),
-    Capability("browser.preset-search", "Search presets and installed content by tag, creator or category"),
+    Capability("browser.preset-search", "Search preset files by name, device, folder or category"),
     Capability("browser.device-catalog", "Browse the device catalog"),
     Capability("browser.insert-device", "Insert a device or preset", weight=3),
     Capability("browser.sample-to-sampler", "Drop a sample on a track to get a Sampler", weight=3),

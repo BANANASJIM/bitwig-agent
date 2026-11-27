@@ -200,14 +200,38 @@ def test_rows_name_other_hosts_and_partial_rows_their_verification():
     assert f"◑ Partial, verified on 6.1.7 Linux: {PARTIAL['project.export-audio'].missing} |" in text
 
 
-def test_protocol_anchors_skip_code_blocks_and_number_repeated_headings():
-    text = "# Intro\n```sh\n# not a heading\n```\n## Tracks\n| `tracks.list` | x |\n## Tracks\n`batch` runs calls\n"
-    assert generator.protocol_anchors(text) == {"tracks.list": "tracks", "batch": "tracks-1"}
+def test_protocol_anchors_skip_code_blocks_number_repeated_headings_and_rank_headings_rows_then_paragraphs():
+    text = (
+        "# Intro\n```sh\n# not a heading\n```\n## Tracks\n`batch` runs calls\n| `tracks.list` | x |\n## Tracks\n"
+        "- **`clips.set`** in a list\n## Domain\n| `clips.set` | x |\n### Arranger clips\n| `clips.set` | y |\n"
+        "### `batch`\n"
+    )
+    assert generator.protocol_anchors(text) == {
+        "tracks.list": ["tracks"],
+        "batch": ["batch", "tracks"],
+        "clips.set": ["domain", "arranger-clips", "tracks-1"],
+    }
 
 
-def test_protocol_anchors_prefer_a_heading_then_the_most_specific_section():
-    text = "## Domain\n| `clips.set` | x |\n| `grid.apply` | x |\n### Arranger\n| `clips.set` | y |\n### `grid.apply`\n"
-    assert generator.protocol_anchors(text) == {"clips.set": "arranger", "grid.apply": "gridapply"}
+def test_every_link_lands_on_a_section_that_documents_the_method_in_the_rows_chapter_when_it_has_one():
+    text = generator.PROTOCOL.read_text(encoding="utf-8")
+    sections, anchors, page = generator.sections(text), generator.protocol_anchors(text), render([])
+    checked = 0
+    for title, how in re.findall(r"^\| ([^|]+) \| [^|]+ \| (.+) \|$", page, re.MULTILINE):
+        chapter = TITLES.get(title.removesuffix(" †"), "").split(".")[0] + "-"
+        for method, anchor in re.findall(r"\[`([^`]+)`\]\(\.\./PROTOCOL\.md#([^)]+)\)", how):
+            heading, lines = sections[anchor]
+            first = next((line for line in lines if line.strip()), "")
+            documented = f"`{method}`" in heading + first or any(method in generator.leads(line) for line in lines)
+            assert documented, (method, anchor)
+            in_chapter = [a for a in anchors[method] if a.startswith(chapter)]
+            assert method in generator.PINNED or not in_chapter or anchor in in_chapter, (title, method, anchor)
+            checked += 1
+    assert checked == page.count("](../PROTOCOL.md#")
+    assert "[`clips.set`](../PROTOCOL.md#arranger-clips-version-gated)" in page
+    launcher = page.split("## Clip launcher")[1].split("\n## ")[0]
+    assert "[`clips.set`](../PROTOCOL.md#launcher-clips-timing-next-action-and-the-scene-window)" in launcher
+    assert "[`status`](../PROTOCOL.md#core-discovery-and-direct-parameters)" in page
 
 
 def test_the_cli_prints_the_queue_and_the_maintainer_figures(monkeypatch, capsys):

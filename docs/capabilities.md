@@ -14,7 +14,7 @@ Each row is a task from the [Bitwig User Guide](https://www.bitwig.com/userguide
 | ○ Not supported | 18 |
 
 - **Verified**: tested end to end on a real Bitwig 6.1.7 on Linux, and the methods have not changed since.
-- **Available, not yet verified**: the methods exist and pass the offline tests, but no one has confirmed them on a real Bitwig yet.
+- **Available, not yet verified**: the methods exist but have not been tried on a real Bitwig yet.
 - **Partial**: part of the task is available; the row says what is missing and whether the available part is verified.
 - **Not supported**: no method does it yet.
 
@@ -52,7 +52,7 @@ Tasks marked † are less common and not counted above.
 | Task | Status | How |
 |---|---|---|
 | List tracks and the track tree, read track state | ◔ Available, not yet verified | [`tracks.list`](../PROTOCOL.md#core-discovery-and-direct-parameters), [`tracks.get`](../PROTOCOL.md#domain-controls) |
-| Add an instrument, audio or effect track at a position | ◔ Available, not yet verified | [`tracks.insert`](../PROTOCOL.md#track-tree-and-grouping) |
+| Add an instrument, audio or effect track at a position | ◔ Available, not yet verified | [`tracks.insert`](../PROTOCOL.md#domain-controls) |
 | Group tracks | ◔ Available, not yet verified | [`tracks.group`](../PROTOCOL.md#track-tree-and-grouping) |
 | Duplicate a track | ◔ Available, not yet verified | [`tracks.duplicate`](../PROTOCOL.md#domain-controls) |
 | Delete a track, including groups | ◔ Available, not yet verified | [`tracks.delete`](../PROTOCOL.md#domain-controls) |
@@ -63,8 +63,8 @@ Tasks marked † are less common and not counted above.
 | Arranger loop and punch in/out | ◔ Available, not yet verified | [`transport.set`](../PROTOCOL.md#domain-controls) |
 | Add, rename, delete and list cue markers | ◔ Available, not yet verified | [`markers.list`](../PROTOCOL.md#domain-controls), [`markers.insert`](../PROTOCOL.md#domain-controls), [`markers.set`](../PROTOCOL.md#domain-controls), [`markers.delete`](../PROTOCOL.md#domain-controls) |
 | Tempo, time signature, key and scale automation lanes | ○ Not supported | — |
-| Convert a track to another type † | ◔ Available, not yet verified | [`tracks.convert`](../PROTOCOL.md#domain-controls) |
-| Ungroup tracks † | ◔ Available, not yet verified | [`tracks.ungroup`](../PROTOCOL.md#domain-controls) |
+| Convert a track to another type † | ◔ Available, not yet verified | [`tracks.convert`](../PROTOCOL.md#convert-and-ungroup-version-gated) |
+| Ungroup tracks † | ◔ Available, not yet verified | [`tracks.ungroup`](../PROTOCOL.md#convert-and-ungroup-version-gated) |
 | Select a track † | ◔ Available, not yet verified | [`tracks.select`](../PROTOCOL.md#domain-controls) |
 | Read track level meters † | ◔ Available, not yet verified | [`meters.get`](../PROTOCOL.md#mixer-levels-sends-meters-markers) |
 
@@ -72,18 +72,18 @@ Tasks marked † are less common and not counted above.
 
 | Task | Status | How |
 |---|---|---|
-| Search presets and installed content by tag, creator or category | ◑ Partial, not yet verified: Searches preset files by name, folder, creator and category; no tags, collections or favorites. | [`presets.search`](../PROTOCOL.md#device-chain-edits-and-preset-search) |
+| Search preset files by name, device, folder or category | ◑ Partial, not yet verified: Searches preset files by name, folder, creator and category; no tags, collections or favorites. | [`presets.search`](../PROTOCOL.md#device-chain-edits-and-preset-search) |
 | Browse the device catalog | ◔ Available, not yet verified | [`devices.catalog`](../PROTOCOL.md#domain-controls) |
-| Insert a device or preset | ◔ Available, not yet verified | [`devices.insert`](../PROTOCOL.md#chains-and-the-devices-inside-them) |
-| Drop a sample on a track to get a Sampler | ◑ Partial, not yet verified: Makes a plain Sampler; the drop modifiers for other Sampler setups are not available. | [`tracks.insert`](../PROTOCOL.md#track-tree-and-grouping), [`devices.insert`](../PROTOCOL.md#chains-and-the-devices-inside-them) |
+| Insert a device or preset | ◔ Available, not yet verified | [`devices.insert`](../PROTOCOL.md#device-chain-edits-and-preset-search) |
+| Drop a sample on a track to get a Sampler | ◑ Partial, not yet verified: Makes a plain Sampler; the drop modifiers for other Sampler setups are not available. | [`tracks.insert`](../PROTOCOL.md#domain-controls), [`devices.insert`](../PROTOCOL.md#device-chain-edits-and-preset-search) |
 
 ## Arranger clips
 
 | Task | Status | How |
 |---|---|---|
 | Read the clips on a track's timeline | ◑ Partial, not yet verified: The main clip lane only; automation clips and take or comp lanes are not read. | [`arranger.list`](../PROTOCOL.md#arranger-clips-version-gated) |
-| Create a MIDI clip with notes on the timeline | ◔ Available, not yet verified | [`clips.insert`](../PROTOCOL.md#operators-and-expressions) |
-| Place an audio or MIDI file on the timeline | ◔ Available, not yet verified | [`clips.import`](../PROTOCOL.md#device-chain-edits-and-preset-search) |
+| Create a MIDI clip with notes on the timeline | ◔ Available, not yet verified | [`clips.insert`](../PROTOCOL.md#arranger-clips-version-gated) |
+| Place an audio or MIDI file on the timeline | ◔ Available, not yet verified | [`clips.import`](../PROTOCOL.md#domain-controls) |
 | Move a clip on the timeline | ◑ Partial, not yet verified: Same track only. | [`clips.move`](../PROTOCOL.md#arranger-clips-version-gated) |
 | Copy a timeline clip, also to another track | ○ Not supported | — |
 | Resize a timeline clip | ◑ Partial, not yet verified: Only the end edge moves. | [`clips.set`](../PROTOCOL.md#arranger-clips-version-gated) |
@@ -102,19 +102,19 @@ Tasks marked † are less common and not counted above.
 | Task | Status | How |
 |---|---|---|
 | Read launcher slots and clip properties | ◔ Available, not yet verified | [`launcher.list`](../PROTOCOL.md#domain-controls) |
-| Launch a clip | ◔ Available, not yet verified | [`clips.launch`](../PROTOCOL.md#device-chain-edits-and-preset-search) |
-| Launch a scene | ◔ Available, not yet verified | [`scenes.launch`](../PROTOCOL.md#domain-controls) |
+| Launch a clip | ◔ Available, not yet verified | [`clips.launch`](../PROTOCOL.md#domain-controls) |
+| Launch a scene | ◔ Available, not yet verified | [`scenes.launch`](../PROTOCOL.md#scenes) |
 | Stop the clips on a track | ◔ Available, not yet verified | [`launcher.stop`](../PROTOCOL.md#domain-controls) |
 | Stop all clips | ◔ Available, not yet verified | [`launcher.stop`](../PROTOCOL.md#domain-controls) |
 | Switch playback back to the arranger | ◔ Available, not yet verified | [`launcher.returnToArrangement`](../PROTOCOL.md#domain-controls) |
-| Add, rename, duplicate and delete scenes | ◔ Available, not yet verified | [`scenes.list`](../PROTOCOL.md#scenes), [`scenes.insert`](../PROTOCOL.md#domain-controls), [`scenes.set`](../PROTOCOL.md#domain-controls), [`scenes.duplicate`](../PROTOCOL.md#domain-controls), [`scenes.delete`](../PROTOCOL.md#domain-controls) |
-| Set a launcher clip's name and color | ◔ Available, not yet verified | [`clips.set`](../PROTOCOL.md#arranger-clips-version-gated) |
-| Create an empty clip or import a file into a launcher slot | ◔ Available, not yet verified | [`clips.insert`](../PROTOCOL.md#operators-and-expressions), [`clips.import`](../PROTOCOL.md#device-chain-edits-and-preset-search) |
+| Add, rename, duplicate and delete scenes | ◔ Available, not yet verified | [`scenes.list`](../PROTOCOL.md#scenes), [`scenes.insert`](../PROTOCOL.md#scenes), [`scenes.set`](../PROTOCOL.md#scenes), [`scenes.duplicate`](../PROTOCOL.md#scenes), [`scenes.delete`](../PROTOCOL.md#scenes) |
+| Set a launcher clip's name and color | ◔ Available, not yet verified | [`clips.set`](../PROTOCOL.md#launcher-clips-timing-next-action-and-the-scene-window) |
+| Create an empty clip or import a file into a launcher slot | ◔ Available, not yet verified | [`clips.insert`](../PROTOCOL.md#domain-controls), [`clips.import`](../PROTOCOL.md#domain-controls) |
 | Record into a launcher slot | ◔ Available, not yet verified | [`clips.record`](../PROTOCOL.md#domain-controls) |
-| Copy a launcher clip to the arranger | ◔ Available, not yet verified | [`clips.copy`](../PROTOCOL.md#arranger-clips-version-gated) |
-| Copy between arranger and launcher both ways, whole scenes too | ◑ Partial, not yet verified: Launcher to arranger on the same track only; not arranger to launcher, not whole scenes. | [`clips.copy`](../PROTOCOL.md#arranger-clips-version-gated) |
+| Copy a launcher clip to the arranger | ◔ Available, not yet verified | [`clips.copy`](../PROTOCOL.md#launcher-clips-timing-next-action-and-the-scene-window) |
+| Copy between arranger and launcher both ways, whole scenes too | ◑ Partial, not yet verified: Launcher to arranger on the same track only; not arranger to launcher, not whole scenes. | [`clips.copy`](../PROTOCOL.md#launcher-clips-timing-next-action-and-the-scene-window) |
 | Double a launcher clip's content † | ◔ Available, not yet verified | [`clips.transform`](../PROTOCOL.md#domain-controls) |
-| Set a launcher clip's loop timing and Next Action † | ◔ Available, not yet verified | [`clips.get`](../PROTOCOL.md#launcher-clips-timing-next-action-and-the-scene-window), [`clips.set`](../PROTOCOL.md#arranger-clips-version-gated) |
+| Set a launcher clip's loop timing and Next Action † | ◔ Available, not yet verified | [`clips.get`](../PROTOCOL.md#launcher-clips-timing-next-action-and-the-scene-window), [`clips.set`](../PROTOCOL.md#launcher-clips-timing-next-action-and-the-scene-window) |
 
 ## Mix view
 
@@ -130,33 +130,33 @@ Tasks marked † are less common and not counted above.
 | Task | Status | How |
 |---|---|---|
 | Enable or bypass a device | ◔ Available, not yet verified | [`devices.set`](../PROTOCOL.md#chains-and-the-devices-inside-them) |
-| List a device chain, read device state, select a device | ◔ Available, not yet verified | [`devices.list`](../PROTOCOL.md#chains-and-the-devices-inside-them), [`devices.get`](../PROTOCOL.md#chains-and-the-devices-inside-them), [`devices.select`](../PROTOCOL.md#chains-and-the-devices-inside-them) |
-| Delete a device | ◔ Available, not yet verified | [`devices.delete`](../PROTOCOL.md#chains-and-the-devices-inside-them) |
+| List a device chain, read device state, select a device | ◔ Available, not yet verified | [`devices.list`](../PROTOCOL.md#core-discovery-and-direct-parameters), [`devices.get`](../PROTOCOL.md#chains-and-the-devices-inside-them), [`devices.select`](../PROTOCOL.md#chains-and-the-devices-inside-them) |
+| Delete a device | ◔ Available, not yet verified | [`devices.delete`](../PROTOCOL.md#device-chain-edits-and-preset-search) |
 | Duplicate or copy a device | ◑ Partial, not yet verified: Top-level devices only, duplicated in place; not devices inside chains, not to another track. | [`devices.duplicate`](../PROTOCOL.md#device-chain-edits-and-preset-search) |
-| Read and set device parameters, including mix knobs | ◔ Available, not yet verified | [`parameters.list`](../PROTOCOL.md#chains-and-the-devices-inside-them), [`parameters.set`](../PROTOCOL.md#chains-and-the-devices-inside-them) |
-| Load a preset onto a new or existing device | ◑ Partial, not yet verified: Top-level devices only, not devices inside a chain. | [`devices.insert`](../PROTOCOL.md#chains-and-the-devices-inside-them), [`devices.replace`](../PROTOCOL.md#domain-controls) |
-| Use the synths: Polysynth, FM-4, Phase-4, Polymer, Sampler | ◑ Partial, not yet verified: Insert and parameters only; sample zones and slice points are not available, and a sample loads only into a new Sampler. | [`devices.insert`](../PROTOCOL.md#chains-and-the-devices-inside-them), [`parameters.set`](../PROTOCOL.md#chains-and-the-devices-inside-them) |
+| Read and set device parameters, including mix knobs | ◔ Available, not yet verified | [`parameters.list`](../PROTOCOL.md#core-discovery-and-direct-parameters), [`parameters.set`](../PROTOCOL.md#core-discovery-and-direct-parameters) |
+| Load a preset onto a new or existing device | ◑ Partial, not yet verified: Top-level devices only, not devices inside a chain. | [`devices.insert`](../PROTOCOL.md#device-chain-edits-and-preset-search), [`devices.replace`](../PROTOCOL.md#device-chain-edits-and-preset-search) |
+| Use the synths: Polysynth, FM-4, Phase-4, Polymer, Sampler | ◑ Partial, not yet verified: Insert and parameters only; sample zones and slice points are not available, and a sample loads only into a new Sampler. | [`devices.insert`](../PROTOCOL.md#device-chain-edits-and-preset-search), [`parameters.set`](../PROTOCOL.md#core-discovery-and-direct-parameters) |
 | Use Drum Machine pads mapped to notes | ◔ Available, not yet verified | [`chains.list`](../PROTOCOL.md#chains-and-the-devices-inside-them), [`chains.insert`](../PROTOCOL.md#chains-and-the-devices-inside-them) |
-| Use the effect devices: dynamics, EQ, filters and more | ◑ Partial, not yet verified: Insert and parameters only; graphic editors outside the parameter list are not available. | [`devices.insert`](../PROTOCOL.md#chains-and-the-devices-inside-them), [`parameters.set`](../PROTOCOL.md#chains-and-the-devices-inside-them) |
-| Insert and edit Grid devices | ◔ Available, not yet verified | [`devices.insert`](../PROTOCOL.md#chains-and-the-devices-inside-them), [`grid.apply`](../PROTOCOL.md#gridapply-declarative-patch-client-side) |
+| Use the effect devices: dynamics, EQ, filters and more | ◑ Partial, not yet verified: Insert and parameters only; graphic editors outside the parameter list are not available. | [`devices.insert`](../PROTOCOL.md#device-chain-edits-and-preset-search), [`parameters.set`](../PROTOCOL.md#core-discovery-and-direct-parameters) |
+| Insert and edit Grid devices | ◔ Available, not yet verified | [`devices.insert`](../PROTOCOL.md#device-chain-edits-and-preset-search), [`grid.apply`](../PROTOCOL.md#gridapply-declarative-patch-client-side) |
 | Read Layer and Selector chains | ◔ Available, not yet verified | [`chains.list`](../PROTOCOL.md#chains-and-the-devices-inside-them) |
-| Insert a device into an existing layer | ◔ Available, not yet verified | [`devices.insert`](../PROTOCOL.md#chains-and-the-devices-inside-them) |
+| Insert a device into an existing layer | ◔ Available, not yet verified | [`devices.insert`](../PROTOCOL.md#device-chain-edits-and-preset-search) |
 | Create a layer or chain | ◔ Available, not yet verified | [`chains.insert`](../PROTOCOL.md#chains-and-the-devices-inside-them) |
 | Switch a Selector's active chain | ◔ Available, not yet verified | [`chains.set`](../PROTOCOL.md#chains-and-the-devices-inside-them) |
-| Put a device or sample on a drum pad | ◔ Available, not yet verified | [`chains.insert`](../PROTOCOL.md#chains-and-the-devices-inside-them), [`devices.insert`](../PROTOCOL.md#chains-and-the-devices-inside-them) |
+| Put a device or sample on a drum pad | ◔ Available, not yet verified | [`chains.insert`](../PROTOCOL.md#chains-and-the-devices-inside-them), [`devices.insert`](../PROTOCOL.md#device-chain-edits-and-preset-search) |
 | Mute, solo and mix a drum pad's chain | ◔ Available, not yet verified | [`chains.set`](../PROTOCOL.md#chains-and-the-devices-inside-them) |
 | Read a device's modulators | ◔ Available, not yet verified | [`modulators.list`](../PROTOCOL.md#device-modulators), [`modulators.describe`](../PROTOCOL.md#device-modulators), [`modulators.get`](../PROTOCOL.md#device-modulators) |
 | Add and delete modulators, on Grid devices too | ◔ Available, not yet verified | [`modulators.insert`](../PROTOCOL.md#device-modulators), [`modulators.delete`](../PROTOCOL.md#device-modulators) |
-| Set modulator parameters | ◔ Available, not yet verified | [`parameters.set`](../PROTOCOL.md#chains-and-the-devices-inside-them) |
+| Set modulator parameters | ◔ Available, not yet verified | [`parameters.set`](../PROTOCOL.md#core-discovery-and-direct-parameters) |
 | Map a modulator to a Grid control or another modulator | ◔ Available, not yet verified | [`modulators.map`](../PROTOCOL.md#device-modulators), [`modulators.unmap`](../PROTOCOL.md#device-modulators) |
 | Map a modulator to a device parameter | ○ Not supported | — |
-| Read and set Remote Controls pages | ◔ Available, not yet verified | [`devices.remote.get`](../PROTOCOL.md#domain-controls), [`parameters.set`](../PROTOCOL.md#chains-and-the-devices-inside-them) |
+| Read and set Remote Controls pages | ◔ Available, not yet verified | [`devices.remote.get`](../PROTOCOL.md#domain-controls), [`parameters.set`](../PROTOCOL.md#core-discovery-and-direct-parameters) |
 | Create a Remote Controls page and assign its controls | ◑ Partial, not yet verified: Pages on Grid devices only, mapping Grid module parameters. | [`devices.remote.define`](../PROTOCOL.md#define-remote-controls-pages), [`devices.remote.delete`](../PROTOCOL.md#define-remote-controls-pages) |
 | Choose a device's sidechain source | ◔ Available, not yet verified | [`devices.sidechain.get`](../PROTOCOL.md#track-routing-and-device-sidechains-version-gated), [`devices.sidechain.set`](../PROTOCOL.md#track-routing-and-device-sidechains-version-gated) |
-| Insert VST2, VST3 and CLAP plug-ins | ◑ Partial, not yet verified: No plug-in list; you need the plug-in's id or a preset saved for it. | [`devices.insert`](../PROTOCOL.md#chains-and-the-devices-inside-them) |
-| Read and set plug-in parameters | ◔ Available, not yet verified | [`parameters.list`](../PROTOCOL.md#chains-and-the-devices-inside-them), [`parameters.set`](../PROTOCOL.md#chains-and-the-devices-inside-them) |
-| Configure a sliced Sampler | ◑ Partial, not yet verified: Parameters only; slice points cannot be edited. | [`parameters.set`](../PROTOCOL.md#chains-and-the-devices-inside-them) |
-| Move a device in its chain † | ◔ Available, not yet verified | [`devices.move`](../PROTOCOL.md#chains-and-the-devices-inside-them) |
+| Insert VST2, VST3 and CLAP plug-ins | ◑ Partial, not yet verified: No plug-in list; you need the plug-in's id or a preset saved for it. | [`devices.insert`](../PROTOCOL.md#device-chain-edits-and-preset-search) |
+| Read and set plug-in parameters | ◔ Available, not yet verified | [`parameters.list`](../PROTOCOL.md#core-discovery-and-direct-parameters), [`parameters.set`](../PROTOCOL.md#core-discovery-and-direct-parameters) |
+| Configure a sliced Sampler | ◑ Partial, not yet verified: Parameters only; slice points cannot be edited. | [`parameters.set`](../PROTOCOL.md#core-discovery-and-direct-parameters) |
+| Move a device in its chain † | ◔ Available, not yet verified | [`devices.move`](../PROTOCOL.md#device-chain-edits-and-preset-search) |
 
 ## Automation
 
@@ -181,11 +181,11 @@ Tasks marked † are less common and not counted above.
 
 | Task | Status | How |
 |---|---|---|
-| Draw notes in a launcher clip | ◔ Available, not yet verified | [`notes.set`](../PROTOCOL.md#operators-and-expressions) |
-| Read a launcher clip's notes | ◔ Available, not yet verified | [`notes.get`](../PROTOCOL.md#operators-and-expressions) |
-| Set note velocity in a launcher clip | ◔ Available, not yet verified | [`notes.set`](../PROTOCOL.md#operators-and-expressions) |
-| Set note chance in a launcher clip | ◔ Available, not yet verified | [`notes.set`](../PROTOCOL.md#operators-and-expressions) |
-| Edit note expressions in a launcher clip, by MIDI channel too | ◔ Available, not yet verified | [`notes.get`](../PROTOCOL.md#operators-and-expressions), [`notes.set`](../PROTOCOL.md#operators-and-expressions) |
+| Draw notes in a launcher clip | ◔ Available, not yet verified | [`notes.set`](../PROTOCOL.md#notes-one-record-one-range-rule) |
+| Read a launcher clip's notes | ◔ Available, not yet verified | [`notes.get`](../PROTOCOL.md#notes-one-record-one-range-rule) |
+| Set note velocity in a launcher clip | ◔ Available, not yet verified | [`notes.set`](../PROTOCOL.md#notes-one-record-one-range-rule) |
+| Set note chance in a launcher clip | ◔ Available, not yet verified | [`notes.set`](../PROTOCOL.md#notes-one-record-one-range-rule) |
+| Edit note expressions in a launcher clip, by MIDI channel too | ◔ Available, not yet verified | [`notes.get`](../PROTOCOL.md#notes-one-record-one-range-rule), [`notes.set`](../PROTOCOL.md#notes-one-record-one-range-rule) |
 | Transpose a launcher clip | ◔ Available, not yet verified | [`clips.transpose`](../PROTOCOL.md#domain-controls) |
 | Quantize a launcher clip | ◔ Available, not yet verified | [`clips.quantize`](../PROTOCOL.md#domain-controls) |
 | Quantize notes to the key | ○ Not supported | — |
@@ -194,8 +194,8 @@ Tasks marked † are less common and not counted above.
 
 | Task | Status | How |
 |---|---|---|
-| Set note repeats in a launcher clip | ◔ Available, not yet verified | [`notes.set`](../PROTOCOL.md#operators-and-expressions) |
-| Read note operator values in a launcher clip | ◔ Available, not yet verified | [`notes.get`](../PROTOCOL.md#operators-and-expressions) |
+| Set note repeats in a launcher clip | ◔ Available, not yet verified | [`notes.set`](../PROTOCOL.md#notes-one-record-one-range-rule) |
+| Read note operator values in a launcher clip | ◔ Available, not yet verified | [`notes.get`](../PROTOCOL.md#notes-one-record-one-range-rule) |
 
 ## Notes and audio
 
@@ -209,7 +209,7 @@ Tasks marked † are less common and not counted above.
 
 | Task | Status | How |
 |---|---|---|
-| Read the project state and whether it has unsaved changes | ◔ Available, not yet verified | [`status`](../PROTOCOL.md#string-panels), [`context.get`](../PROTOCOL.md#domain-controls) |
+| Read the project state and whether it has unsaved changes | ◔ Available, not yet verified | [`status`](../PROTOCOL.md#core-discovery-and-direct-parameters), [`context.get`](../PROTOCOL.md#domain-controls) |
 | Save the project | ◔ Available, not yet verified | [`project.save`](../PROTOCOL.md#domain-controls) |
 | Save the project as a new file | ◔ Available, not yet verified | [`project.saveAs`](../PROTOCOL.md#domain-controls) |
 | Read and set the project key signature | ◔ Available, not yet verified | [`project.key.get`](../PROTOCOL.md#domain-controls), [`project.key.set`](../PROTOCOL.md#domain-controls) |

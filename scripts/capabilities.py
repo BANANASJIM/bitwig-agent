@@ -18,8 +18,24 @@ MAP = ROOT / "docs" / "capabilities.md"
 RECORDS = ROOT / "docs" / "verification"
 PROTOCOL = ROOT / "PROTOCOL.md"
 BAR = 20
+METHOD = r"`([a-zA-Z]+(?:\.[a-zA-Z]+)*)`"
 SYMBOLS = {"verified": "●", "available": "◔", "partial": "◑", "none": "○"}
 PLATFORMS = {"linux": "Linux", "macos": "macOS", "windows": "Windows"}
+PINNED = {
+    **dict.fromkeys(
+        ("devices.insert", "devices.delete", "devices.move", "devices.duplicate", "devices.replace", "presets.search"),
+        "device-chain-edits-and-preset-search",
+    ),
+    **dict.fromkeys(("devices.remote.define", "devices.remote.delete"), "define-remote-controls-pages"),
+    **dict.fromkeys(("meters.get", "tracks.sends.set"), "mixer-levels-sends-meters-markers"),
+    **dict.fromkeys(("notes.get", "notes.set"), "notes-one-record-one-range-rule"),
+    **dict.fromkeys(
+        ("scenes.list", "scenes.insert", "scenes.set", "scenes.launch", "scenes.duplicate", "scenes.delete"), "scenes"
+    ),
+    "tracks.group": "track-tree-and-grouping",
+    **dict.fromkeys(("tracks.convert", "tracks.ungroup"), "convert-and-ungroup-version-gated"),
+}
+"""Methods whose own PROTOCOL.md section is a dedicated one rather than the first section that documents them."""
 LABELS = {
     "verified": "Verified",
     "available": "Available, not yet verified",
@@ -45,34 +61,46 @@ def slug(heading: str) -> str:
     return re.sub(r"[^\w\- ]", "", heading.lower()).replace(" ", "-")
 
 
-def protocol_anchors(text: str) -> dict[str, str]:
-    """By method, the anchor of the most specific PROTOCOL.md section (deepest heading, then first) where the method
-    leads a heading, table row or paragraph; a heading naming the method wins."""
-    found: dict[str, tuple[int, str]] = {}
+def sections(text: str) -> dict[str, tuple[str, list[str]]]:
+    """PROTOCOL.md's sections by GitHub anchor: the heading and the lines under it (code blocks left out)."""
+    out: dict[str, tuple[str, list[str]]] = {}
     seen: dict[str, int] = {}
-    anchor, level, fenced = "", 0, False
+    lines: list[str] = []
+    fenced = False
     for line in text.splitlines():
         fenced ^= line.startswith("```")
-        heading = None if fenced else re.match(r"(#+) (.*)", line)
+        heading = None if fenced else re.match(r"#+ (.*)", line)
         if heading:
-            base = slug(heading.group(2))
-            anchor, level = base + (f"-{seen[base]}" if base in seen else ""), len(heading.group(1))
+            base = slug(heading.group(1))
+            lines = []
+            out[base + (f"-{seen[base]}" if base in seen else "")] = (heading.group(1), lines)
             seen[base] = seen.get(base, 0) + 1
-        lead = re.match(r"\**(`[^`]+`)", line)
-        cell = (
-            line.split("|")[1]
-            if line.startswith("|")
-            else heading.group(2)
-            if heading
-            else lead.group(1)
-            if lead
-            else ""
-        )
-        rank = level + (100 if heading else 0)
-        for method in re.findall(r"`([a-zA-Z]+(?:\.[a-zA-Z]+)*)`", cell):
-            if rank > found.get(method, (-1, ""))[0]:
-                found[method] = (rank, anchor)
-    return {method: anchor for method, (_, anchor) in found.items()}
+        elif not fenced:
+            lines.append(line)
+    return out
+
+
+def leads(line: str) -> list[str]:
+    """The methods a line documents: those in a table row's first cell, or those opening a paragraph or list item."""
+    if line.startswith("|"):
+        cell = line.split("|")[1]
+    else:
+        lead = re.match(r"(?:- )?\**((?:`[^`]+`(?:,? and |, | / |/)?)+)", line)
+        cell = lead.group(1) if lead else ""
+    return re.findall(METHOD, cell)
+
+
+def protocol_anchors(text: str) -> dict[str, list[str]]:
+    """By method, the sections documenting it, best first: a heading naming it, its reference table rows, then the
+    paragraphs it opens."""
+    ranked: dict[str, list[tuple[int, str]]] = {}
+    for anchor, (heading, lines) in sections(text).items():
+        found = [(0, m) for m in re.findall(METHOD, heading)]
+        found += [(1 if line.startswith("|") else 2, m) for line in lines for m in leads(line)]
+        for rank, method in found:
+            if (rank, anchor) not in ranked.setdefault(method, []):
+                ranked[method].append((rank, anchor))
+    return {method: [anchor for _, anchor in sorted(pairs, key=lambda p: p[0])] for method, pairs in ranked.items()}
 
 
 def bar(counts: list[int]) -> str:
@@ -108,13 +136,21 @@ def status_cell(standing: Standing, host: str) -> str:
     return text
 
 
-def how_cell(standing: Standing, anchors: dict[str, str]) -> str:
-    return ", ".join(
-        f"[`{name}`](../PROTOCOL.md#{anchors[name]})" if name in anchors else f"`{name}`" for name in standing.methods
-    )
+def how_cell(standing: Standing, anchors: dict[str, list[str]]) -> str:
+    """The methods, each linked to its pinned section, else its section in this row's chapter, else its first."""
+    chapter = standing.capability.id.split(".")[0] + "-"
+
+    def link(name: str) -> str:
+        candidates = anchors.get(name)
+        if not candidates:
+            return f"`{name}`"
+        anchor = PINNED.get(name) or next((a for a in candidates if a.startswith(chapter)), candidates[0])
+        return f"[`{name}`](../PROTOCOL.md#{anchor})"
+
+    return ", ".join(link(name) for name in standing.methods)
 
 
-def render(standings: list[Standing], host: str, anchors: dict[str, str]) -> str:
+def render(standings: list[Standing], host: str, anchors: dict[str, list[str]]) -> str:
     high = [s for s in standings if s.capability.tier == "high"]
     kinds = list(SYMBOLS)
 
@@ -142,8 +178,7 @@ def render(standings: list[Standing], host: str, anchors: dict[str, str]) -> str
         "",
         f"- **{LABELS['verified']}**: tested end to end on a real Bitwig {version} on {platform}, "
         "and the methods have not changed since.",
-        f"- **{LABELS['available']}**: the methods exist and pass the offline tests, but no one has confirmed them "
-        "on a real Bitwig yet.",
+        f"- **{LABELS['available']}**: the methods exist but have not been tried on a real Bitwig yet.",
         f"- **{LABELS['partial']}**: part of the task is available; the row says what is missing and whether the "
         "available part is verified.",
         f"- **{LABELS['none']}**: no method does it yet.",
