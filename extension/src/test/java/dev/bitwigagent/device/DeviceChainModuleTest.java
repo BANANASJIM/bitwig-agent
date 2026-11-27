@@ -365,12 +365,41 @@ public final class DeviceChainModuleTest {
         assertUnknown("not_observed", unseen);
         assertEquals(1, same.top.points.size(), "an unobservable replacement is reported, never retried");
 
-        DeviceFixture renamed = abc();
-        renamed.top.insertMode = "none";
-        HostOperation late = renamed.run(renamed.chains(), "devices.replace", replace(renamed.device(1, "B")));
-        renamed.top.slots[1].child("name").emit("B");
+        DeviceFixture paged = abc();
+        paged.pages[1].child("pageNames").emit(new String[] {"Main"});
+        paged.top.replacement = new String[] {"B", "audio-effect"};
+        paged.top.replacementPages = new String[] {"Perform", "Wavetable"};
+        JsonObject preset = paged.call(paged.chains(), "devices.replace", replace(paged.device(1, "B")));
         assertEquals(
-                "applied", renamed.finish(late).get("outcome").getAsString(), "a new name report shows the new device");
+                "applied",
+                preset.get("outcome").getAsString(),
+                "a preset of the same device shows itself by its Remote Controls pages");
+
+        DeviceFixture report = abc();
+        report.top.insertMode = "none";
+        HostOperation late = report.run(
+                report.chains(), "devices.replace", replace(report.device(1, "B")), report.host.tasks.after(20));
+        report.top.slots[1].child("name").emit("B");
+        assertUnknown("not_observed", report.finishOrError(late));
+
+        DeviceFixture unrelated = abc();
+        unrelated.top.replacement = new String[] {"Renamed", "audio-effect"};
+        HostOperation other = unrelated.run(
+                unrelated.chains(),
+                "devices.replace",
+                replace(unrelated.device(1, "B")),
+                unrelated.host.tasks.after(20));
+        assertUnknown("not_observed", unrelated.finishOrError(other));
+
+        DeviceFixture named = abc();
+        named.top.replacement = new String[] {"Warm Pad", "audio-effect"};
+        assertEquals(
+                "applied",
+                named.call(named.chains(), "devices.replace", replace(named.device(1, "B")))
+                        .get("outcome")
+                        .getAsString(),
+                "the requested preset's name is evidence");
+        assertEquals("Warm Pad", DeviceChainModule.stem("/presets/Warm Pad.bwpreset"));
 
         DeviceFixture bad = abc();
         assertRpcError(

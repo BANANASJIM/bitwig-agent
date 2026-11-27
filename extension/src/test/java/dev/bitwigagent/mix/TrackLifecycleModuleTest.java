@@ -452,6 +452,14 @@ public final class TrackLifecycleModuleTest {
         parent(f, 0, ROOT);
         parent(f, 1, HostFixture.A);
         parent(f, 2, ROOT);
+        f.tracks[0].child("isGroupExpanded").data = false;
+        HostOperation collapsed = f.submit(module, "tracks.delete", delete(HostFixture.A, "Track 0"));
+        f.next();
+        RpcException hidden = assertRpcError("not_ready", collapsed);
+        assertTrue(
+                hidden.getMessage().contains("collapsed") && f.tracks[0].actions == 0,
+                "a collapsed group hides its tracks, so it is not deleted blind");
+        f.tracks[0].child("isGroupExpanded").data = true;
         f.delete = slot -> {
             f.removeTrack(1, 2);
             f.tracks[2].child("position").emit(0);
@@ -475,6 +483,7 @@ public final class TrackLifecycleModuleTest {
 
         HostFixture partial = new HostFixture();
         group(partial, 0, HostFixture.A, 0);
+        partial.tracks[0].child("isGroupExpanded").data = true;
         parent(partial, 0, ROOT);
         parent(partial, 1, HostFixture.A);
         partial.delete = slot -> partial.removeTrack(0, 1);

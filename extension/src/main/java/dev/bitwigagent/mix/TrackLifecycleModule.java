@@ -417,7 +417,10 @@ public final class TrackLifecycleModule implements HostModule {
                         Reason.NOT_READY,
                         "Deleting a group needs every track's parent observed (" + before.tree.reason
                                 + ") to know which tracks go with it; nothing changed.");
-            for (TrackTree.Node child : before.tree.descendants(before.tree.byId.get(target.id))) {
+            TrackTree.Node node = before.tree.byId.get(target.id);
+            TrackTree.requireListed(node, "deleted");
+            for (TrackTree.Node child : before.tree.descendants(node)) {
+                TrackTree.requireListed(child, "deleted");
                 removed.add(child.id);
                 children.add(trackRefs.ref(child.slot));
             }

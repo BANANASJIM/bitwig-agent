@@ -648,6 +648,7 @@
   "routing.sourceSelector.current": {"owner": "routing.sourceSelector", "name": "BZt"},
   "routing.sourceSelector.set": {"owner": "routing.sourceSelector", "name": "beI"},
   "selection.base.items": {"owner": "selection.base", "name": "MgQ"},
+  "selection.descriptor.enabled": {"owner": "selection.descriptor", "name": "beI"},
   "selection.descriptor.invoke": {"owner": "selection.descriptor", "name": "beI"},
   "selection.documentBase.tracks": {"owner": "selection.documentBase", "name": "LXi"},
   "selection.editable.set": {"owner": "selection.editable", "name": "beI"},

@@ -43,6 +43,8 @@ public final class DeviceChainModule implements HostModule {
     private final boolean[] countObserved = new boolean[TRACKS];
     private final long[] countSequence = new long[TRACKS];
     private HostOperation mutation;
+    /** The root devices' Remote Controls page names, a replacement's evidence besides name and type; may be null. */
+    private final RemoteModule remotes;
 
     public DeviceChainModule(
             Scheduler scheduler,
@@ -50,8 +52,10 @@ public final class DeviceChainModule implements HostModule {
             TrackRefs trackRefs,
             DeviceSources sources,
             NativeChains chains,
-            TransportSafety transportSafety) {
+            TransportSafety transportSafety,
+            RemoteModule remotes) {
         this.scheduler = scheduler;
+        this.remotes = remotes;
         this.window = window;
         this.trackRefs = trackRefs;
         this.sources = sources;
@@ -371,18 +375,27 @@ public final class DeviceChainModule implements HostModule {
         int index = device.position;
         State state = whole(parent, device, 0, "replace");
         scheduler.check(op);
-        Edit edit = new Edit(parent, DeviceChainEdit.Plan.replace(index, state.before), state, index);
+        JsonObject insert = p.getAsJsonObject("insert");
+        String kind = insert.get("kind").getAsString();
+        String value = insert.get(kind.equals("file") ? "path" : "id").getAsString();
+        Edit edit = new Edit(
+                parent,
+                DeviceChainEdit.Plan.replace(index, state.before, kind.equals("file") ? stem(value) : null),
+                state,
+                index);
         edit.extra.add(
                 "replaced", DeviceChainEdit.summary(index, state.before.names[index], state.before.types[index]));
         edit.extra.addProperty("requestedIdentifierVerified", false);
-        JsonObject insert = p.getAsJsonObject("insert");
-        String kind = insert.get("kind").getAsString();
         op.markDispatched();
-        insertAt(
-                device.device.replaceDeviceInsertionPoint(),
-                kind,
-                insert.get(kind.equals("file") ? "path" : "id").getAsString());
+        insertAt(device.device.replaceDeviceInsertionPoint(), kind, value);
         observeEdit(op, edit);
+    }
+
+    /** A file's name without directory and extension: the name Bitwig shows for a loaded preset or device file. */
+    static String stem(String path) {
+        String name = new java.io.File(path).getName();
+        int dot = name.lastIndexOf('.');
+        return dot > 0 ? name.substring(0, dot) : name;
     }
 
     // ---------------------------------------------------------------- delete and move
@@ -527,6 +540,11 @@ public final class DeviceChainModule implements HostModule {
 
         TopView(int t) {
             this.t = t;
+        }
+
+        @Override
+        public String pages(int slot) {
+            return remotes == null ? null : remotes.pageNames(t, slot);
         }
 
         @Override

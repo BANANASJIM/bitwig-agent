@@ -648,6 +648,7 @@
   "routing.sourceSelector.current": {"owner": "routing.sourceSelector", "name": "UZr"},
   "routing.sourceSelector.set": {"owner": "routing.sourceSelector", "name": "cfM"},
   "selection.base.items": {"owner": "selection.base", "name": "FzB"},
+  "selection.descriptor.enabled": {"owner": "selection.descriptor", "name": "cfM"},
   "selection.descriptor.invoke": {"owner": "selection.descriptor", "name": "cfM"},
   "selection.documentBase.tracks": {"owner": "selection.documentBase", "name": "xcy"},
   "selection.editable.set": {"owner": "selection.editable", "name": "cfM"},

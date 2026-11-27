@@ -153,7 +153,7 @@ final class DeviceFixture {
     }
 
     DeviceChainModule chains() {
-        return chainModule == null ? chainModule = services.deviceChain() : chainModule;
+        return chainModule == null ? chainModule = services.deviceChain(remote) : chainModule;
     }
 
     ParameterModule parameters() {
@@ -297,6 +297,9 @@ final class DeviceFixture {
         int insertions, deletions, selected = -1;
         String insertMode = "one", deleteMode = "one", moveMode = "one", lastInsertion;
         String[] replacement = {"Replaced", "instrument"};
+        /** Remote Controls page names the replacing device reports, or null for none. */
+        String[] replacementPages;
+
         Object lastArgument;
 
         Chain(HostFixture host, FakeHost bank, int window, FakeHost start, FakeHost end) {
@@ -402,6 +405,11 @@ final class DeviceFixture {
                     List<String[]> next = new ArrayList<>(entries);
                     next.set(index, replacement);
                     render(next);
+                    if (replacementPages != null)
+                        slots[index]
+                                .child("createCursorRemoteControlsPage")
+                                .child("pageNames")
+                                .emit(replacementPages);
                 }
                 return null;
             });

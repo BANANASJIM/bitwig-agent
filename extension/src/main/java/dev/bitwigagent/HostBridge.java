@@ -102,7 +102,7 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
         ProjectModule projectModule = new ProjectModule(scheduler, application, project, projectState, natives, holds);
         register(new DiscoveryModule(host, application, transport, window, projectState, specs, holds, domains));
         register(new DeviceListModule(window, trackRefs, chains));
-        register(new DeviceChainModule(scheduler, window, trackRefs, sources, chains, transportSafety));
+        register(new DeviceChainModule(scheduler, window, trackRefs, sources, chains, transportSafety, remotes));
         register(new ChainModule(scheduler, chains, transportSafety));
         register(new ActionModule(scheduler, application, projectState, selection));
         register(projectModule);

@@ -8,6 +8,7 @@ import dev.bitwigagent.FakeHost;
 import dev.bitwigagent.HostFixture;
 import dev.bitwigagent.core.HostOperation;
 import dev.bitwigagent.core.Refs;
+import dev.bitwigagent.core.RpcException;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -20,7 +21,8 @@ public final class TrackReshapeModuleTest {
     static final class FakeCommands implements TrackReshapeModule.Access {
         final List<String> calls = new ArrayList<>();
         Runnable effect = () -> {};
-        boolean restored = true;
+        boolean restored = true, enabled = true;
+        int allowed;
 
         @Override
         public void execute(Runnable work) {
@@ -28,8 +30,19 @@ public final class TrackReshapeModuleTest {
         }
 
         @Override
-        public JsonObject convert(Object proxy, String trackId, int command, Runnable check, Runnable beforeWrite) {
-            return run("convert:" + trackId + ":" + command, check, beforeWrite);
+        public JsonObject convert(
+                Object proxy, String trackId, int command, int allowed, Runnable check, Runnable beforeWrite) {
+            this.allowed = allowed;
+            if (!enabled) {
+                check.run();
+                JsonObject info = new JsonObject();
+                info.addProperty("selectionRestored", restored);
+                info.addProperty("enabled", false);
+                return info;
+            }
+            JsonObject info = run("convert:" + trackId + ":" + command, check, beforeWrite);
+            info.addProperty("enabled", true);
+            return info;
         }
 
         @Override
@@ -102,8 +115,9 @@ public final class TrackReshapeModuleTest {
                 "convert",
                 result.getAsJsonObject("native").get("nativeOperation").getAsString());
         assertFalse(f.services.selection.held(), "the selection lease ends with the call");
-        assertTrue(TrackReshapeModule.CONVERT_COMMANDS.get("audio") == 6918
-                && TrackReshapeModule.CONVERT_COMMANDS.get("instrument") == 6917);
+        assertEquals(6922, commands.allowed, "enablement is read from can_convert_to_hybrid");
+        assertArrayEquals(new int[] {6918, 6921}, TrackReshapeModule.CONVERT_COMMANDS.get("audio"));
+        assertArrayEquals(new int[] {6917, 6920}, TrackReshapeModule.CONVERT_COMMANDS.get("instrument"));
 
         JsonObject same =
                 finish(f, f.submit(module(f, commands), "tracks.convert", convert(HostFixture.B, "Track 1", "hybrid")));
@@ -131,6 +145,23 @@ public final class TrackReshapeModuleTest {
                 quiet.tasks.after(400));
         JsonObject unknown = assertUnknown("not_observed", settle(quiet, op));
         assertEquals("Audio", unknown.getAsJsonObject("type").get("after").getAsString());
+    }
+
+    @Test
+    void aConversionBitwigDisablesIsNotAppliedAndSendsNothing() {
+        HostFixture f = new HostFixture();
+        f.tracks[1].child("trackType").emit("Hybrid");
+        FakeCommands commands = new FakeCommands();
+        commands.enabled = false;
+        HostOperation op = f.submit(module(f, commands), "tracks.convert", convert(HostFixture.B, "Track 1", "audio"));
+        JsonObject result = finish(f, op);
+        assertEquals("not_applied", result.get("outcome").getAsString(), result.toString());
+        assertEquals("host_refused", result.get("reason").getAsString());
+        assertTrue(result.get("next").getAsString().contains("Remove the clips"));
+        assertTrue(result.get("selectionRestored").getAsBoolean());
+        assertFalse(op.dispatched(), "nothing was dispatched");
+        assertTrue(commands.calls.isEmpty());
+        assertEquals(6921, commands.allowed);
     }
 
     @Test
@@ -178,6 +209,7 @@ public final class TrackReshapeModuleTest {
         f.addTrack(2, HostFixture.C, "Audio");
         f.tracks[0].child("trackType").emit("Group");
         f.tracks[0].child("isGroup").data = true;
+        f.tracks[0].child("isGroupExpanded").data = true;
         parent(f, 0, ROOT);
         parent(f, 1, HostFixture.A);
         parent(f, 2, ROOT);
@@ -236,6 +268,12 @@ public final class TrackReshapeModuleTest {
         f.tracks[0].child("trackType").emit("Group");
         f.tracks[0].child("isGroup").data = true;
         assertRpcError("not_ready", submitted(f, module, "tracks.ungroup", p));
+        HostFixture collapsed = new HostFixture();
+        grouped(collapsed);
+        collapsed.tracks[0].child("isGroupExpanded").data = false;
+        RpcException hidden =
+                assertRpcError("not_ready", submitted(collapsed, module(collapsed, commands), "tracks.ungroup", p));
+        assertTrue(hidden.getMessage().contains("expand the group"), hidden.getMessage());
         f.drain();
         assertTrue(commands.calls.isEmpty());
     }

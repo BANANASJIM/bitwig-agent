@@ -35,6 +35,11 @@ final class DeviceChainEdit {
         String type(int slot);
 
         long nameSequence(int slot);
+
+        /** The slot's Remote Controls page names as one string, or null when not observed: a preset's identity hint. */
+        default String pages(int slot) {
+            return null;
+        }
     }
 
     /** The chain as observed immediately before dispatch. */
@@ -43,6 +48,7 @@ final class DeviceChainEdit {
         final long countSequence;
         final String[] names, types;
         final long[] nameSequences;
+        final String[] pages;
 
         Before(View v) {
             count = v.count();
@@ -54,6 +60,8 @@ final class DeviceChainEdit {
                 names[i] = v.name(i);
                 types[i] = v.type(i);
             }
+            pages = new String[seen];
+            for (int i = 0; i < seen; i++) pages[i] = v.pages(i);
             nameSequences = new long[Math.min(count + 1, v.window())];
             for (int i = 0; i < nameSequences.length; i++) nameSequences[i] = v.nameSequence(i);
         }
@@ -78,6 +86,9 @@ final class DeviceChainEdit {
     static final class Plan {
         final int kind, index, to, copyOf;
         final Before before;
+        /** A replacement's expected device name (a file's name without extension), or null when not predictable. */
+        String expectedName;
+
         final String[] expectedNames, expectedTypes;
 
         private Plan(int kind, int index, int to, int copyOf, Before before) {
@@ -113,8 +124,10 @@ final class DeviceChainEdit {
             return new Plan(MOVE, from, to, -1, before);
         }
 
-        static Plan replace(int index, Before before) {
-            return new Plan(REPLACE, index, index, -1, before);
+        static Plan replace(int index, Before before, String expectedName) {
+            Plan plan = new Plan(REPLACE, index, index, -1, before);
+            plan.expectedName = expectedName;
+            return plan;
         }
 
         /** A move whose result cannot be told apart from the chain before it, by name and type alone. */
@@ -197,7 +210,11 @@ final class DeviceChainEdit {
         return Observation.OK;
     }
 
-    /** Same count, every other device unchanged, and the slot shows a new device: other name or type, or a new name report. */
+    /**
+     * Same count, every other device unchanged, and the slot shows the requested device: another type, other Remote
+     * Controls pages, or another name (the expected one when the request names a file). A name report alone, or a
+     * rename to an unrelated name, is not evidence.
+     */
     private static Observation observeReplace(View v, Plan p, int n, int w) {
         Before b = p.before;
         int k = p.index;
@@ -206,7 +223,12 @@ final class DeviceChainEdit {
             if (!v.exists(i) || !v.ready(i) || !same(v, i, b, i)) return Observation.PENDING;
         for (int i = n; i < w; i++) if (v.exists(i)) return Observation.PENDING;
         if (!v.exists(k) || !v.ready(k)) return Observation.PENDING;
-        boolean renewed = !same(v, k, b, k) || v.nameSequence(k) > b.nameSequences[k];
+        String pages = v.pages(k);
+        boolean renamed =
+                !Objects.equals(v.name(k), b.names[k]) && (p.expectedName == null || p.expectedName.equals(v.name(k)));
+        boolean renewed = !Objects.equals(v.type(k), b.types[k])
+                || renamed
+                || (pages != null && b.pages[k] != null && !pages.equals(b.pages[k]));
         return renewed ? Observation.OK : Observation.PENDING;
     }
 

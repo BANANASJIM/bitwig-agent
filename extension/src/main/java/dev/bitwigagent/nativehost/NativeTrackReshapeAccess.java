@@ -13,7 +13,10 @@ import java.util.*;
  * selection descriptor dispatches a command id to the matching selection method ({@code
  * selection.descriptor.invoke(selection, id, [])}; ids 6917 instrument, 6918 audio, 6919 hybrid are the same on every
  * supported host). The command acts on the selected tracks, so the target is selected natively with {@code
- * selection.editable.set}, the command is dispatched, and the previous selection is set back.
+ * selection.editable.set}, the command is dispatched, and the previous selection is set back. Bitwig disables a
+ * conversion that would drop content (its menu item is greyed out); the same descriptor answers that as a boolean
+ * property ({@code selection.descriptor.enabled(selection, id)}, ids 6920/6921/6922 can_convert_to_*), read with the
+ * target selected: when false nothing is dispatched and the selection is set back at once.
  *
  * <p>Ungroup: {@code track.groupNode.ungroup()} on the group itself (no selection needed), which moves the children up
  * and then selects the last moved child; the previous selection is set back afterwards.
@@ -27,7 +30,7 @@ public final class NativeTrackReshapeAccess implements TrackReshapeModule.Access
     private final NativeHost.Access a;
     private final NativeTrackResolver resolver;
     private final Class<?> projectType;
-    private final Method selections, tracks, items, set, descriptor, dispatch, ungroup, begin, end;
+    private final Method selections, tracks, items, set, descriptor, dispatch, enabled, ungroup, begin, end;
 
     public NativeTrackReshapeAccess(NativeHost.Access a) throws ReflectiveOperationException {
         this.a = a;
@@ -45,6 +48,8 @@ public final class NativeTrackReshapeAccess implements TrackReshapeModule.Access
                 a.type("selection.channels"),
                 int.class,
                 List.class);
+        enabled = a.exactMethod(
+                "selection.descriptor.enabled", boolean.class, false, a.type("selection.channels"), int.class);
         ungroup = a.exactMethod("track.groupNode.ungroup", void.class, false);
         begin = a.exactMethod("project.begin", void.class, false, String.class, boolean.class);
         end = a.exactMethod("project.end", void.class, false, boolean.class);
@@ -56,7 +61,8 @@ public final class NativeTrackReshapeAccess implements TrackReshapeModule.Access
     }
 
     @Override
-    public JsonObject convert(Object proxy, String trackId, int command, Runnable check, Runnable beforeWrite) {
+    public JsonObject convert(
+            Object proxy, String trackId, int command, int allowed, Runnable check, Runnable beforeWrite) {
         a.documentThread();
         check.run();
         Object track = resolver.resolve(proxy, trackId, NativeTrackResolver.Kind.CHANNEL);
@@ -65,11 +71,16 @@ public final class NativeTrackReshapeAccess implements TrackReshapeModule.Access
         List<Object> previous = selected(selection);
         Object commands = a.invoke(descriptor, selection);
         check.run();
+        a.invoke(set, selection, List.of(track));
+        if (!Boolean.TRUE.equals(a.invoke(enabled, commands, selection, allowed))) {
+            JsonObject refused = info("track_selection.convert_track", restore(selection, previous), previous.size());
+            refused.addProperty("enabled", false);
+            return refused;
+        }
         beforeWrite.run();
         a.invoke(begin, project, CONVERT_LABEL, false);
         boolean restored;
         try {
-            a.invoke(set, selection, List.of(track));
             a.invoke(dispatch, commands, selection, command, new ArrayList<>());
         } finally {
             a.invoke(end, project, false);
@@ -79,7 +90,9 @@ public final class NativeTrackReshapeAccess implements TrackReshapeModule.Access
             restore.replaceAll(item -> item == track ? now : item);
             restored = restore(selection, restore);
         }
-        return info("track_selection.convert_track", restored, previous.size());
+        JsonObject out = info("track_selection.convert_track", restored, previous.size());
+        out.addProperty("enabled", true);
+        return out;
     }
 
     @Override

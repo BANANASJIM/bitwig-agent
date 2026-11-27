@@ -2,7 +2,9 @@ package dev.bitwigagent.mix;
 
 import com.bitwig.extension.controller.api.Track;
 import com.google.gson.*;
+import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.HostLimits;
+import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.host.TrackWindow;
 import java.util.*;
 import java.util.function.IntFunction;
@@ -213,6 +215,21 @@ final class TrackTree {
         return false;
     }
 
+    /** A group whose tracks the bank does not list: collapsed, or its expanded state not observed. */
+    static boolean collapsed(Node node) {
+        return node.group() && !node.master() && !Boolean.TRUE.equals(node.expanded);
+    }
+
+    /** Refuses an edit of a group whose tracks the bank does not list, since they would change unobserved. */
+    static void requireListed(Node node, String verb) {
+        if (collapsed(node))
+            throw Errors.notApplied(
+                    Reason.NOT_READY,
+                    "Group track " + node.id + " is collapsed, so the tracks inside it are not listed and could not be "
+                            + verb + " observably; expand the group in Bitwig (the folder icon in its track header), "
+                            + "check tracks.list shows its tracks, then retry. Nothing changed.");
+    }
+
     /** Every track inside {@code group}, at any depth, in flat order; meaningful only on a complete tree. */
     List<Node> descendants(Node group) {
         List<Node> out = new ArrayList<>();
@@ -266,6 +283,10 @@ final class TrackTree {
         JsonObject out = new JsonObject();
         out.addProperty("complete", complete);
         out.addProperty("groupsPresent", groups);
+        int collapsed = 0;
+        for (Node node : nodes) if (collapsed(node)) collapsed++;
+        // A collapsed group's tracks are not in the bank: the tree is complete for what is listed, not the project.
+        out.addProperty("collapsedGroups", collapsed);
         if (reason != null) out.addProperty("reason", reason);
         out.addProperty("scope", "public_parent_proxy_observations_flat_preorder");
         return out;

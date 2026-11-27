@@ -143,7 +143,11 @@ public final class TestServices {
     }
 
     public DeviceChainModule deviceChain() {
-        return new DeviceChainModule(scheduler, window, trackRefs, sources, chains, transportSafety);
+        return deviceChain(null);
+    }
+
+    public DeviceChainModule deviceChain(RemoteModule remotes) {
+        return new DeviceChainModule(scheduler, window, trackRefs, sources, chains, transportSafety, remotes);
     }
 
     public RemoteModule remote() {

@@ -24,8 +24,12 @@ import java.util.*;
  */
 public final class TrackReshapeModule implements HostModule {
     static final Set<String> METHODS = Set.of("tracks.convert", "tracks.ungroup");
-    /** Bitwig's command ids for converting the selected tracks; the same on every supported host. */
-    static final Map<String, Integer> CONVERT_COMMANDS = Map.of("instrument", 6917, "audio", 6918, "hybrid", 6919);
+    /**
+     * Bitwig's command ids for converting the selected tracks, and the ids of the can_convert_to_* properties that
+     * say whether the command is enabled; the same on every supported host.
+     */
+    static final Map<String, int[]> CONVERT_COMMANDS = Map.of(
+            "instrument", new int[] {6917, 6920}, "audio", new int[] {6918, 6921}, "hybrid", new int[] {6919, 6922});
 
     private static final Set<String> CONVERTIBLE = Set.of("Audio", "Instrument", "Hybrid");
 
@@ -33,7 +37,12 @@ public final class TrackReshapeModule implements HostModule {
     public interface Access {
         void execute(Runnable work);
 
-        JsonObject convert(Object trackProxy, String trackId, int command, Runnable check, Runnable beforeWrite);
+        /**
+         * Converts when Bitwig enables the command ({@code allowed} is its can_convert_to_* property); otherwise sends
+         * nothing and returns {@code enabled:false}.
+         */
+        JsonObject convert(
+                Object trackProxy, String trackId, int command, int allowed, Runnable check, Runnable beforeWrite);
 
         JsonObject ungroup(Object groupProxy, String groupId, Runnable check, Runnable beforeWrite);
     }
@@ -144,8 +153,23 @@ public final class TrackReshapeModule implements HostModule {
             return;
         }
         Object proxy = window.bank().getItemAt(slot);
-        int command = CONVERT_COMMANDS.get(to);
-        run(op, (a, check, write) -> a.convert(proxy, target.id, command, check, write), info -> {
+        int[] ids = CONVERT_COMMANDS.get(to);
+        run(op, (a, check, write) -> a.convert(proxy, target.id, ids[0], ids[1], check, write), info -> {
+            if (!info.get("enabled").getAsBoolean()) {
+                JsonObject result = Results.notApplied();
+                result.addProperty("reason", Reason.HOST_REFUSED.wire());
+                result.addProperty("detail", "conversion_disabled_by_host");
+                result.addProperty(
+                        "hint",
+                        "Bitwig disables converting this " + type + " track to " + to
+                                + ": the conversion would drop content the new type cannot hold (a hybrid track with both audio and note clips converts to neither). Nothing was sent.");
+                result.addProperty(
+                        "next",
+                        "Remove the clips the new type cannot hold (audio clips for instrument, note clips for audio), or keep the track hybrid.");
+                result.add("ref", trackRefs.ref(slot));
+                finish(op, result, info);
+                return;
+            }
             Track track = window.at(slot);
             scheduler.poll(
                     op,
@@ -184,6 +208,7 @@ public final class TrackReshapeModule implements HostModule {
                     "Ungrouping needs the whole project in the track window with every parent observed ("
                             + before.reason + "); nothing changed.");
         TrackTree.Node group = before.byId.get(target.id);
+        TrackTree.requireListed(group, "moved");
         List<String> children = new ArrayList<>();
         for (TrackTree.Node node : before.nodes)
             if (!node.master() && target.id.equals(node.parentId)) children.add(node.id);
@@ -249,6 +274,7 @@ public final class TrackReshapeModule implements HostModule {
                     "The user's track selection could not be put back; the command's own selection remains.");
         JsonObject nativeInfo = info.deepCopy();
         nativeInfo.remove("selectionRestored");
+        nativeInfo.remove("enabled");
         result.add("native", nativeInfo);
         op.result.complete(result);
     }
