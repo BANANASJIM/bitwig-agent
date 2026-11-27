@@ -899,15 +899,23 @@ async def test_batch_runs_lines_in_order_and_prints_one_result_line_each(host, m
     assert [r["method"] for r in host.requests] == ["tracks.set", "transport.set"]
 
 
-async def test_batch_stops_at_the_first_unsuccessful_outcome_with_its_code(host, monkeypatch):
+@pytest.mark.parametrize(
+    ("outcomes", "code", "printed"),
+    [(["applied", "unknown", "applied"], 3, 2), (["sent", "already_matched", "applied"], 0, 3)],
+)
+async def test_batch_continues_past_success_and_stops_at_the_first_unsuccessful_outcome(
+    host, monkeypatch, outcomes, code, printed
+):
     monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
-    outcomes = iter(["applied", "unknown", "applied"])
-    host.reply = lambda request: {"id": request["id"], "result": {"outcome": next(outcomes)}}
+    replies = iter(outcomes)
+    host.reply = lambda request: {"id": request["id"], "result": {"outcome": next(replies)}}
     stdin = lines_of(*({"method": "transport.set", "params": {"playing": False}},) * 3)
     out = await cli.execute(["batch", "-"], stdin=lambda: stdin)
-    assert out.code == 3
-    assert out.stdout.splitlines() == ['{"outcome":"applied"}', '{"outcome":"unknown"}']
-    assert len(host.requests) == 2
+    assert out.code == code
+    lines = [json.loads(line) for line in out.stdout.splitlines()]
+    assert [line["outcome"] for line in lines[:printed]] == outcomes[:printed]
+    assert lines[printed:] == [{"outcome": "not_applied", "reason": "not_reached"}] * (3 - printed)
+    assert len(host.requests) == printed
 
 
 async def test_batch_stops_at_the_first_error_and_names_the_line(host, monkeypatch):
@@ -922,7 +930,7 @@ async def test_batch_stops_at_the_first_error_and_names_the_line(host, monkeypat
     stdin = lines_of(*({"method": "transport.set", "params": {"playing": False}},) * 3)
     out = await cli.execute(["batch"], stdin=lambda: stdin)
     assert out.code == 1
-    assert out.stdout == '{"outcome":"applied"}\n'
+    assert out.stdout == '{"outcome":"applied"}\n{"outcome":"not_applied","reason":"not_reached"}\n'
     assert json.loads(out.stderr)["message"].startswith("line 2: ")
     assert len(host.requests) == 2
 
@@ -1236,3 +1244,30 @@ def test_a_union_with_a_string_takes_a_bare_word_and_still_parses_json():
     assert args_of("devices.insert", ['--position={"before": 1}']) == {"position": {"before": 1}}
     with pytest.raises(ValueError, match="--insert: not strict JSON"):
         args_of("devices.insert", ["--insert=bare"])
+
+
+async def test_a_mix_table_is_tracks_list_as_tsv_with_mix_fields(host, monkeypatch):
+    row: dict[str, object] = {"ref": TRACK_REF, "name": "Bass", "volume": {"value": 0.6, "display": "-10.0 dB"}}
+    row |= {"pan": {"value": 0.5, "display": "0.00 %"}, "mute": False, "solo": True, "arm": False, "sends": []}
+    result = {"tracks": [row], "window": {"complete": True}}
+    out = await stdout_of(
+        ["tracks", "list", "--format=tsv", "--fields=name,volume.display,pan.display,mute,solo"],
+        host,
+        monkeypatch,
+        result,
+    )
+    assert out.stdout.splitlines() == [
+        "name\tvolume.display\tpan.display\tmute\tsolo",
+        "Bass\t-10.0 dB\t0.00 %\tfalse\ttrue",
+    ]
+    assert host.requests[-1]["params"] == {}
+
+
+async def test_arranger_list_without_target_reads_every_track(host, monkeypatch):
+    clip = {"ref": {"kind": "clip", "track": TRACK_REF, "lane": "main", "start": 0, "name": "Intro"}, "start": 0}
+    result = {"clips": [clip | {"bar": 1, "name": "Intro"}], "markers": [], "tempo": 120, "timeSignature": "4/4"}
+    out = await stdout_of(
+        ["arranger", "list", "--format=tsv", "--fields=name,bar,ref.track.name"], host, monkeypatch, result
+    )
+    assert out.stdout.splitlines() == ["name\tbar\tref.track.name", "Intro\t1\tLead"]
+    assert host.requests[-1]["params"] == {}
