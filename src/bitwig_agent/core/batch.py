@@ -65,16 +65,17 @@ def remaining(calls: Sequence[Mapping[str, Any]], stop: int) -> str:
 
 
 def next_hint(calls: Sequence[Mapping[str, Any]], stop: int, stopped: Mapping[str, Any]) -> str:
-    """What to do after the stop: the stopping call's own next when it has one (a composed call that already created
-    something says not to repeat it), else fix or inspect it; the calls after it were not run."""
+    """What to do after the stop: the stopping call's own next when it has one, on the entry or on its kept error (a
+    composed call that already created something says not to repeat it; a stale ref names tracks.list), else fix or inspect it; the calls after it were not run."""
     method, left = calls[stop]["method"], remaining(calls, stop)
     unknown = stopped["outcome"] == Outcome.UNKNOWN
     never = " Never resend it." if unknown else ""
-    if "next" in stopped:
+    own = stopped.get("next") or stopped.get("error", {}).get("next")
+    if own:
         not_run = (
             f" {left[0].upper()}{left[1:]} {'was' if left.startswith('call ') else 'were'} not run." if left else ""
         )
-        return f"Call {stop + 1} ({method}) stopped: {stopped['next']}{never}{not_run}"
+        return f"Call {stop + 1} ({method}) stopped: {own}{never}{not_run}"
     if unknown:
         then = f" Then send only {left}." if left else ""
         return f"Call {stop + 1} ({method}) is unknown: inspect the real state before any further write.{never}{then}"
@@ -125,16 +126,18 @@ async def run(
 
 
 def refuse_call_timeouts(args: Mapping[str, Any]) -> call_path.Error | None:
-    """For a front end that leaves every wait to the method's default (MCP): a call's own timeoutMs is refused too."""
+    """For a front end that leaves every wait to the method's default (MCP): a call's own timeoutMs is refused too,
+    as every other validation refusal: one entry per call."""
     calls = args.get("calls")
-    for index, call in enumerate(calls if isinstance(calls, list) else []):
-        params = call.get("params") if isinstance(call, dict) else None
-        if isinstance(params, dict) and "timeoutMs" in params:
-            return call_path.invalid_params_error(
-                f"Call {index + 1} ({call.get('method')}): timeoutMs is not accepted here; each call waits for its "
-                "method's default"
-            )
-    return None
+    if not isinstance(calls, list):
+        return None
+    refusals = [
+        call_path.invalid_params_error("timeoutMs is not accepted here; each call waits for its method's default")
+        if isinstance(call, dict) and isinstance(call.get("params"), dict) and "timeoutMs" in call["params"]
+        else None
+        for call in calls
+    ]
+    return refused(calls, refusals) if any(refusals) else None
 
 
 async def handle(client: Any, args: dict[str, Any], timeout_ms: int) -> dict[str, Any]:

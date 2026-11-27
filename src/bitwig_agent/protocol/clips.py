@@ -445,7 +445,7 @@ NOTE_RULES = (
     "is refused at once (each with its index and a fix) and nothing is written. "
 )
 NOTE_WINDOWS = (
-    "On the inspected Bitwig 6.1.4 JAR all notes of the call are one Undo step (undo=one_step), written before "
+    "On a version-gated host JAR all notes of the call are one Undo step (undo=one_step), written before "
     "the clip is selected; a refused cell writes nothing. They are read back through 128-step windows of the finest "
     "power-of-two grid that aligns every onset; a span too long for one uses several windows of the coarsest aligning "
     "grid in the same call: windows[] has each window's result and outcome is the worst. Without that JAR each note "
