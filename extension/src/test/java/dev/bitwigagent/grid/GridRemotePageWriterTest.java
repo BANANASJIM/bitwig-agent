@@ -352,6 +352,14 @@ public final class GridRemotePageWriterTest {
     }
 
     @Test
+    void aListedOwnParameterWithNoNativeObjectIsTargetNotFound() {
+        RemoteFixture f = new RemoteFixture();
+        f.direct.put("CONTENTS/CUTOFF", null);
+        assertRpcError("target_not_found", () -> defineOwn(f, "CONTENTS/CUTOFF"));
+        assertTrue(f.calls.isEmpty() && !f.op.dispatched(), "nothing is written");
+    }
+
+    @Test
     void aGridDeviceTakesItsOwnAndItsModulesParametersOnOnePage() {
         RemoteFixture f = new RemoteFixture();
         Node mix = new Node(FLOAT);

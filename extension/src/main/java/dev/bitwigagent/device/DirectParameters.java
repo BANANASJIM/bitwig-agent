@@ -14,7 +14,7 @@ public final class DirectParameters {
     public interface Lookup {
         String[] parameterIds(Object device);
 
-        /** The device's direct parameter with this id; only asked for an id {@link #parameterIds} lists. */
+        /** The device's direct parameter with this id, or null; only asked for an id {@link #parameterIds} lists. */
         Object parameter(Object device, String id);
 
         String parameterName(Object parameter);
@@ -28,9 +28,8 @@ public final class DirectParameters {
      */
     public static Object resolve(Lookup a, Object device, JsonObject owner, JsonObject ref) {
         String id = ref.get("id").getAsString();
-        if (!Arrays.asList(a.parameterIds(device)).contains(id))
-            throw Errors.targetNotFound(ref, "The device has no such parameter now.");
-        Object parameter = a.parameter(device, id);
+        Object parameter = Arrays.asList(a.parameterIds(device)).contains(id) ? a.parameter(device, id) : null;
+        if (parameter == null) throw Errors.targetNotFound(ref, "The device has no such parameter now.");
         JsonObject current = ref(a, owner, id, parameter);
         if (!Refs.matches(ref, current, true)) throw Refs.parameterChanged(ref, current);
         return parameter;
