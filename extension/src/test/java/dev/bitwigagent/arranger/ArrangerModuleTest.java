@@ -211,7 +211,7 @@ public final class ArrangerModuleTest {
         Fixture x = new Fixture("Instrument");
         x.lane.listed.add(0, x.lane.row(6, 2, "Fill"));
         x.lane.listed.add(x.lane.row(0, 4, "Intro"));
-        x.f.base.transport.child("timeSignature").data = "3/4";
+        x.f.base.transport.child("timeSignature").emit("3/4");
         FakeHost marker = x.f.base
                 .host
                 .child("createArranger")
@@ -242,6 +242,19 @@ public final class ArrangerModuleTest {
         assertEquals(120.0, result.get("tempo").getAsDouble());
         assertEquals("3/4", result.get("timeSignature").getAsString());
         assertTrue(result.has("window") && result.has("markersComplete"));
+    }
+
+    @Test
+    void anUnobservedTimeSignatureAndTempoAreNullNotGuessed() {
+        Fixture x = new Fixture("Instrument");
+        x.f.base.transport.child("timeSignature").notifyInitial = false;
+        x.f.base.transport.child("tempo").child("value").notifyInitial = false;
+        x.f.modules.put("arranger.list", x.f.services.arranger(x.lane));
+        JsonObject result = x.call("arranger.list", new JsonObject());
+        JsonObject row = result.getAsJsonArray("clips").get(0).getAsJsonObject();
+        assertTrue(row.get("bar").isJsonNull() && row.get("start").getAsDouble() == 8, "no bar without a signature");
+        assertTrue(
+                result.get("timeSignature").isJsonNull() && result.get("tempo").isJsonNull());
     }
 
     @Test

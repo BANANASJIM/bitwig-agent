@@ -17,7 +17,8 @@ ARRANGER_LIST_DESCRIPTION = (
     "start, length, end, bar, name, kind (instrument|audio|other), loopEnabled, loop {start, length}, playStart, "
     "playStop}; the track is ref.track. The result also has markers [{ref, name, beat}], markersComplete, tempo "
     "(bpm), timeSignature and window. Beats are quarter notes from the arrangement start; bar is 1 + start / bar "
-    "length at the current time signature (fractional off the bar line; time-signature changes are not applied). "
+    "length at the current time signature (fractional off the bar line; time-signature changes are not applied); "
+    "bar, tempo and timeSignature are null until observed. "
     "Automation clips and take/comp lanes are not listed. Native read (inspected Bitwig 6.1.4 JAR); no selection."
 )
 

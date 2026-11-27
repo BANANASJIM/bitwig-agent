@@ -77,6 +77,8 @@ public final class ArrangerModule implements HostModule {
     private final Transport transport;
     private final AtomicLongArray epochs = new AtomicLongArray(HostLimits.TRACKS);
     private Access access;
+    private volatile String signature;
+    private volatile Double tempo;
     private static final String PENDING = "arranger.pending", QUARANTINE = "arranger.quarantine";
 
     public ArrangerModule(
@@ -100,8 +102,8 @@ public final class ArrangerModule implements HostModule {
         this.markers = markers;
         this.transport = transport;
         this.access = access;
-        transport.tempo().value().markInterested();
-        transport.timeSignature().markInterested();
+        transport.tempo().value().addRawValueObserver((DoubleValueChangedCallback) v -> tempo = v);
+        transport.timeSignature().addValueObserver((StringValueChangedCallback) v -> signature = (String) v);
         for (int i = 0; i < HostLimits.TRACKS; i++) {
             final int index = i;
             Track track = window.at(i);
@@ -162,16 +164,17 @@ public final class ArrangerModule implements HostModule {
     private JsonObject timeline(List<JsonObject> results, JsonObject[] refs) {
         JsonObject out = new JsonObject();
         JsonArray rows = new JsonArray();
-        String signature = transport.timeSignature().get();
-        String[] parts = signature.split("/");
-        double barBeats = Integer.parseInt(parts[0]) * 4.0 / Integer.parseInt(parts[1]);
+        String signature = this.signature;
+        String[] parts = signature == null ? null : signature.split("/");
+        Double barBeats = parts == null ? null : Integer.parseInt(parts[0]) * 4.0 / Integer.parseInt(parts[1]);
         for (int i = 0; i < results.size(); i++) {
             JsonObject lane = shaped(results.get(i), refs[i]);
             List<JsonObject> clips = new ArrayList<>();
             for (JsonElement row : lane.remove("clips").getAsJsonArray()) clips.add(row.getAsJsonObject());
             clips.sort(Comparator.comparingDouble(c -> c.get("start").getAsDouble()));
             for (JsonObject clip : clips) {
-                clip.addProperty("bar", 1 + clip.get("start").getAsDouble() / barBeats);
+                clip.addProperty(
+                        "bar", barBeats == null ? null : 1 + clip.get("start").getAsDouble() / barBeats);
                 rows.add(clip);
             }
             for (Map.Entry<String, JsonElement> e : lane.entrySet()) out.add(e.getKey(), e.getValue());
@@ -181,7 +184,7 @@ public final class ArrangerModule implements HostModule {
         JsonObject marked = markers.list();
         out.add("markers", marked.get("markers"));
         out.add("markersComplete", marked.get("observationsComplete"));
-        out.addProperty("tempo", transport.tempo().value().getRaw());
+        out.addProperty("tempo", tempo);
         out.addProperty("timeSignature", signature);
         out.add("window", Results.window(window.offset(), HostLimits.TRACKS, window.total()));
         return out;
