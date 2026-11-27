@@ -169,15 +169,22 @@ public final class AutomationModule implements HostModule {
         return curve;
     }
 
-    /** Requested points: beats strictly increasing and inside range when one is given, both on the beat grid. */
+    /**
+     * Requested points: beats non-decreasing on the point grid with at most a step (the bundle's limit) at one beat,
+     * inside range when one is given; each knows its place among the points at its beat.
+     */
     static List<AutomationPlan.Request> points(JsonObject p) {
         double[] range = range(p);
         List<AutomationPlan.Request> out = new ArrayList<>();
         for (JsonElement item : p.getAsJsonArray("points")) {
             JsonObject n = item.getAsJsonObject();
             double beat = AutomationLane.Point.beat(n.get("beat").getAsDouble());
-            if (!out.isEmpty() && beat <= out.get(out.size() - 1).beat)
-                throw Errors.invalid("point beats must be strictly increasing on the 2^-20 beat grid");
+            AutomationPlan.Request before = out.isEmpty() ? null : out.get(out.size() - 1);
+            if (before != null && beat < before.beat)
+                throw Errors.invalid("point beats must be non-decreasing on the 2^-20 beat grid");
+            int ordinal = before != null && beat == before.beat ? before.ordinal + 1 : 0;
+            if (ordinal >= HostLimits.LIMITS.maxPointsPerBeat)
+                throw Errors.invalid("a beat holds at most " + HostLimits.LIMITS.maxPointsPerBeat + " points (a step)");
             if (!AutomationLane.inRange(beat, range)) throw Errors.invalid("every point must lie inside range");
             ValueInput value = ValueInput.parse("points[].value", n.get("value"));
             boolean display = value.form == ValueInput.Form.DISPLAY;
@@ -188,7 +195,8 @@ public final class AutomationModule implements HostModule {
                     n.has("interpolation")
                             ? n.get("interpolation").getAsString().equals("linear")
                             : null,
-                    n.has("curve") ? curve(n.get("curve").getAsDouble()) : null));
+                    n.has("curve") ? curve(n.get("curve").getAsDouble()) : null,
+                    ordinal));
         }
         return out;
     }

@@ -104,7 +104,8 @@ def test_set_upsert_range_all_and_clear():
     "changes",
     [
         {"points": [SET["points"][1], SET["points"][0]]},
-        {"points": [SET["points"][0], {**SET["points"][0], "value": 0.5}]},
+        {"points": [{**SET["points"][0], "value": v} for v in (0.1, 0.5, 0.9)]},
+        {"points": [{"beat": 1, "value": 0}, {"beat": 1.0000003, "value": 1}, {"beat": 1, "value": 0.5}]},
         {"points": [{**SET["points"][0], "value": 1.5}]},
         {"points": [{**SET["points"][0], "interpolation": "bezier"}]},
         {"points": [{**SET["points"][0], "curve": 1.5}]},
@@ -134,3 +135,19 @@ def test_the_owner_union_is_the_automation_row_of_the_owner_matrix():
     assert adapter.validate_python(GRID).owner.kind == "gridModule"
     assert adapter.validate_python(FREQUENCY).owner.kind == "device"
     assert adapter.validate_python(NESTED).owner.chain.kind == "chain"
+
+
+def test_a_step_is_two_points_at_one_beat_in_order():
+    step = {**SET, "points": [{"beat": 8, "value": 0.2}, {"beat": 8, "value": 0.8, "interpolation": "hold"}]}
+    assert validate_call("automation.points.set", step)[0] == step
+    snapped = {**SET, "points": [{"beat": 1, "value": 0}, {"beat": 1.0000003, "value": 1}]}
+    assert validate_call("automation.points.set", snapped)[0] == snapped
+
+
+def test_three_points_at_one_beat_are_refused_with_the_reason():
+    three = {**SET, "points": [{"beat": 2, "value": v} for v in (0.1, 0.2, 0.3)]}
+    with pytest.raises(ValidationError, match=r"a beat holds at most 2 points \(a step\)"):
+        validate_call("automation.points.set", three)
+    backwards = {**SET, "points": [{"beat": 2, "value": 0}, {"beat": 1, "value": 0}]}
+    with pytest.raises(ValidationError, match="non-decreasing"):
+        validate_call("automation.points.set", backwards)

@@ -84,6 +84,78 @@ final class AutomationPlanTest {
         assertTrue(base.empty, "a lane holding only Bitwig's base point is already cleared");
     }
 
+    static AutomationPlan.Request step(double beat, double value, int ordinal) {
+        return new AutomationPlan.Request(beat, value, null, null, null, ordinal);
+    }
+
+    /** A lane with a step at beat 8: 0.2 (linear) then 0.8 (hold, curve 0.5), between points at 0 and 16. */
+    static List<Point> stepped() {
+        return List.of(p(0, 0.1, true), p(8, 0.2, true), new Point(8, 0.8, false, 0.5), p(16, 0.9, true));
+    }
+
+    static List<Point> after(List<Point> points, AutomationPlan plan) {
+        List<Native> lane = AutomationFake.natives(points);
+        return AutomationFake.observed(
+                        true,
+                        AutomationFake.execute(lane, plan.apply(AutomationFake.observed(true, lane, List.of()))),
+                        List.of())
+                .points;
+    }
+
+    @Test
+    void aStepIsTwoPointsAtOneBeatInLaneOrder() {
+        List<Point> lane = stepped();
+        Observed observed = lane(lane);
+        assertEquals(
+                List.of(0, 0, 1, 0),
+                observed.points.stream().map(q -> q.ordinal).collect(java.util.stream.Collectors.toList()));
+        List<AutomationPlan.Request> asRead = List.of(
+                step(0, 0.1, 0),
+                step(8, 0.2, 0),
+                new AutomationPlan.Request(8, 0.8, null, false, 0.5, 1),
+                step(16, 0.9, 0));
+        assertTrue(
+                new AutomationPlan(null, asRead, AutomationLane.ALL).apply(observed).empty,
+                "get then set(all) of a pair is already matched");
+        assertTrue(new AutomationPlan(null, asRead, null).apply(observed).empty, "and so is the same upsert");
+        AutomationPlan create = new AutomationPlan(null, List.of(step(4, 0.3, 0), step(4, 0.6, 1)), null);
+        AutomationPlan.Write made = create.apply(lane(List.of(p(0, 0.1, true))));
+        assertEquals(
+                List.of(p(0, 0.1, true), p(4, 0.3, true), p(4, 0.6, true)), made.desired, "a new step keeps its order");
+        assertEquals(List.of(1, 2), made.at);
+        assertEquals(made.desired, after(List.of(p(0, 0.1, true)), create));
+    }
+
+    @Test
+    void withoutARangeListedPointsUpdateTheStepInOrder() {
+        List<Point> lane = stepped();
+        Observed observed = lane(lane);
+        AutomationPlan first = new AutomationPlan(null, List.of(step(8, 0.3, 0), step(8, 0.8, 1)), null);
+        AutomationPlan.Write write = first.apply(observed);
+        assertEquals(handles(observed, 1), write.delete, "only the first point of the step changes");
+        assertEquals(handles(observed, 0, 2, 3), write.kept);
+        assertEquals(List.of(1), write.at, "the updated first point goes back before the kept second one");
+        assertEquals(
+                List.of(p(0, 0.1, true), p(8, 0.3, true), new Point(8, 0.8, false, 0.5), p(16, 0.9, true)),
+                after(lane, first),
+                "the second point keeps the interpolation and curve it omits");
+        AutomationPlan more = new AutomationPlan(null, List.of(step(16, 0.9, 0), step(16, 0.4, 1)), null);
+        assertEquals(
+                List.of(p(16, 0.9, true), p(16, 0.4, true)),
+                after(lane, more).subList(3, 5),
+                "listing more points than the beat holds updates in order and inserts the rest after");
+        RpcException fewer = assertThrows(
+                RpcException.class, () -> new AutomationPlan(null, List.of(step(8, 0.5, 0)), null).apply(observed));
+        assertEquals("invalid_target", fewer.reason.wire());
+        assertFalse(fewer.unknown);
+        assertEquals("beat 8 holds 2 points (a step); list all of them in order, or give a range", fewer.getMessage());
+        AutomationPlan collapse = new AutomationPlan(null, List.of(step(8, 0.5, 0)), new double[] {8, 8});
+        assertEquals(
+                List.of(p(0, 0.1, true), p(8, 0.5, true), p(16, 0.9, true)),
+                after(lane, collapse),
+                "with a range the beat becomes exactly the listed point");
+    }
+
     @Test
     void curveIsWrittenWhenGivenAndKeptWhenOmitted() {
         Point curved = new Point(8, 0.4, false, 0.6);
