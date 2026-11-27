@@ -59,8 +59,8 @@ public final class TransportModule implements HostModule {
             "arrangerAutomationWriteEnabled",
             "automationWriteMode");
     /**
-     * Recording state Bitwig may switch along with a requested field (Global Record also turns automation write on): the
-     * recording fields and the read-only launcher automation write switch.
+     * The launcher automation write switch: read only, but read before a write with the recording fields, since Bitwig
+     * may switch any of them along with a requested field (Global Record also turns automation write on).
      */
     private static final String LAUNCHER_AUTOMATION_WRITE = "clipLauncherAutomationWriteEnabled";
 

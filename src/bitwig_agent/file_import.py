@@ -62,8 +62,8 @@ def finish(entries: list[dict[str, Any]], clip: dict[str, Any] | None, track: di
         return (
             f"The copy is unknown and the clip may already be on the arranger: inspect arranger.list "
             f"{dumps({'target': track})} before any further write, then ack arranger.quarantine. Only if the clip is "
-            f"there, delete the launcher clip {dumps(clip)} with clips.delete; never resend clips.copy or clips.import."
-            + own
+            f"there, delete the launcher clip {dumps(clip)} with clips.delete; otherwise the file stays in that launcher "
+            "clip. Never resend clips.copy or clips.import." + own
         )
     if failed["step"] == "copy":
         return (
@@ -72,8 +72,9 @@ def finish(entries: list[dict[str, Any]], clip: dict[str, Any] | None, track: di
         )
     if unknown:
         return (
-            f"The arranger clip is in this result; the delete of the launcher clip {dumps(clip)} is unknown: inspect "
-            f"launcher.list {dumps({'target': track})} before any further write; never resend clips.delete." + own
+            f"The arranger clip is in this result; the delete is unknown: inspect launcher.list "
+            f"{dumps({'target': track})} for the launcher clip {dumps(clip)} before any further write; never resend "
+            "clips.delete." + own
         )
     return f"The arranger clip is in this result; the launcher clip {dumps(clip)} remains: delete it with clips.delete."
 

@@ -160,8 +160,8 @@ def test_an_unknown_copy_says_to_inspect_the_arranger_before_anything_else():
     assert result["next"] == (
         f"The copy is unknown and the clip may already be on the arranger: inspect arranger.list "
         f"{dumps({'target': TRACK_REF})} before any further write, then ack arranger.quarantine. Only if the clip is "
-        f"there, delete the launcher clip {dumps(TEMPORARY)} with clips.delete; never resend clips.copy or "
-        "clips.import. The copy step said: arranger.list"
+        f"there, delete the launcher clip {dumps(TEMPORARY)} with clips.delete; otherwise the file stays in that "
+        "launcher clip. Never resend clips.copy or clips.import. The copy step said: arranger.list"
     )
 
 
@@ -172,8 +172,9 @@ def test_an_unknown_delete_says_to_inspect_the_slot_never_to_resend_the_delete()
     assert result["outcome"] == "unknown"
     assert result["ref"] == ARRANGER
     assert result["next"] == (
-        f"The arranger clip is in this result; the delete of the launcher clip {dumps(TEMPORARY)} is unknown: inspect "
-        f"launcher.list {dumps({'target': TRACK_REF})} before any further write; never resend clips.delete."
+        f"The arranger clip is in this result; the delete is unknown: inspect launcher.list "
+        f"{dumps({'target': TRACK_REF})} for the launcher clip {dumps(TEMPORARY)} before any further write; never "
+        "resend clips.delete."
     )
     assert leaf_rule_holds(result)
 
