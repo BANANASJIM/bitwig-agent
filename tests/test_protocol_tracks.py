@@ -162,3 +162,19 @@ def test_meters_arguments():
         with pytest.raises(ValidationError):
             validate_call("meters.get", bad)
     assert TOOLS["meters.get"].read_only
+
+
+def test_duplicate_convert_and_ungroup_take_a_track_ref():
+    for method in ("tracks.duplicate", "tracks.ungroup"):
+        assert validate_call(method, {"target": TRACK})[0] == {"target": TRACK}
+        with pytest.raises(ValidationError):
+            validate_call(method, {"target": TRACK["id"]})
+    for to in ("hybrid", "audio", "instrument"):
+        assert validate_call("tracks.convert", {"target": TRACK, "to": to})[0] == {"target": TRACK, "to": to}
+    for bad in ({"target": TRACK}, {"target": TRACK, "to": "effect"}, {"target": TRACK, "to": "Hybrid"}):
+        with pytest.raises(ValidationError):
+            validate_call("tracks.convert", bad)
+    assert resolve("tracks.duplicate", TOOLS["tracks.duplicate"].annotations) == ADD
+    assert resolve("tracks.convert", TOOLS["tracks.convert"].annotations).destructive
+    assert resolve("tracks.ungroup", TOOLS["tracks.ungroup"].annotations).destructive
+    assert TOOLS["tracks.convert"].inspect == "tracks.get"

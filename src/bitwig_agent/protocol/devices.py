@@ -5,6 +5,7 @@ from typing import Any, Literal, Self
 
 from pydantic import Field, model_validator
 
+from bitwig_agent.protocol.annotations import EDIT
 from bitwig_agent.protocol.base import (
     PROJECT_READY,
     TRACK,
@@ -144,6 +145,12 @@ class DeviceMoveArgs(DeviceTargetArgs):
     position: DevicePosition = Field(description=POSITION.replace(" (default)", ""))
 
 
+class DeviceReplaceArgs(DeviceTargetArgs):
+    insert: Insert = Field(
+        description="What to load in the device's place: the insert object of a presets.search or devices.catalog row, unchanged."
+    )
+
+
 class RemoteGetArgs(DeviceTargetArgs):
     page: int = omitted(
         ge=0, le=REMOTE_PAGE_INDEX_MAX, description="Remote Controls page index; default the extension's current page."
@@ -184,6 +191,8 @@ DEVICES_INSERT_PARAMS_DESCRIPTION = (
 )
 DEVICES_DELETE_DESCRIPTION = "Delete one device (Device.deleteObject): target is a device ref from devices.list. Needs no recording or automation write. Returns the deleted device, the chain before and after, and verification api_readback (the count dropped by one and the devices after it shifted) or native_readback inside a device; an unknown outcome (not_observed, readback_mismatch) means read devices.list before another edit. One Undo step; never retry."
 DEVICES_MOVE_DESCRIPTION = "Move one device within its chain: target is a device ref, position start|end|{before: deviceRef}|{after: deviceRef} (required); to, when given, is the device's own track or chain ref (moving to another parent is not supported yet). A device already at that position is already_matched. Verified by the arrangement of the whole chain: observed names/types in a track's chain, where devices with identical name and type cannot prove a move (outcome unknown, readback_mismatch); device objects in a chain inside a device. Same safety and no-retry rules as devices.delete."
+DEVICES_DUPLICATE_DESCRIPTION = "Duplicate one device of a track's chain right after itself (InsertionPoint.copyDevices: its settings, preset and inner chains): target is a root device ref from devices.list. Devices inside a chain are not supported yet (unsupported_scope). Verified like devices.insert by the observed chain (api_readback): the count grew by one, the devices up to the source are unchanged, a device with the source's name and type is right after it and the rest shifted; returns ref of the copy. Needs recording/automation write off and the whole chain inside the 16-device window. One Undo step; never retry unknown: read devices.list."
+DEVICES_REPLACE_DESCRIPTION = "Replace one device of a track's chain in place with a preset, device or plug-in (Bitwig's own replace, Device.replaceDeviceInsertionPoint). The target is a root device ref from devices.list; insert {kind, id|path} is the insert object of a presets.search or devices.catalog row (a .bwpreset loads that preset in the device's place). Devices inside a chain are not supported yet (unsupported_scope). Verified by the observed chain (api_readback): the count is unchanged, every other device is unchanged and the device at the target's index changed name or type or reported a new name; loading a preset onto the same device that keeps its name may not be observable (outcome unknown, not_observed: check the sound or devices.list, never retry). Returns ref of the new device, replaced (what was there) and requestedIdentifierVerified false. Needs recording/automation write off and the whole chain inside the 16-device window. One Undo step. Loading can start plug-ins or change the sound."
 DEVICES_REMOTE_GET_DESCRIPTION = "Read one root device's Remote Controls: the page list (remotePage refs) and the controls of one page, each with the parameter ref, name and bare value. page is the page index; omitted reads the extension's own current page, not the GUI's; a page past the page count is target_not_found. Pass a control's ref to parameters.set; a control remapped to another name is stale."
 
 
@@ -265,6 +274,24 @@ SPECS: dict[str, ToolSpec] = {
         False,
         examples=({"target": {**DEVICE_REF, "index": 3, "name": "Comp"}, "position": "start"},),
         requires=PROJECT_READY,
+    ),
+    "devices.duplicate": ToolSpec(
+        DeviceTargetArgs,
+        DEVICES_DUPLICATE_DESCRIPTION,
+        False,
+        examples=({"target": DEVICE_REF},),
+        requires=PROJECT_READY,
+    ),
+    "devices.replace": ToolSpec(
+        DeviceReplaceArgs,
+        DEVICES_REPLACE_DESCRIPTION,
+        False,
+        examples=(
+            {"target": DEVICE_REF, "insert": {"kind": "file", "path": "/presets/Warm Pad.bwpreset"}},
+            {"target": {**DEVICE_REF, "index": 1, "name": "EQ-5"}, "insert": {"kind": "clap", "id": "org.example.eq"}},
+        ),
+        requires=PROJECT_READY,
+        annotations=EDIT,
     ),
     "devices.remote.get": ToolSpec(
         RemoteGetArgs, DEVICES_REMOTE_GET_DESCRIPTION, True, examples=({"target": DEVICE_REF, "page": 0},)

@@ -6,12 +6,13 @@ import dev.bitwigagent.core.Reason;
 import java.util.Objects;
 
 /**
- * Observed-delta verification for device-chain edits (insert, delete, move) over a window of observed slots.
+ * Observed-delta verification for device-chain edits (insert, duplicate, delete, move, replace) over a window of
+ * observed slots.
  * Pure: it reads a {@link View} of host observations and never touches the host API, so one set of rules serves
  * the top-level 16-slot bank and a layer's 2-slot child window. Names and types are the only observable identity.
  */
 final class DeviceChainEdit {
-    static final int INSERT = 0, DELETE = 1, MOVE = 2;
+    static final int INSERT = 0, DELETE = 1, MOVE = 2, REPLACE = 3;
 
     private DeviceChainEdit() {}
 
@@ -70,16 +71,20 @@ final class DeviceChainEdit {
         }
     }
 
-    /** What was dispatched: an insertion at `index`, the deletion of `index`, or a move of `index` to `to`. */
+    /**
+     * What was dispatched: an insertion at `index` (a copy of `copyOf` when that is not -1), the deletion of `index`,
+     * a move of `index` to `to`, or a replacement of the device at `index`.
+     */
     static final class Plan {
-        final int kind, index, to;
+        final int kind, index, to, copyOf;
         final Before before;
         final String[] expectedNames, expectedTypes;
 
-        private Plan(int kind, int index, int to, Before before) {
+        private Plan(int kind, int index, int to, int copyOf, Before before) {
             this.kind = kind;
             this.index = index;
             this.to = to;
+            this.copyOf = copyOf;
             this.before = before;
             if (kind != MOVE) {
                 expectedNames = null;
@@ -92,15 +97,24 @@ final class DeviceChainEdit {
         }
 
         static Plan insert(int index, Before before) {
-            return new Plan(INSERT, index, index, before);
+            return new Plan(INSERT, index, index, -1, before);
+        }
+
+        /** A copy of the device at `index` inserted right after it, carrying its name and type. */
+        static Plan duplicate(int index, Before before) {
+            return new Plan(INSERT, index + 1, index + 1, index, before);
         }
 
         static Plan delete(int index, Before before) {
-            return new Plan(DELETE, index, index, before);
+            return new Plan(DELETE, index, index, -1, before);
         }
 
         static Plan move(int from, int to, Before before) {
-            return new Plan(MOVE, from, to, before);
+            return new Plan(MOVE, from, to, -1, before);
+        }
+
+        static Plan replace(int index, Before before) {
+            return new Plan(REPLACE, index, index, -1, before);
         }
 
         /** A move whose result cannot be told apart from the chain before it, by name and type alone. */
@@ -137,12 +151,15 @@ final class DeviceChainEdit {
     static Observation observe(View v, Plan p) {
         Before b = p.before;
         int n = b.count, w = v.window(), c = v.count();
-        boolean consistent = p.kind == INSERT ? c >= n && c <= n + 1 : p.kind == DELETE ? c >= n - 1 && c <= n : c == n;
+        boolean consistent = p.kind == INSERT
+                ? c >= n && c <= n + 1
+                : p.kind == DELETE ? c >= n - 1 && c <= n : p.kind == REPLACE ? c >= n - 1 && c <= n + 1 : c == n;
         if (!consistent) return Observation.AMBIGUOUS;
         // Slots before an edit point must be exactly what they were; a moved range has no fixed prefix.
         int fixed = p.kind == MOVE ? 0 : Math.min(p.index, Math.min(n, w));
         for (int i = 0; i < fixed; i++) if (!v.exists(i) || !same(v, i, b, i)) return Observation.AMBIGUOUS;
         if (p.kind == MOVE) return observeMove(v, p, n, w);
+        if (p.kind == REPLACE) return observeReplace(v, p, n, w);
         int expected = p.kind == INSERT ? n + 1 : n - 1;
         if (c != expected || v.countSequence() <= b.countSequence) return Observation.PENDING;
         if (p.kind == INSERT) return observeInsert(v, p, n, w);
@@ -159,6 +176,7 @@ final class DeviceChainEdit {
         int k = p.index;
         if (n < w && !(v.exists(n) && v.ready(n) && v.nameSequence(n) > b.nameSequences[n])) return Observation.PENDING;
         if (k < w && !(v.exists(k) && v.ready(k))) return Observation.PENDING;
+        if (p.copyOf >= 0 && k < w && !same(v, k, b, p.copyOf)) return Observation.PENDING;
         for (int i = k + 1; i < Math.min(n + 1, w); i++)
             if (!v.exists(i) || !v.ready(i) || !same(v, i, b, i - 1)) return Observation.PENDING;
         for (int i = n + 1; i < w; i++) if (v.exists(i)) return Observation.PENDING;
@@ -177,6 +195,19 @@ final class DeviceChainEdit {
                     || !Objects.equals(v.type(i), p.expectedTypes[i])) return Observation.PENDING;
         }
         return Observation.OK;
+    }
+
+    /** Same count, every other device unchanged, and the slot shows a new device: other name or type, or a new name report. */
+    private static Observation observeReplace(View v, Plan p, int n, int w) {
+        Before b = p.before;
+        int k = p.index;
+        if (v.count() != n) return Observation.PENDING;
+        for (int i = k + 1; i < Math.min(n, w); i++)
+            if (!v.exists(i) || !v.ready(i) || !same(v, i, b, i)) return Observation.PENDING;
+        for (int i = n; i < w; i++) if (v.exists(i)) return Observation.PENDING;
+        if (!v.exists(k) || !v.ready(k)) return Observation.PENDING;
+        boolean renewed = !same(v, k, b, k) || v.nameSequence(k) > b.nameSequences[k];
+        return renewed ? Observation.OK : Observation.PENDING;
     }
 
     private static boolean same(View v, int slot, Before b, int old) {

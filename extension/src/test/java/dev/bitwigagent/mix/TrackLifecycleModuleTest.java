@@ -13,7 +13,10 @@ import dev.bitwigagent.core.RpcException;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
-/** tracks.insert, tracks.group and tracks.delete against the simulated host; no claim about native completion. */
+/**
+ * tracks.insert, tracks.group, tracks.duplicate and tracks.delete against the simulated host; no claim about native
+ * completion.
+ */
 public final class TrackLifecycleModuleTest {
     @Test
     void creationNamesOnlyUniqueObservedAddition() {
@@ -63,9 +66,13 @@ public final class TrackLifecycleModuleTest {
         f.next();
         assertTrue(!assertRpcError("unsupported_scope", master).unknown && f.tracks[1].actions == 0, "master refused");
         f.tracks[1].child("trackType").emit("Group");
+        f.tracks[1].child("isGroup").data = true;
         HostOperation group = f.submit(module, "tracks.delete", delete(HostFixture.B, "Track 1"));
         f.next();
-        assertTrue(!assertRpcError("unsupported_scope", group).unknown && f.tracks[1].actions == 0, "group refused");
+        assertTrue(
+                !assertRpcError("not_ready", group).unknown && f.tracks[1].actions == 0,
+                "a group whose children are not all observed is refused");
+        f.tracks[1].child("isGroup").data = false;
         // An instrument track that tracks.bounce turned Hybrid stays deletable.
         f.tracks[1].child("trackType").emit("Hybrid");
         f.transport.child("isPlaying").emit(true);
@@ -435,6 +442,116 @@ public final class TrackLifecycleModuleTest {
     }
 
     static final String ROOT = "00000000-0000-0000-0000-0000000000ff", G = "00000000-0000-0000-0000-000000000004";
+
+    @Test
+    void deletingAGroupRemovesItWithEveryTrackInside() {
+        HostFixture f = new HostFixture();
+        TrackLifecycleModule module = lifecycle(f);
+        f.addTrack(2, HostFixture.C, "Audio");
+        group(f, 0, HostFixture.A, 0);
+        parent(f, 0, ROOT);
+        parent(f, 1, HostFixture.A);
+        parent(f, 2, ROOT);
+        f.delete = slot -> {
+            f.removeTrack(1, 2);
+            f.tracks[2].child("position").emit(0);
+            f.removeTrack(0, 1);
+        };
+        HostOperation op = f.submit(module, "tracks.delete", delete(HostFixture.A, "Track 0"));
+        while (!op.result.isDone()) f.next();
+        JsonObject result = op.result.join();
+        assertEquals("applied", result.get("outcome").getAsString(), result.toString());
+        assertEquals(1, f.tracks[0].actions, "only the group itself is deleted; its children go with it");
+        assertEquals(
+                HostFixture.B,
+                result.getAsJsonArray("deletedChildren")
+                        .get(0)
+                        .getAsJsonObject()
+                        .get("id")
+                        .getAsString());
+        assertEquals(1, result.getAsJsonArray("deletedChildren").size());
+        assertEquals(3, result.get("trackCountBefore").getAsInt());
+        assertEquals(1, result.get("trackCountAfter").getAsInt());
+
+        HostFixture partial = new HostFixture();
+        group(partial, 0, HostFixture.A, 0);
+        parent(partial, 0, ROOT);
+        parent(partial, 1, HostFixture.A);
+        partial.delete = slot -> partial.removeTrack(0, 1);
+        HostOperation childLeft = partial.submit(lifecycle(partial), "tracks.delete", delete(HostFixture.A, "Track 0"));
+        while (!childLeft.result.isDone()) partial.next();
+        assertEquals(
+                "unknown",
+                childLeft.result.join().get("outcome").getAsString(),
+                "a child still in the bank is not the deletion of the group");
+    }
+
+    private static void duplicable(HostFixture f, Runnable effect) {
+        f.tracks[1].on("duplicate", args -> {
+            f.mutation();
+            f.tracks[1].actions++;
+            effect.run();
+            return null;
+        });
+    }
+
+    @Test
+    void duplicateAttributesTheCopyRightAfterTheSource() {
+        HostFixture f = new HostFixture();
+        TrackLifecycleModule module = lifecycle(f);
+        duplicable(f, () -> f.addTrack(2, HostFixture.C, "Audio"));
+        HostOperation op = f.submit(module, "tracks.duplicate", HostFixture.targeting(HostFixture.B));
+        while (!op.result.isDone()) f.next();
+        JsonObject result = op.result.join();
+        assertEquals("applied", result.get("outcome").getAsString(), result.toString());
+        assertEquals("api_readback", result.get("verification").getAsString());
+        assertEquals(HostFixture.C, id(result), "the copy is the one new track");
+        assertEquals(HostFixture.B, result.getAsJsonObject("source").get("id").getAsString());
+        assertEquals(0, result.get("deviceCount").getAsInt());
+        assertEquals(1, f.tracks[1].actions);
+        assertTrue(f.services.holds.list().isEmpty(), "an attributed copy releases its hold");
+
+        HostFixture wrongType = new HostFixture();
+        duplicable(wrongType, () -> wrongType.addTrack(2, HostFixture.C, "Instrument"));
+        HostOperation other = wrongType.submit(
+                lifecycle(wrongType),
+                "tracks.duplicate",
+                HostFixture.targeting(HostFixture.B),
+                wrongType.tasks.after(400));
+        while (!other.result.isDone()) wrongType.next();
+        JsonObject unknown = other.result.join();
+        assertEquals("unknown", unknown.get("outcome").getAsString(), "a new track of another type is not the copy");
+        assertFalse(unknown.has("nameApplied"), "a duplicate names nothing");
+        assertFalse(wrongType.services.holds.list().isEmpty(), "an unattributed copy holds further track creation");
+        HostOperation insert = wrongType.submit(lifecycle(wrongType), "tracks.insert", create("audio", -1));
+        wrongType.next();
+        assertRpcError("unresolved", insert);
+    }
+
+    @Test
+    void duplicateRefusesGroupsMastersAndRecordingAndAmbiguousCopies() {
+        HostFixture f = new HostFixture();
+        TrackLifecycleModule module = lifecycle(f);
+        duplicable(f, () -> {});
+        f.tracks[1].child("trackType").emit("Master");
+        HostOperation master = f.submit(module, "tracks.duplicate", HostFixture.targeting(HostFixture.B));
+        f.next();
+        assertTrue(!assertRpcError("unsupported_scope", master).unknown && f.tracks[1].actions == 0);
+        f.tracks[1].child("trackType").emit("Audio");
+        f.transport.child("isArrangerRecordEnabled").emit(true);
+        HostOperation recording = f.submit(module, "tracks.duplicate", HostFixture.targeting(HostFixture.B));
+        f.next();
+        assertTrue(!assertRpcError("unsafe_state", recording).unknown && f.tracks[1].actions == 0);
+
+        HostFixture twice = new HostFixture();
+        duplicable(twice, () -> {
+            twice.addTrack(2, HostFixture.C, "Audio");
+            twice.addTrack(3, G, "Audio");
+        });
+        HostOperation op = twice.submit(lifecycle(twice), "tracks.duplicate", HostFixture.targeting(HostFixture.B));
+        while (!op.result.isDone()) twice.next();
+        assertEquals("side_effect", op.result.join().get("reason").getAsString(), "two new tracks are ambiguous");
+    }
 
     private static void parent(HostFixture f, int slot, String id) {
         FakeHost parent = f.tracks[slot].child("createParentTrack");

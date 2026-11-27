@@ -213,6 +213,13 @@ final class TrackTree {
         return false;
     }
 
+    /** Every track inside {@code group}, at any depth, in flat order; meaningful only on a complete tree. */
+    List<Node> descendants(Node group) {
+        List<Node> out = new ArrayList<>();
+        for (Node node : nodes) if (!node.master() && descends(node, group)) out.add(node);
+        return out;
+    }
+
     /** Zero-based index among the root's direct children of the same list (effect vs. main), by flat order. */
     int topLevelOrdinal(Node candidate) {
         boolean effect = "Effect".equals(candidate.type);

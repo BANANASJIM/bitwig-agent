@@ -11,7 +11,9 @@ import dev.bitwigagent.core.HostOperation;
 import dev.bitwigagent.core.Refs;
 import dev.bitwigagent.core.Results;
 import dev.bitwigagent.device.ChainExamples;
+import dev.bitwigagent.device.DeviceChainModuleTest;
 import dev.bitwigagent.launcher.LauncherFake;
+import dev.bitwigagent.mix.TrackReshapeModuleTest;
 import dev.bitwigagent.project.FakeKeySignature;
 import java.util.Map;
 import java.util.Set;
@@ -68,11 +70,21 @@ final class ResultContractTest {
                     new Example(
                             LIFECYCLE,
                             f -> f.delete = slot -> f.removeTrack(slot, 1),
+                            "{\"target\":" + HostFixture.track(HostFixture.B) + "}"),
+            "tracks.duplicate",
+                    new Example(
+                            LIFECYCLE,
+                            ResultContractTest::duplicable,
                             "{\"target\":" + HostFixture.track(HostFixture.B) + "}"));
 
     /** Applied examples that need a fixture of their own domain (the simulated native document of chains). */
-    private static final Map<String, Supplier<JsonObject>> DOMAIN_EXAMPLES =
-            Map.of("chains.set", ChainExamples::set, "chains.insert", ChainExamples::insert);
+    private static final Map<String, Supplier<JsonObject>> DOMAIN_EXAMPLES = Map.of(
+            "chains.set", ChainExamples::set,
+            "chains.insert", ChainExamples::insert,
+            "devices.duplicate", DeviceChainModuleTest::duplicateExample,
+            "devices.replace", DeviceChainModuleTest::replaceExample,
+            "tracks.convert", TrackReshapeModuleTest::convertExample,
+            "tracks.ungroup", TrackReshapeModuleTest::ungroupExample);
 
     /**
      * Host writes with no fixture example here yet, to fill: each is still held to the leaf rule wherever a module
@@ -131,6 +143,15 @@ final class ResultContractTest {
     /** Host writes whose fixture example answers {@code sent}: nothing is read back, so nothing to verify. */
     private static final Map<String, Example> SENT =
             Map.of("tracks.select", new Example(TestServices::mix, "{" + TRACK_B + "}"));
+
+    /** Track B duplicates into a new audio track C right after it. */
+    private static void duplicable(HostFixture f) {
+        f.tracks[1].on("duplicate", args -> {
+            f.mutation();
+            f.addTrack(2, HostFixture.C, "Audio");
+            return null;
+        });
+    }
 
     /** Track A's first send feeds the effect track Reverb and reads its enabled state back. */
     private static void sendable(HostFixture f) {

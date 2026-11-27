@@ -25,12 +25,14 @@ import java.util.UUID;
 import java.util.function.BooleanSupplier;
 
 /**
- * chains.list and the verified edits of a device chain (devices.insert, devices.delete, devices.move). A track's root
- * chain is edited through the public API and proven by the observed bank delta; a chain inside a device is listed,
- * edited and proven natively by {@link NativeChainEdits}.
+ * chains.list and the verified edits of a device chain (devices.insert, devices.delete, devices.move,
+ * devices.duplicate, devices.replace). A track's root chain is edited through the public API and proven by the observed
+ * bank delta; a chain inside a device is listed, edited and proven natively by {@link NativeChainEdits} (duplicate and
+ * replace are root-chain only).
  */
 public final class DeviceChainModule implements HostModule {
-    static final Set<String> METHODS = Set.of("chains.list", "devices.insert", "devices.delete", "devices.move");
+    static final Set<String> METHODS = Set.of(
+            "chains.list", "devices.insert", "devices.delete", "devices.move", "devices.duplicate", "devices.replace");
     private final Scheduler scheduler;
     private final TrackWindow window;
     private final TrackRefs trackRefs;
@@ -72,7 +74,8 @@ public final class DeviceChainModule implements HostModule {
 
     @Override
     public void validate(String method, JsonObject params) {
-        if (method.equals("devices.insert")) validateInsertion(params.getAsJsonObject("insert"));
+        if (method.equals("devices.insert") || method.equals("devices.replace"))
+            validateInsertion(params.getAsJsonObject("insert"));
     }
 
     /** The kind-specific shape of an insert object, which the schema cannot state. */
@@ -124,6 +127,15 @@ public final class DeviceChainModule implements HostModule {
         boolean inChain = method.equals("devices.insert")
                 ? "chain".equals(Refs.kind(p.getAsJsonObject("to")))
                 : NativeChains.nested(p.getAsJsonObject("target"));
+        if (method.equals("devices.duplicate") || method.equals("devices.replace")) {
+            if (inChain)
+                throw Errors.notApplied(
+                        Reason.UNSUPPORTED_SCOPE,
+                        "Only a device of a track's own chain can be duplicated or replaced; devices inside a chain are not supported yet.");
+            if (method.equals("devices.duplicate")) duplicate(op, p.getAsJsonObject("target"));
+            else replace(op, p);
+            return;
+        }
         switch (method) {
             case "devices.insert":
                 if (inChain) nested.insert(op, p);
@@ -324,6 +336,55 @@ public final class DeviceChainModule implements HostModule {
         }
     }
 
+    // ---------------------------------------------------------------- duplicate and replace
+
+    /** The chain of a device to duplicate or replace, captured whole with `room` free slots for the result. */
+    private State whole(Parent parent, DeviceSources.Source device, int room, String verb) {
+        transportSafety.requirePlaybackSafe();
+        State state = parent.capture("The chain changed before dispatch.");
+        if (state.before.count + room > parent.window())
+            throw Errors.notApplied(
+                    Reason.OUTSIDE_WINDOW,
+                    "A " + verb + " needs the whole chain and its result inside the " + parent.window()
+                            + "-device window.");
+        if (device.position >= state.before.count)
+            throw Errors.notApplied(Reason.TARGET_NOT_FOUND, "The device is beyond the observed device count.");
+        return state;
+    }
+
+    private void duplicate(HostOperation op, JsonObject target) {
+        DeviceSources.Source device = sources.device(target, true);
+        Parent parent = parentOf(device);
+        int index = device.position;
+        State state = whole(parent, device, 1, "duplicate");
+        scheduler.check(op);
+        Edit edit = new Edit(parent, DeviceChainEdit.Plan.duplicate(index, state.before), state, index + 1);
+        edit.extra.add("source", DeviceChainEdit.summary(index, state.before.names[index], state.before.types[index]));
+        op.markDispatched();
+        device.device.afterDeviceInsertionPoint().copyDevices(device.device);
+        observeEdit(op, edit);
+    }
+
+    private void replace(HostOperation op, JsonObject p) {
+        DeviceSources.Source device = sources.device(p.getAsJsonObject("target"), true);
+        Parent parent = parentOf(device);
+        int index = device.position;
+        State state = whole(parent, device, 0, "replace");
+        scheduler.check(op);
+        Edit edit = new Edit(parent, DeviceChainEdit.Plan.replace(index, state.before), state, index);
+        edit.extra.add(
+                "replaced", DeviceChainEdit.summary(index, state.before.names[index], state.before.types[index]));
+        edit.extra.addProperty("requestedIdentifierVerified", false);
+        JsonObject insert = p.getAsJsonObject("insert");
+        String kind = insert.get("kind").getAsString();
+        op.markDispatched();
+        insertAt(
+                device.device.replaceDeviceInsertionPoint(),
+                kind,
+                insert.get(kind.equals("file") ? "path" : "id").getAsString());
+        observeEdit(op, edit);
+    }
+
     // ---------------------------------------------------------------- delete and move
 
     private void delete(HostOperation op, JsonObject target) {
@@ -443,7 +504,7 @@ public final class DeviceChainModule implements HostModule {
         result.add("before", DeviceChainEdit.before(plan.before));
         result.add("after", DeviceChainEdit.after(view));
         for (String key : edit.extra.keySet()) result.add(key, edit.extra.get(key));
-        if (plan.kind == DeviceChainEdit.INSERT) {
+        if (plan.kind == DeviceChainEdit.INSERT || plan.kind == DeviceChainEdit.REPLACE) {
             boolean identified = outcome.ok && plan.index < view.window();
             if (identified) {
                 result.add("ref", edit.parent.at(plan.index).ref());

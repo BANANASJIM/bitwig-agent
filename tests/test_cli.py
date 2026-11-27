@@ -839,8 +839,8 @@ async def test_help_layers_are_plain_text_on_stdout_and_exit_zero(monkeypatch):
         assert "\x1b" not in out.stdout
     overview = (await cli.execute(["--help"])).stdout
     assert (
-        len(overview.encode()) < 7200
-    )  # 7014 B with the hidden methods this fixture exposes after chains.set/insert (was 6953, 2860): loop text plus a usage line per method
+        len(overview.encode()) < 7600
+    )  # 7237 B after the lifecycle methods (tracks.duplicate/convert/ungroup, devices.duplicate/replace; was 7014, 6953, 2860): loop text plus a usage line per method
     assert all(f"  {name} " in overview for name in {n.split(".")[0] for n in TOOLS})
     for name in views.names():  # one generated line per exposed method, from the registry; batch reads JSON Lines
         assert f"\n    {cli.BATCH_USAGE if name == 'batch' else views.usage(name)}\n" in overview, name
