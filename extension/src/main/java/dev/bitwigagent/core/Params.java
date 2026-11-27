@@ -2,6 +2,7 @@ package dev.bitwigagent.core;
 
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.util.Set;
@@ -27,6 +28,13 @@ public final class Params {
                 || value.getAsString().length() > 4096)
             throw Errors.invalid(key + " must be a nonempty string (maximum 4096 characters).");
         return value.getAsString();
+    }
+
+    /** {@code path} unchanged when it is a readable regular file; else {@code invalid_file} naming {@code what}. */
+    public static Path readableFile(Path path, String what) {
+        if (!Files.isRegularFile(path) || !Files.isReadable(path))
+            throw Errors.notApplied(Reason.INVALID_FILE, what + " requires a readable regular local file.");
+        return path;
     }
 
     public static Path absoluteFilePath(JsonObject p, String key) {

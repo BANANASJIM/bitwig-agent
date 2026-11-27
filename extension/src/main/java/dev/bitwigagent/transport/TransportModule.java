@@ -52,20 +52,17 @@ public final class TransportModule implements HostModule {
         "automationWriteMode"
     };
     /** Fields writable while recording or automation write is on: the modes themselves. */
-    static final Set<String> RECORDING_FIELDS = Set.of(
+    static final List<String> RECORDING_FIELDS = List.of(
             "arrangerRecordEnabled",
             "arrangerOverdubEnabled",
             "clipLauncherOverdubEnabled",
             "arrangerAutomationWriteEnabled",
             "automationWriteMode");
-    /** Recording state Bitwig may switch along with a requested field (Global Record also turns automation write on). */
-    static final List<String> SIDE_EFFECTS = List.of(
-            "arrangerRecordEnabled",
-            "arrangerOverdubEnabled",
-            "clipLauncherOverdubEnabled",
-            "arrangerAutomationWriteEnabled",
-            "clipLauncherAutomationWriteEnabled",
-            "automationWriteMode");
+    /**
+     * The launcher automation write switch: read only, but read before a write with the recording fields, since Bitwig
+     * may switch any of them along with a requested field (Global Record also turns automation write on).
+     */
+    private static final String LAUNCHER_AUTOMATION_WRITE = "clipLauncherAutomationWriteEnabled";
 
     private static final ValueMatch BEATS_AND_TEMPO = ValueMatch.raw(1e-6);
     private static final Set<String> BEATS_AND_TEMPO_KEYS = Set.of("tempo", "position", "loopStart", "loopLength");
@@ -119,7 +116,7 @@ public final class TransportModule implements HostModule {
         observe("arrangerOverdubEnabled", transport.isArrangerOverdubEnabled());
         observe("clipLauncherOverdubEnabled", transport.isClipLauncherOverdubEnabled());
         observe("arrangerAutomationWriteEnabled", transport.isArrangerAutomationWriteEnabled());
-        observe("clipLauncherAutomationWriteEnabled", launcherAutomationWrite());
+        observe(LAUNCHER_AUTOMATION_WRITE, launcherAutomationWrite());
         observe("automationWriteMode", transport.automationWriteMode());
     }
 
@@ -143,11 +140,6 @@ public final class TransportModule implements HostModule {
         if (!method.equals("transport.set"))
             throw Errors.notApplied(Reason.UNKNOWN_METHOD, "Unknown transport method.");
         if (p.size() == 0) throw Errors.notApplied(Reason.INVALID_PARAMS, "At least one transport field is required.");
-        if (p.has("clipLauncherAutomationWriteEnabled"))
-            throw Errors.notApplied(
-                    Reason.UNSUPPORTED_SCOPE,
-                    "clipLauncherAutomationWriteEnabled has no effect in Bitwig 6 (one automation write button); use"
-                            + " arrangerAutomationWriteEnabled. Nothing was written.");
         if (p.has("timeSignature") && !validSignature(Params.string(p, "timeSignature")))
             throw Errors.notApplied(
                     Reason.INVALID_PARAMS,
@@ -224,7 +216,8 @@ public final class TransportModule implements HostModule {
                 p,
                 scheduler.observeUntil(op),
                 p.has("playing") && p.get("playing").getAsBoolean() && !projectState.engineActive());
-        for (String key : SIDE_EFFECTS) request.before.put(key, values.get(key).value);
+        for (String key : RECORDING_FIELDS) request.before.put(key, values.get(key).value);
+        request.before.put(LAUNCHER_AUTOMATION_WRITE, values.get(LAUNCHER_AUTOMATION_WRITE).value);
         boolean stopping = p.has("playing") && !p.get("playing").getAsBoolean();
         try {
             if (stopping) write(request, "playing");

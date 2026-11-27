@@ -344,6 +344,21 @@ public final class HostBridgeTest {
     }
 
     @Test
+    void transportSetDoesNotTakeTheReadOnlyLauncherAutomationWriteSwitch() {
+        Fake f = new Fake();
+        RpcException refused = assertRpcError(
+                "invalid_params",
+                f.bridge()
+                        .handle(
+                                "transport.set",
+                                HostFixture.json("{\"clipLauncherAutomationWriteEnabled\":false}"),
+                                f.deadline()));
+        assertTrue(
+                refused.getMessage().contains("unknown field clipLauncherAutomationWriteEnabled"),
+                refused.getMessage());
+    }
+
+    @Test
     void fullStatusAddsTheImplementedSurfaceToTheBriefState() {
         Fake f = new Fake();
         HostBridge bridge = f.bridge();
