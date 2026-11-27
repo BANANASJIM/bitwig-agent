@@ -88,7 +88,7 @@ sha256sum dist/bitwig_agent-X.Y.Z-py3-none-any.whl dist/bitwig_agent-X.Y.Z.tar.g
 - `SHA256SUMS` has exactly three unique **bare asset filenames**; strip the local `dist/` and `build/` prefixes.
 - Finalize the [Arch recipe](https://github.com/BANANASJIM/bitwig-agent/tree/main/packaging/aur) and regenerate `.SRCINFO` **before tagging**; validate it in an isolated Arch environment. `packaging/` is excluded from the sdist, so updating its hashes does not require rebuilding it.
 - Publish the recipe through the separate AUR Git repository's `master` branch ([maintenance](#maintaining-the-recipe)); confirm the public package version and maintainer before announcing helper-based installation.
-- Run `publish-pypi.yml` on the version tag with `publish=false` first. Only an explicitly authorized publication with the configured `pypi` environment may use `publish=true` ([prerequisites](#external-accountenvironment-prerequisites)).
+- Create the GitHub Release as a **draft**, attach all four assets, verify them, and only then publish it: publishing the release automatically starts `publish-pypi.yml` (and `aur.yml`), and its publish job waits for the `pypi` environment approval. Approve only when explicitly authorized ([prerequisites](#external-accountenvironment-prerequisites)). A manual `publish=false` run on the tag remains available for validation only.
 - Neither a pending PyPI publisher nor an AUR recipe establishes public package availability; retain GitHub release assets as an alternative installation source.
 
 ## PyPI Trusted Publishing
@@ -103,7 +103,7 @@ Run validation-only from the release tag:
 gh workflow run publish-pypi.yml --ref vX.Y.Z -f publish=false
 ```
 
-The separate publish job runs only for explicit `publish=true`, uses GitHub environment **`pypi`**, and receives `id-token: write` there for short-lived OIDC credentials. The validation job has read-only permissions. No long-lived PyPI API token should be introduced. The publication job promotes the validated Python artifacts instead of checking out and rebuilding project source.
+The separate publish job runs on `release: published` or an explicit `publish=true` dispatch (never on `publish=false`), is gated by the `pypi` approval, uses GitHub environment **`pypi`**, and receives `id-token: write` there for short-lived OIDC credentials. The validation job has read-only permissions. No long-lived PyPI API token should be introduced. The publication job promotes the validated Python artifacts instead of checking out and rebuilding project source.
 
 ### External account/environment prerequisites
 
