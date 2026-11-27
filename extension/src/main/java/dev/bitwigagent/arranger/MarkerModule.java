@@ -12,7 +12,6 @@ import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Refs;
 import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.RpcException;
-import dev.bitwigagent.core.SafetyObservation;
 import dev.bitwigagent.core.Scheduler;
 import dev.bitwigagent.core.Verification;
 import dev.bitwigagent.host.TransportSafety;
@@ -160,7 +159,7 @@ public final class MarkerModule implements HostModule {
                     "Marker edits need the whole marker list inside the " + WINDOW + "-marker window.");
         if (holds.held(UNRESOLVED))
             throw holds.blocked(UNRESOLVED, "A prior marker write was not observed.", "Inspect markers.list");
-        transportSafety.requirePlaybackSafe();
+        transportSafety.recheck(op);
         if (method.equals("markers.insert")) {
             insert(op, p, before);
             return;
@@ -197,7 +196,6 @@ public final class MarkerModule implements HostModule {
     }
 
     private void insert(HostOperation op, JsonObject p, Snapshot before) {
-        SafetyObservation safety = transportSafety.stopped(op);
         double beat = p.get("beat").getAsDouble();
         for (Marker m : before.markers)
             if (Math.abs(m.beat - beat) <= BEAT_TOLERANCE)
@@ -213,7 +211,7 @@ public final class MarkerModule implements HostModule {
         scheduler.poll(
                 op,
                 scheduler.observeUntil(op),
-                () -> stillStopped(safety, playhead) && at(beat),
+                () -> stillStopped(op, playhead) && at(beat),
                 () -> {
                     transport.addCueMarkerAtPlaybackPosition();
                     awaitInserted(op, p, before, playhead);
@@ -225,9 +223,9 @@ public final class MarkerModule implements HostModule {
     }
 
     /** Playback or recording starting mid-insert stops it before the add; the playhead is still put back. */
-    private boolean stillStopped(SafetyObservation safety, double playhead) {
+    private boolean stillStopped(HostOperation op, double playhead) {
         try {
-            transportSafety.guardStopped(safety);
+            transportSafety.recheck(op);
             return true;
         } catch (RpcException error) {
             transport.setPosition(playhead);

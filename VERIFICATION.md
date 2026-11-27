@@ -50,6 +50,17 @@ pixi run bitwig-agent help notes.set
 
 These commands describe the implemented surface, not a successful native operation. `status` and other host-facing commands require the running extension.
 
+### Native name tables
+
+CI has no proprietary jar. There, `tests/test_names_tables.py` checks each shipped table's shape (every member has an owner class key, a name and a well-formed JVM descriptor) and that the table and its `host.json` jar hash equal the record of its last real-jar verification (`tests/fixtures/names_verified.json`), so a table edited without re-verification fails; `NativePortsTest` checks that every native port fails closed (`native_unavailable` or `host_mismatch`, never an internal error) when the gate does not open. Where the jars are installed, two offline checks use them without running host code:
+
+```sh
+BITWIG_HOST_JARS=/path/6.1.4/bitwig.jar:/path/6.1.7/bitwig.jar pixi run test tests/test_names_tables.py
+pixi run test-java --host-jar /path/to/bitwig.jar   # once per host.json entry
+```
+
+The first resolves every member's name and descriptor on its owner class in the entry's jar. The second binds every port of `NativePorts`, and the bindings they resolve on first use, through the real gate on that jar; it fails when the types the code binds a member with differ from the table's descriptor. For the 6.1.4 and 6.1.7 tables both pass, and `scripts/remap` regenerates each table from the other and the two jars with no difference. A table that binds is not native behavior: that still needs the native smoke.
+
 ### Optional music-analysis dependencies
 
 The default pixi environment already includes them (numpy, scipy, soundfile), so `pixi run test` runs the PCM checks.

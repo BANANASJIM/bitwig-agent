@@ -12,14 +12,12 @@ import dev.bitwigagent.core.HostModule;
 import dev.bitwigagent.core.HostOperation;
 import dev.bitwigagent.core.Outcome;
 import dev.bitwigagent.core.Params;
+import dev.bitwigagent.core.PortHandle;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.Scheduler;
 import dev.bitwigagent.core.Verification;
-import dev.bitwigagent.host.NativeRuntime;
 import dev.bitwigagent.host.TransportSafety;
-import dev.bitwigagent.nativehost.NativeHost;
-import dev.bitwigagent.nativehost.NativeKeySignatureAccess;
 import java.util.*;
 
 /**
@@ -87,26 +85,26 @@ public final class KeySignatureModule implements HostModule {
         void write(Object projectProxy, Map<String, Integer> values, Runnable beforeWrite);
     }
 
+    /** The name of the one Undo step a write is, as Bitwig's Edit menu shows it. */
+    public static final String UNDO_LABEL = "Set Key Signature";
+
     private final Scheduler scheduler;
     private final Project project;
     private final TransportSafety transportSafety;
-    private final NativeRuntime natives;
+    private final PortHandle<Access> access;
     private final Holds holds;
-    private Access access;
 
     public KeySignatureModule(
             Scheduler scheduler,
             Project project,
             TransportSafety transportSafety,
-            NativeRuntime natives,
-            Holds holds,
-            Access access) {
+            PortHandle<Access> access,
+            Holds holds) {
         this.scheduler = scheduler;
         this.project = project;
         this.transportSafety = transportSafety;
-        this.natives = natives;
-        this.holds = holds;
         this.access = access;
+        this.holds = holds;
     }
 
     @Override
@@ -145,8 +143,8 @@ public final class KeySignatureModule implements HostModule {
         scheduler.check(op);
         boolean write = method.equals(SET);
         if (write && holds.held(HOLD)) throw holds.blocked(HOLD, HOLD_TEXT, "Inspect project.key.get");
-        Runnable guard = write ? transportSafety.writeGuard(op, false) : () -> {};
-        Access bridge = access(op);
+        Runnable guard = write ? () -> transportSafety.recheck(op) : () -> {};
+        Access bridge = access.get(op);
         Runnable check = () -> {
             scheduler.check(op);
             guard.run();
@@ -209,7 +207,7 @@ public final class KeySignatureModule implements HostModule {
         } else holds.release(HOLD);
         result.add("fields", fields);
         result.addProperty("nativeUndo", !changed.isEmpty());
-        if (!changed.isEmpty()) result.addProperty("undoLabel", NativeKeySignatureAccess.UNDO_LABEL);
+        if (!changed.isEmpty()) result.addProperty("undoLabel", UNDO_LABEL);
         return result;
     }
 
@@ -249,16 +247,5 @@ public final class KeySignatureModule implements HostModule {
 
     private static JsonElement label(Option option) {
         return option == null ? JsonNull.INSTANCE : new JsonPrimitive(option.label);
-    }
-
-    private Access access(HostOperation op) {
-        if (access != null) return access;
-        NativeHost.Access bindings = natives.get(op).access();
-        if (bindings.gateError() != null)
-            throw Errors.notApplied(
-                    Reason.NATIVE_UNAVAILABLE,
-                    "The project key signature needs the native gate: " + bindings.gateError());
-        access = NativeKeySignatureAccess.bind(bindings);
-        return access;
     }
 }

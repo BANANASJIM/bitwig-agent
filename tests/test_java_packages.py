@@ -51,3 +51,11 @@ def test_only_nativehost_reflects_into_the_host(path):
 def test_rpc_imports_only_core(path):
     for match in INTERNAL_IMPORT.finditer(path.read_text(encoding="utf-8")):
         assert match.group(1) == "core.", f"{path.name} imports dev.bitwigagent.{match.group(1)}"
+
+
+@pytest.mark.parametrize("path", sources(), ids=lambda p: p.relative_to(BASE).as_posix())
+def test_only_composition_names_native_adapters(path):
+    if package(path) != "nativehost" and path.stem not in COMPOSITION:
+        assert "dev.bitwigagent.nativehost." not in path.read_text(encoding="utf-8"), (
+            f"{path.name} uses nativehost, not its port"
+        )

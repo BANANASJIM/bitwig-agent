@@ -8,20 +8,20 @@ import dev.bitwigagent.core.Holds;
 import dev.bitwigagent.core.HostLimits;
 import dev.bitwigagent.core.HostModule;
 import dev.bitwigagent.core.HostOperation;
+import dev.bitwigagent.core.MethodSpecs;
+import dev.bitwigagent.core.PortHandle;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Refs;
 import dev.bitwigagent.core.Results;
-import dev.bitwigagent.core.SafetyObservation;
 import dev.bitwigagent.core.Scheduler;
-import dev.bitwigagent.host.NativeRuntime;
 import dev.bitwigagent.host.ProjectState;
 import dev.bitwigagent.host.TrackRefs;
 import dev.bitwigagent.host.TrackWindow;
 import dev.bitwigagent.host.TransportSafety;
 import dev.bitwigagent.launcher.LauncherState;
 import dev.bitwigagent.launcher.Note;
+import dev.bitwigagent.launcher.NoteFeatures;
 import dev.bitwigagent.launcher.NoteModule;
-import dev.bitwigagent.nativehost.NativeArrangerAccess;
 import java.math.BigDecimal;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicLongArray;
@@ -71,12 +71,11 @@ public final class ArrangerModule implements HostModule {
     private final TrackRefs trackRefs;
     private final ProjectState projectState;
     private final TransportSafety transportSafety;
-    private final NativeRuntime natives;
+    private final PortHandle<Access> access;
     private final Holds holds;
     private final MarkerModule markers;
     private final Transport transport;
     private final AtomicLongArray epochs = new AtomicLongArray(HostLimits.TRACKS);
-    private Access access;
     private volatile String signature;
     private volatile Double tempo;
     private static final String PENDING = "arranger.pending", QUARANTINE = "arranger.quarantine";
@@ -87,21 +86,19 @@ public final class ArrangerModule implements HostModule {
             TrackRefs trackRefs,
             ProjectState projectState,
             TransportSafety transportSafety,
-            NativeRuntime natives,
+            PortHandle<Access> access,
             Holds holds,
             MarkerModule markers,
-            Transport transport,
-            Access access) {
+            Transport transport) {
         this.scheduler = scheduler;
         this.window = window;
         this.trackRefs = trackRefs;
         this.projectState = projectState;
         this.transportSafety = transportSafety;
-        this.natives = natives;
+        this.access = access;
         this.holds = holds;
         this.markers = markers;
         this.transport = transport;
-        this.access = access;
         transport.tempo().value().addRawValueObserver((DoubleValueChangedCallback) v -> tempo = v);
         transport.timeSignature().addValueObserver((StringValueChangedCallback) v -> signature = (String) v);
         for (int i = 0; i < HostLimits.TRACKS; i++) {
@@ -120,11 +117,22 @@ public final class ArrangerModule implements HostModule {
     @Override
     public void validate(String method, JsonObject p) {}
 
-    /** Notes are {beat, pitch, velocity, duration, channel}, canonical; beats are relative to the clip start. */
+    /**
+     * Notes are {beat, pitch, velocity, duration, channel}, canonical; beats are relative to the clip start. Operators
+     * and expressions are not written into arranger clips in this version.
+     */
     public static List<double[]> notes(JsonArray array, double length) {
         List<double[]> out = new ArrayList<>();
-        for (Note n : NoteModule.insertNotes(array, BigDecimal.valueOf(length)))
+        List<Note> notes = NoteModule.insertNotes(array, BigDecimal.valueOf(length));
+        for (JsonElement n : array)
+            if (NoteFeatures.named(n.getAsJsonObject()))
+                throw Errors.notApplied(
+                        Reason.UNSUPPORTED_SCOPE,
+                        "notes on an arranger clip take beat, pitch, velocity, duration and channel only: operators"
+                                + " and expressions are written into launcher clips in this version");
+        for (Note n : notes) {
             out.add(new double[] {n.beatValue(), n.pitch, n.velocity, n.durationValue(), n.channel});
+        }
         return out;
     }
 
@@ -288,8 +296,8 @@ public final class ArrangerModule implements HostModule {
         }
         String where = ids.length == 1 ? "track " + ids[0] : ids.length + " tracks";
         if (write) op.inspect = dev.bitwigagent.core.Refs.read("clip:arranger");
-        SafetyObservation safety = write ? transportSafety.stopped(op) : null;
-        if (access == null) access = NativeArrangerAccess.bind(natives.get(op).access());
+        Runnable safety = write ? transportSafety.atLeast(op, MethodSpecs.Transport.STOPPED) : null;
+        Access bridge = access.get(op);
         Runnable check = () -> {
             scheduler.check(op);
             boolean moved = offset >= 0 && window.sceneOffset() != offset;
@@ -298,14 +306,13 @@ public final class ArrangerModule implements HostModule {
                 throw Errors.notApplied(
                         Reason.TARGET_CHANGED,
                         "The track or scene window changed while the arranger operation was queued.");
-            if (write) transportSafety.guardStopped(safety);
+            if (write) safety.run();
         };
         Runnable beforeWrite = () -> {
             check.run();
             op.markDispatched();
             holds.place(QUARANTINE, "An arranger clip write on " + where + " has an unknown outcome until read back.");
         };
-        Access bridge = access;
         holds.inFlight(PENDING, "A native arranger operation on " + where + " is running.");
         try {
             bridge.execute(() -> {

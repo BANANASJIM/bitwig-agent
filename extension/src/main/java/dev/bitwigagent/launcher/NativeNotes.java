@@ -1,11 +1,10 @@
 package dev.bitwigagent.launcher;
 
 import dev.bitwigagent.core.HostOperation;
+import dev.bitwigagent.core.PortHandle;
 import dev.bitwigagent.core.RangeEdit;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.RpcException;
-import dev.bitwigagent.host.NativeRuntime;
-import dev.bitwigagent.nativehost.NativeNoteWriteAccess;
 import java.util.List;
 import java.util.function.Function;
 
@@ -40,6 +39,9 @@ public final class NativeNotes {
     public interface Access {
         void execute(Runnable work);
 
+        /** The record keys this host's bindings cannot read or write (a feature group that does not bind). */
+        List<String> unread();
+
         /** Resolves the slot's clip (track UUID, clip name and slot checked) and reads every note of it. */
         Observed read(Object slot, String trackId, String expectedName, Runnable check);
 
@@ -70,27 +72,22 @@ public final class NativeNotes {
                 Runnable beforeWrite);
     }
 
-    private final NativeRuntime natives;
-    private Access access;
+    private final PortHandle<Access> port;
     private String unavailable;
 
-    public NativeNotes(NativeRuntime natives, Access access) {
-        this.natives = natives;
-        this.access = access;
+    public NativeNotes(PortHandle<Access> port) {
+        this.port = port;
     }
 
     /** The bindings, or null when they do not match the loaded host (the caller then uses the public setters). */
     Access access(HostOperation op) {
-        if (access != null || unavailable != null) return access;
         try {
-            access = new NativeNoteWriteAccess(natives.get(op).access());
-        } catch (ReflectiveOperationException | LinkageError error) {
-            unavailable = error.toString();
+            return port.get(op);
         } catch (RpcException error) {
             if (!error.is(Reason.NATIVE_UNAVAILABLE) && !error.is(Reason.HOST_MISMATCH)) throw error;
             unavailable = error.getMessage();
+            return null;
         }
-        return access;
     }
 
     /** Why the native bindings are unavailable; null when they are bound or not yet tried. */

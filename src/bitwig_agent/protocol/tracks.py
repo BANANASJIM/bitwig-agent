@@ -6,7 +6,9 @@ from pydantic import Field, model_validator
 
 from bitwig_agent.protocol.annotations import ADD, REMOVE, SET
 from bitwig_agent.protocol.base import (
+    NOT_RECORDING,
     PROJECT_READY,
+    STOPPED,
     Nonempty,
     StatusArgs,
     ToolSpec,
@@ -198,7 +200,7 @@ SPECS: dict[str, ToolSpec] = {
             {"type": "effect", "name": "Verb", "position": {"before": EXAMPLE_OTHER}},
             {"file": "/samples/Kick.wav", "position": {"after": EXAMPLE_TRACK}},
         ),
-        requires=PROJECT_READY,
+        requires=PROJECT_READY + NOT_RECORDING,
         summary='Insert a top-level track: type and name, or file alone (an audio file: Bitwig makes an instrument track named after it with a Sampler holding it). position is "start", "end" (default) or {before|after: trackRef} of a top-level track of the same list. Returns ref of the new track. An unresolved insertion holds further inserts; inspect, never blindly retry.',
     ),
     "tracks.group": ToolSpec(
@@ -206,7 +208,7 @@ SPECS: dict[str, ToolSpec] = {
         TRACKS_GROUP_DESCRIPTION,
         False,
         examples=({"targets": [EXAMPLE_TRACK, EXAMPLE_OTHER], "name": "Drums"},),
-        requires=PROJECT_READY,
+        requires=PROJECT_READY + NOT_RECORDING,
         annotations=ADD,
     ),
     "tracks.delete": ToolSpec(
@@ -214,21 +216,21 @@ SPECS: dict[str, ToolSpec] = {
         TRACKS_DELETE_DESCRIPTION,
         False,
         examples=({"target": EXAMPLE_TRACK},),
-        requires=PROJECT_READY,
+        requires=PROJECT_READY + STOPPED,
     ),
     "tracks.duplicate": ToolSpec(
         TrackArgs,
         TRACKS_DUPLICATE_DESCRIPTION,
         False,
         examples=({"target": EXAMPLE_TRACK},),
-        requires=PROJECT_READY,
+        requires=PROJECT_READY + NOT_RECORDING,
     ),
     "tracks.convert": ToolSpec(
         TrackConvertArgs,
         TRACKS_CONVERT_DESCRIPTION,
         False,
         examples=({"target": EXAMPLE_TRACK, "to": "hybrid"},),
-        requires=PROJECT_READY,
+        requires=PROJECT_READY + NOT_RECORDING,
         annotations=SET,
     ),
     "tracks.ungroup": ToolSpec(
@@ -236,7 +238,7 @@ SPECS: dict[str, ToolSpec] = {
         TRACKS_UNGROUP_DESCRIPTION,
         False,
         examples=({"target": {**EXAMPLE_TRACK, "name": "Drums"}},),
-        requires=PROJECT_READY,
+        requires=PROJECT_READY + NOT_RECORDING,
         annotations=REMOVE,
     ),
 }

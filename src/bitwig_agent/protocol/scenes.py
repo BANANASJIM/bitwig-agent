@@ -5,7 +5,7 @@ from typing import Annotated
 from pydantic import Field
 
 from bitwig_agent.protocol.annotations import RETRIGGER
-from bitwig_agent.protocol.base import ENGINE, PROJECT_READY, StatusArgs, ToolSpec, omitted
+from bitwig_agent.protocol.base import ENGINE, NOT_RECORDING, PROJECT_READY, STOPPED, StatusArgs, ToolSpec, omitted
 from bitwig_agent.protocol.launcher import SCENE_REF, SceneOffset
 from bitwig_agent.protocol.refs import SceneRef
 
@@ -74,7 +74,7 @@ SPECS: dict[str, ToolSpec] = {
         SCENES_INSERT_DESCRIPTION,
         False,
         examples=({}, {"count": 40}),
-        requires=PROJECT_READY,
+        requires=PROJECT_READY + NOT_RECORDING,
     ),
     "scenes.set": ToolSpec(
         ScenesSetArgs, SCENES_SET_DESCRIPTION, False, examples=({"target": SCENE_REF, "name": "Intro"},)
@@ -84,7 +84,7 @@ SPECS: dict[str, ToolSpec] = {
         SCENES_LAUNCH_DESCRIPTION,
         False,
         examples=({"target": SCENE_REF},),
-        requires=ENGINE,
+        requires=ENGINE + NOT_RECORDING,
         annotations=RETRIGGER,
     ),
     "scenes.duplicate": ToolSpec(
@@ -92,13 +92,13 @@ SPECS: dict[str, ToolSpec] = {
         SCENES_DUPLICATE_DESCRIPTION,
         False,
         examples=({"target": SCENE_REF},),
-        requires=PROJECT_READY,
+        requires=PROJECT_READY + NOT_RECORDING,
     ),
     "scenes.delete": ToolSpec(
         SceneTargetArgs,
         SCENES_DELETE_DESCRIPTION,
         False,
         examples=({"target": SCENE_REF},),
-        requires=PROJECT_READY,
+        requires=PROJECT_READY + STOPPED,
     ),
 }

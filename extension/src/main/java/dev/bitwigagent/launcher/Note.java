@@ -8,8 +8,9 @@ import java.util.Objects;
 
 /**
  * One note as the clip stores it, the record notes.get reads and notes.set and clips.insert write. Beat and duration
- * are kept in ticks of 1/1048576 beat, the step Bitwig stores them at, and velocity as MIDI 1..127; construction is
- * {@link #canonical}, so a note read back and written again compares equal.
+ * are kept in ticks of 1/1048576 beat, the step Bitwig stores them at, velocity as MIDI 1..127, and operators and
+ * expressions as canonical {@link NoteFeatures}; construction is {@link #canonical}, so a note read back and written
+ * again compares equal.
  */
 public final class Note {
     /** Ticks per beat: Bitwig stores note times and durations to 1/1048576 beat. */
@@ -20,7 +21,7 @@ public final class Note {
             .thenComparingInt(n -> n.pitch)
             .thenComparingInt(n -> n.channel);
 
-    /** Identity (channel, pitch, beat) and equality (velocity, duration) for the range rule. */
+    /** Identity (channel, pitch, beat) and equality (velocity, duration, features) for the range rule. */
     public static final RangeEdit.Kind<Note> KIND = new RangeEdit.Kind<>() {
         @Override
         public Object key(Note n) {
@@ -29,24 +30,26 @@ public final class Note {
 
         @Override
         public boolean same(Note a, Note b) {
-            return a.velocity == b.velocity && a.duration == b.duration;
+            return a.velocity == b.velocity && a.duration == b.duration && a.features.equals(b.features);
         }
     };
 
     public final int channel, pitch, velocity;
     public final long beat, duration;
+    public final NoteFeatures features;
 
-    private Note(int channel, int pitch, long beat, long duration, int velocity) {
+    private Note(int channel, int pitch, long beat, long duration, int velocity, NoteFeatures features) {
         this.channel = channel;
         this.pitch = pitch;
         this.beat = beat;
         this.duration = duration;
         this.velocity = velocity;
+        this.features = features;
     }
 
     /** The note Bitwig stores for these values: beat and duration to the nearest tick, velocity a whole MIDI step. */
     public static Note canonical(int channel, int pitch, double beat, double duration, int velocity) {
-        return new Note(channel, pitch, ticks(beat), Math.max(1, ticks(duration)), velocity);
+        return new Note(channel, pitch, ticks(beat), Math.max(1, ticks(duration)), velocity, NoteFeatures.NONE);
     }
 
     /** A note read from the host: velocity is the host's 0..1 value. */
@@ -54,8 +57,14 @@ public final class Note {
         return canonical(channel, pitch, start, length, midi(velocity01));
     }
 
+    /** A note read from the host with its operators and expressions. */
+    public static Note read(
+            int channel, int pitch, double start, double length, double velocity01, NoteFeatures features) {
+        return read(channel, pitch, start, length, velocity01).with(features);
+    }
+
     static Note ofTicks(int channel, int pitch, long beat, long duration, int velocity) {
-        return new Note(channel, pitch, beat, duration, velocity);
+        return new Note(channel, pitch, beat, duration, velocity, NoteFeatures.NONE);
     }
 
     public static long ticks(double beats) {
@@ -68,7 +77,12 @@ public final class Note {
 
     /** MIDI velocity 1..127 for the host's 0..1 value. */
     public static int midi(double velocity01) {
-        return (int) Math.max(1, Math.min(127, Math.round(velocity01 * 127)));
+        return Math.max(1, releaseMidi(velocity01));
+    }
+
+    /** MIDI release velocity 0..127 for the host's 0..1 value. */
+    public static int releaseMidi(double velocity01) {
+        return (int) Math.max(0, Math.min(127, Math.round(velocity01 * 127)));
     }
 
     public long end() {
@@ -88,11 +102,15 @@ public final class Note {
         return (beat << 11) | ((long) channel << 7) | pitch;
     }
 
-    Note with(int velocity, long duration) {
-        return new Note(channel, pitch, beat, duration, velocity);
+    Note with(int velocity, long duration, NoteFeatures features) {
+        return new Note(channel, pitch, beat, duration, velocity, features);
     }
 
-    /** The record as notes.get lists it; channel 0 is omitted. */
+    public Note with(NoteFeatures features) {
+        return with(velocity, duration, features);
+    }
+
+    /** The record as notes.get lists it; channel 0, operators that are off and default values are omitted. */
     public JsonObject json() {
         JsonObject out = new JsonObject();
         out.addProperty("beat", beatValue());
@@ -100,6 +118,7 @@ public final class Note {
         out.addProperty("velocity", velocity);
         out.addProperty("duration", durationValue());
         if (channel != 0) out.addProperty("channel", channel);
+        features.addTo(out);
         return out;
     }
 
@@ -111,12 +130,13 @@ public final class Note {
                 && pitch == n.pitch
                 && beat == n.beat
                 && duration == n.duration
-                && velocity == n.velocity;
+                && velocity == n.velocity
+                && features.equals(n.features);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(channel, pitch, beat, duration, velocity);
+        return Objects.hash(channel, pitch, beat, duration, velocity, features);
     }
 
     @Override

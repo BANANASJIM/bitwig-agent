@@ -13,6 +13,8 @@ public final class HostOperation {
     private boolean expired;
     private final HostOperation parent;
     public volatile SafetyObservation safetyAtEnqueue;
+    /** The transport state the method declares in its requires; admitted before dispatch, re-checked by modules. */
+    public volatile MethodSpecs.Transport transport;
     /** The long job this request dispatched; an unknown result names it for jobs.get. */
     public volatile String job;
 

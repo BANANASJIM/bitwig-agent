@@ -4,30 +4,30 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import dev.bitwigagent.core.Errors;
+import dev.bitwigagent.core.NativeProvenance;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.RpcException;
 import dev.bitwigagent.core.SharedData;
 import java.io.InputStream;
+import java.lang.invoke.MethodType;
 import java.lang.reflect.*;
 import java.nio.file.*;
 import java.security.MessageDigest;
+import java.util.function.BiConsumer;
 import java.util.function.Function;
-import java.util.stream.StreamSupport;
 
 /** One loaded-binary gate and document dispatcher; domain bindings remain independent. */
 public final class NativeHost {
     private static final JsonArray HOSTS = SharedData.readArray("host");
-    public static final String SUPPORTED = String.join(
-            ", ",
-            StreamSupport.stream(HOSTS.spliterator(), false)
-                    .map(entry -> entry.getAsJsonObject().get("version").getAsString())
-                    .toArray(String[]::new));
+    public static final String SUPPORTED = SharedData.hostVersions();
     private final ClassLoader loader;
     private final String hostVersion;
     private JsonObject classes, members;
     private Path hostJar;
     private String expectedHash, actualHash, gateError, modelThreadError;
     private Method singleton, async, isDocumentThread, modelThread, executor;
+    /** Each exact member binding with the descriptor of the code's types; the offline check against the table. */
+    private BiConsumer<String, String> bound = (key, descriptor) -> {};
 
     public NativeHost(Object host, String version, Runnable check) {
         this(host, version, check, HOSTS, SharedData::read);
@@ -69,17 +69,21 @@ public final class NativeHost {
             if (error instanceof RpcException && !((RpcException) error).is(Reason.NATIVE_UNAVAILABLE))
                 throw (RpcException) error;
             // A gate refusal already explains itself; other failures need their type to mean anything.
-            gateError = error instanceof RpcException ? error.getMessage() : diagnostic(error);
+            gateError = error instanceof RpcException ? error.getMessage() : Errors.diagnostic(error);
         } catch (LinkageError error) {
-            gateError = diagnostic(error);
+            gateError = Errors.diagnostic(error);
         }
         if (gateError != null) return;
         try {
             executor = binding.exactMethod("model.object.executor", binding.type("model.executor"), false);
         } catch (ReflectiveOperationException | RuntimeException | LinkageError error) {
-            modelThreadError = diagnostic(error);
+            modelThreadError = Errors.diagnostic(error);
         }
         check.run();
+    }
+
+    void onBound(BiConsumer<String, String> observer) {
+        bound = observer;
     }
 
     public Access access() {
@@ -95,6 +99,11 @@ public final class NativeHost {
 
         String actualHash() {
             return actualHash;
+        }
+
+        /** Which host binary answered, as a value a domain writes once. */
+        public NativeProvenance nativeProvenance() {
+            return new NativeProvenance(hostVersion, actualHash);
         }
 
         /** Which host binary answered: the result's nativeVersion and nativeJarSha256. */
@@ -168,6 +177,7 @@ public final class NativeHost {
                 throw new NoSuchMethodException("Exact public descriptor mismatch: " + key);
             if (hostType(method.getDeclaringClass().getName()) != method.getDeclaringClass())
                 throw new NoSuchMethodException("Native descriptor class differs from the loaded host binding.");
+            bound.accept(key, MethodType.methodType(returns, args).toMethodDescriptorString());
             return method;
         }
 
@@ -191,6 +201,8 @@ public final class NativeHost {
                     || !Modifier.isFinal(modifiers)
                     || !Modifier.isPublic(owner.getModifiers()))
                 throw new NoSuchFieldException("Exact public constant mismatch: " + key);
+            bound.accept(
+                    key, MethodType.methodType(type).toMethodDescriptorString().substring(2));
             return field.get(null);
         }
 
@@ -210,7 +222,7 @@ public final class NativeHost {
                 RpcException translated = Errors.notApplied(
                         Reason.NATIVE_UNAVAILABLE,
                         "Native construction failed at "
-                                + constructor.getDeclaringClass().getName() + ": " + diagnostic(cause));
+                                + constructor.getDeclaringClass().getName() + ": " + Errors.diagnostic(cause));
                 translated.initCause(error);
                 throw translated;
             }
@@ -261,16 +273,10 @@ public final class NativeHost {
             RpcException translated = Errors.notApplied(
                     Reason.NATIVE_UNAVAILABLE,
                     "Native call failed at " + method.getDeclaringClass().getName() + "." + method.getName() + ": "
-                            + diagnostic(cause));
+                            + Errors.diagnostic(cause));
             translated.initCause(error);
             throw translated;
         }
-    }
-
-    public static boolean isInvocationFailure(Throwable error) {
-        if (!(error instanceof RpcException)) return false;
-        Throwable boundary = error.getCause();
-        return boundary instanceof ReflectiveOperationException || boundary instanceof IllegalArgumentException;
     }
 
     static Path source(Class<?> type) throws java.io.IOException {
@@ -307,11 +313,5 @@ public final class NativeHost {
         } catch (java.security.NoSuchAlgorithmException error) {
             throw new IllegalStateException(error);
         }
-    }
-
-    public static String diagnostic(Throwable error) {
-        String message = error.getMessage();
-        if (message != null && message.length() > 512) message = message.substring(0, 512);
-        return error.getClass().getSimpleName() + (message == null ? "" : ": " + message);
     }
 }

@@ -3,14 +3,12 @@ package dev.bitwigagent.device;
 import com.google.gson.JsonObject;
 import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.HostOperation;
+import dev.bitwigagent.core.PortHandle;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Refs;
 import dev.bitwigagent.core.RpcException;
 import dev.bitwigagent.core.Scheduler;
 import dev.bitwigagent.host.DeviceSources;
-import dev.bitwigagent.host.NativeRuntime;
-import dev.bitwigagent.nativehost.NativeChainAccess;
-import dev.bitwigagent.nativehost.NativeHost;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -136,13 +134,11 @@ public final class NativeChains {
 
     private final Scheduler scheduler;
     private final DeviceSources sources;
-    private final NativeRuntime natives;
-    private Access access;
+    private final PortHandle<Access> access;
 
-    public NativeChains(Scheduler scheduler, DeviceSources sources, NativeRuntime natives, Access access) {
+    public NativeChains(Scheduler scheduler, DeviceSources sources, PortHandle<Access> access) {
         this.scheduler = scheduler;
         this.sources = sources;
-        this.natives = natives;
         this.access = access;
     }
 
@@ -155,18 +151,6 @@ public final class NativeChains {
     static JsonObject rootDevice(JsonObject ref) {
         if ("chain".equals(Refs.kind(ref))) return rootDevice(ref.getAsJsonObject("device"));
         return nested(ref) ? rootDevice(ref.getAsJsonObject("chain")) : ref;
-    }
-
-    private Access access(HostOperation op) {
-        if (access == null) {
-            try {
-                access = new NativeChainAccess(natives.get(op).access());
-            } catch (ReflectiveOperationException | LinkageError error) {
-                throw Errors.notApplied(
-                        Reason.NATIVE_UNAVAILABLE, "Native chain binding unavailable: " + NativeHost.diagnostic(error));
-            }
-        }
-        return access;
     }
 
     // ---------------------------------------------------------------- walking from the root
@@ -387,7 +371,7 @@ public final class NativeChains {
 
     /** Reads (or writes and reads back at once) on the document thread; the result completes {@code op}. */
     void run(HostOperation op, JsonObject ref, Function<Walk, JsonObject> work) {
-        Access a = access(op);
+        Access a = access.get(op);
         Root root = root(op, ref);
         a.execute(() -> {
             try {
@@ -405,7 +389,7 @@ public final class NativeChains {
      * window ends.
      */
     void edit(HostOperation op, JsonObject ref, Function<Walk, Verify> dispatch) {
-        Access a = access(op);
+        Access a = access.get(op);
         Root root = root(op, ref);
         long until = scheduler.observeUntil(op);
         a.execute(() -> {
@@ -423,7 +407,7 @@ public final class NativeChains {
 
     /** Native work for a request that completes elsewhere (a display write's probes); failures go to {@code failed}. */
     void async(HostOperation op, JsonObject ref, Consumer<Walk> work, Consumer<RuntimeException> failed) {
-        Access a = access(op);
+        Access a = access.get(op);
         Root root = root(op, ref);
         a.execute(() -> {
             try {

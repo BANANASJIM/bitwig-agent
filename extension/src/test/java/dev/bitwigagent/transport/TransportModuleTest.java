@@ -9,9 +9,11 @@ import dev.bitwigagent.HostFixture;
 import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.HostOperation;
 import dev.bitwigagent.core.Reason;
+import dev.bitwigagent.core.RpcException;
 import dev.bitwigagent.core.Scheduler;
 import dev.bitwigagent.core.ValueMatch;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 /** Deterministic consumer tests; these do not establish native host tempo or seek behavior. */
@@ -90,28 +92,109 @@ public final class TransportModuleTest {
     }
 
     @Test
-    void recordingAndAutomationGuardPlaybackButNotStop() {
-        for (String safety : List.of(
-                "isArrangerRecordEnabled",
-                "isArrangerAutomationWriteEnabled",
-                "isClipLauncherAutomationWriteEnabled")) {
+    void recordingAndAutomationBlockSettingsAndPlaybackButNotTheModesOrStop() {
+        Map<String, String> modes = Map.of(
+                "isArrangerRecordEnabled", "arrangerRecordEnabled",
+                "isArrangerAutomationWriteEnabled", "arrangerAutomationWriteEnabled");
+        for (Map.Entry<String, String> mode : modes.entrySet()) {
             HostFixture f = new HostFixture();
             TransportModule module = f.services.transportModule();
-            f.transport.child(safety).emit(true);
-            HostOperation start = f.submit(module, "transport.set", HostFixture.json("{\"playing\":true}"));
-            f.next();
-            assertTrue(!assertRpcError("unsafe_state", start).unknown, "unsafe start not applied");
+            f.transport.child(mode.getKey()).emit(true);
             HostOperation seek = f.submit(module, "transport.set", HostFixture.json("{\"position\":8}"));
             f.next();
-            assertRpcError("unsafe_state", seek);
-            assertTrue(f.transport.actions == 0, "unsafe start/seek never dispatched");
+            assertTrue(!assertRpcError("unsafe_state", seek).unknown, "a setting is refused while the mode is on");
+            HostOperation mixed = f.submit(
+                    module, "transport.set", HostFixture.json("{\"" + mode.getValue() + "\":false,\"tempo\":100}"));
+            f.next();
+            assertRpcError("unsafe_state", mixed);
+            assertTrue(f.transport.actions == 0 && f.transport.child(mode.getKey()).writes == 0, "nothing dispatched");
+            JsonObject off = f.call(module, "transport.set", HostFixture.json("{\"" + mode.getValue() + "\":false}"));
+            assertEquals("applied", off.get("outcome").getAsString(), mode.getValue() + " can be turned off");
+            assertEquals(
+                    "api_readback",
+                    off.getAsJsonObject("fields")
+                            .getAsJsonObject(mode.getValue())
+                            .get("verification")
+                            .getAsString());
+            f.transport.child(mode.getKey()).emit(true);
+            HostOperation play = f.submit(module, "transport.set", HostFixture.json("{\"playing\":true}"));
+            f.next();
+            assertRpcError("unsafe_state", play);
+            assertTrue(f.transport.actions == 0, "playback does not start while the mode is on, as for launches");
             f.transport.child("isPlaying").emit(true);
-            JsonObject stopped = f.call(module, "transport.set", HostFixture.json("{\"playing\":false}"));
-            assertTrue(
-                    stopped.get("outcome").getAsString().matches("applied|already_matched") && f.transport.actions == 1,
-                    "explicit stop remains possible");
-            assertTrue(f.transport.child(safety).writes == 0, "safety mode not automatically cleared");
+            JsonObject stop = f.call(module, "transport.set", HostFixture.json("{\"playing\":false}"));
+            assertTrue(f.transport.actions == 1, "stopping is always allowed: " + stop);
         }
+    }
+
+    @Test
+    void theLauncherAutomationWriteSwitchIsRefusedUpFront() {
+        HostFixture f = new HostFixture();
+        TransportModule module = f.services.transportModule();
+        HostOperation op = f.submit(
+                module,
+                "transport.set",
+                HostFixture.json("{\"clipLauncherAutomationWriteEnabled\":false,\"tempo\":100}"));
+        RpcException refused = assertRpcError("unsupported_scope", op);
+        assertTrue(refused.getMessage().contains("arrangerAutomationWriteEnabled"), refused.getMessage());
+        assertEquals(0, f.transport.child("tempo").child("value").writes, "nothing was written");
+    }
+
+    @Test
+    void recordingStateBitwigSwitchesAlongIsReportedAsASideEffect() {
+        HostFixture f = new HostFixture();
+        TransportModule module = f.services.transportModule();
+        f.transport.child("isArrangerRecordEnabled").afterWrite =
+                () -> f.transport.child("isArrangerAutomationWriteEnabled").emit(true);
+        JsonObject result = f.call(module, "transport.set", HostFixture.json("{\"arrangerRecordEnabled\":true}"));
+        assertEquals("applied", result.get("outcome").getAsString(), result.toString());
+        assertEquals(
+                HostFixture.json("{\"arrangerAutomationWriteEnabled\":{\"before\":false,\"after\":true}}"),
+                result.get("observedSideEffects"));
+        assertFalse(
+                f.call(module, "transport.set", HostFixture.json("{\"arrangerOverdubEnabled\":true}"))
+                        .has("observedSideEffects"),
+                "nothing else changed: no side effects reported");
+    }
+
+    @Test
+    void playbackIsWrittenBeforeGlobalRecordSoOneCallStartsRecordingExplicitly() {
+        HostFixture f = new HostFixture();
+        TransportModule module = f.services.transportModule();
+        JsonObject result =
+                f.call(module, "transport.set", HostFixture.json("{\"arrangerRecordEnabled\":true,\"playing\":true}"));
+        assertEquals("applied", result.get("outcome").getAsString(), result.toString());
+        assertEquals(1, f.transport.actions, "playback started before Global Record turned on");
+    }
+
+    @Test
+    void theRecordingFieldsAreWrittenAndReadBack() {
+        HostFixture f = new HostFixture();
+        TransportModule module = f.services.transportModule();
+        JsonObject read = f.call(module, "transport.get", new JsonObject());
+        assertEquals(
+                HostFixture.json("{\"value\":\"latch\",\"options\":[\"latch\",\"touch\",\"write\"]}"),
+                read.get("automationWriteMode"));
+        for (String key : List.of(
+                "arrangerRecordEnabled",
+                "arrangerOverdubEnabled",
+                "clipLauncherOverdubEnabled",
+                "arrangerAutomationWriteEnabled",
+                "clipLauncherAutomationWriteEnabled")) assertFalse(read.get(key).getAsBoolean(), key);
+        JsonObject result = f.call(
+                module,
+                "transport.set",
+                HostFixture.json("{\"arrangerOverdubEnabled\":true,\"clipLauncherOverdubEnabled\":true,"
+                        + "\"automationWriteMode\":\"touch\",\"arrangerRecordEnabled\":true}"));
+        assertEquals("applied", result.get("outcome").getAsString(), result.toString());
+        assertTrue(result.get("arrangerRecordEnabled").getAsBoolean(), "the snapshot reads Global Record back");
+        assertEquals(
+                "touch",
+                result.getAsJsonObject("automationWriteMode").get("value").getAsString());
+        assertEquals(0, f.transport.actions, "arming Global Record does not start playback");
+        HostOperation bad = f.submit(module, "transport.set", HostFixture.json("{\"automationWriteMode\":\"trim\"}"));
+        f.next();
+        assertTrue(rejection(bad).reason.wire().matches("invalid_params|not_applied"), "an unlisted mode is refused");
     }
 
     @Test
@@ -290,16 +373,16 @@ public final class TransportModuleTest {
         TransportModule module = f.services.transportModule();
         f.transport.child("tempo").child("value").afterWrite =
                 () -> f.transport.child("isArrangerRecordEnabled").emit(true);
-        JsonObject result = f.call(module, "transport.set", HostFixture.json("{\"tempo\":130,\"playing\":true}"));
+        JsonObject result = f.call(module, "transport.set", HostFixture.json("{\"tempo\":130,\"metronome\":true}"));
         assertTrue(result.get("outcome").getAsString().equals("not_applied"), "partial write is not full success");
         assertTrue(
                 result.getAsJsonObject("fields")
-                        .getAsJsonObject("playing")
+                        .getAsJsonObject("metronome")
                         .get("reason")
                         .getAsString()
                         .equals("not_reached"),
                 "second field explicitly not sent");
-        assertTrue(f.transport.actions == 0, "rechecked recording guard stops play");
+        assertTrue(f.transport.child("isMetronomeEnabled").writes == 0, "rechecked recording guard stops the rest");
         HostFixture closed = new HostFixture();
         TransportModule second = closed.services.transportModule();
         closed.transport.child("tempo").child("value").afterWrite = closed.services.scheduler::close;

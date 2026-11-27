@@ -33,18 +33,10 @@ public final class NativeRenderAccess implements RenderModule.Access {
     private final Object pluginMissing;
     private final Map<String, Object> taps = new HashMap<>(), wavDepths = new HashMap<>(), flacDepths = new HashMap<>();
     private final Object mp3, vorbis, opus;
-    private NativeArrangerAccess arranger;
+    private final LazyBinding<NativeArrangerAccess> arranger =
+            new LazyBinding<>("Exact arranger bindings unavailable: ");
 
     /** The exact bindings, or native_unavailable when a descriptor does not match the loaded host. */
-    public static NativeRenderAccess bind(NativeHost.Access a) {
-        try {
-            return new NativeRenderAccess(a);
-        } catch (ReflectiveOperationException | LinkageError error) {
-            throw Errors.notApplied(
-                    Reason.NATIVE_UNAVAILABLE, "Exact render bindings unavailable: " + NativeHost.diagnostic(error));
-        }
-    }
-
     NativeRenderAccess(NativeHost.Access a) throws ReflectiveOperationException {
         this.a = a;
         resolver = new NativeTrackResolver(a);
@@ -281,7 +273,6 @@ public final class NativeRenderAccess implements RenderModule.Access {
 
     @Override
     public RenderModule.Clips clips(Object trackProxy, String trackId, Runnable check) {
-        if (arranger == null) arranger = NativeArrangerAccess.bind(a);
-        return arranger.snapshot(trackProxy, trackId, check);
+        return arranger.get(() -> new NativeArrangerAccess(a)).snapshot(trackProxy, trackId, check);
     }
 }

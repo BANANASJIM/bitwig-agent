@@ -48,6 +48,20 @@ public final class Errors {
         return new RpcException(reason, message, null, false, null, null, entries);
     }
 
+    /** A throwable as its type and bounded message, for failures whose type is the only explanation. */
+    public static String diagnostic(Throwable error) {
+        String message = error.getMessage();
+        if (message != null && message.length() > 512) message = message.substring(0, 512);
+        return error.getClass().getSimpleName() + (message == null ? "" : ": " + message);
+    }
+
+    /** Whether a failure is a reflective call into the host that failed, rather than a refusal the code raised. */
+    public static boolean isHostCallFailure(Throwable error) {
+        if (!(error instanceof RpcException)) return false;
+        Throwable boundary = error.getCause();
+        return boundary instanceof ReflectiveOperationException || boundary instanceof IllegalArgumentException;
+    }
+
     /** The wire error: {code, reason, message, next?, current?, observed?, entries?}. */
     public static JsonObject error(RpcException error) {
         JsonObject out = new JsonObject();

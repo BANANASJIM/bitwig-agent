@@ -13,15 +13,14 @@ import dev.bitwigagent.core.HostModule;
 import dev.bitwigagent.core.HostOperation;
 import dev.bitwigagent.core.Outcome;
 import dev.bitwigagent.core.Params;
+import dev.bitwigagent.core.PortHandle;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.RpcException;
 import dev.bitwigagent.core.Scheduler;
+import dev.bitwigagent.core.SharedData;
 import dev.bitwigagent.core.Verification;
-import dev.bitwigagent.host.NativeRuntime;
 import dev.bitwigagent.host.ProjectState;
-import dev.bitwigagent.nativehost.NativeHost;
-import dev.bitwigagent.nativehost.NativeProjectSaveAsAccess;
 import dev.bitwigagent.recovery.JobsModule;
 import java.nio.file.Path;
 import java.util.Set;
@@ -59,9 +58,8 @@ public final class ProjectModule implements HostModule, JobsModule.Source {
     private final Application application;
     private final Project project;
     private final ProjectState projectState;
-    private final NativeRuntime natives;
+    private final PortHandle<SaveAsAccess> access;
     private final Holds holds;
-    private SaveAsAccess access;
     /** Cleared only by the native callback: until then Bitwig may still be writing. */
     private static final String PENDING = "project.saveAs";
 
@@ -73,26 +71,14 @@ public final class ProjectModule implements HostModule, JobsModule.Source {
             Application application,
             Project project,
             ProjectState projectState,
-            NativeRuntime natives,
+            PortHandle<SaveAsAccess> access,
             Holds holds) {
-        this(scheduler, application, project, projectState, natives, holds, null);
-    }
-
-    public ProjectModule(
-            Scheduler scheduler,
-            Application application,
-            Project project,
-            ProjectState projectState,
-            NativeRuntime natives,
-            Holds holds,
-            SaveAsAccess access) {
         this.scheduler = scheduler;
         this.application = application;
         this.project = project;
         this.projectState = projectState;
-        this.natives = natives;
-        this.holds = holds;
         this.access = access;
+        this.holds = holds;
     }
 
     @Override
@@ -217,7 +203,7 @@ public final class ProjectModule implements HostModule, JobsModule.Source {
         JsonObject result = new JsonObject();
         result.addProperty("method", SAVE_AS);
         try {
-            access(op);
+            access.get(op);
             result.addProperty("available", true);
         } catch (RpcException error) {
             if (!error.is(Reason.NATIVE_UNAVAILABLE) && !error.is(Reason.HOST_MISMATCH)) throw error;
@@ -226,15 +212,10 @@ public final class ProjectModule implements HostModule, JobsModule.Source {
         }
         result.addProperty(
                 "binding",
-                "exact_" + NativeHost.SUPPORTED + "_hash_gated_save_project_pipeline_with_native_completion_callback");
+                "exact_" + SharedData.hostVersions()
+                        + "_hash_gated_save_project_pipeline_with_native_completion_callback");
         Results.readBy(result, Verification.FILE_READBACK);
         return result;
-    }
-
-    private SaveAsAccess access(HostOperation op) {
-        if (access == null)
-            access = NativeProjectSaveAsAccess.bind(natives.get(op).access());
-        return access;
     }
 
     /** One project.saveAs: its plan once resolved, and Bitwig's completion callback. */
@@ -276,7 +257,7 @@ public final class ProjectModule implements HostModule, JobsModule.Source {
         boolean overwrite = params.has("overwrite") && params.get("overwrite").getAsBoolean();
         boolean anyPath =
                 params.has("allowAnyPath") && params.get("allowAnyPath").getAsBoolean();
-        SaveAsAccess bridge = access(op);
+        SaveAsAccess bridge = access.get(op);
         Path home = Path.of(System.getProperty("user.home"));
         SaveJob previous = job, next = new SaveJob(path);
         job = next;
@@ -306,7 +287,7 @@ public final class ProjectModule implements HostModule, JobsModule.Source {
                         op.fail(error);
                         return;
                     }
-                    next.failed(NativeHost.diagnostic(error), false);
+                    next.failed(Errors.diagnostic(error), false);
                     finishSaveAs(op, next, bridge);
                 }
             });
@@ -394,7 +375,7 @@ public final class ProjectModule implements HostModule, JobsModule.Source {
         scheduler.check(op);
         SaveJob current = job;
         if (current == null || !current.dispatched || !current.id.equals(id)) throw JobsModule.unknownJob(id);
-        SaveAsAccess bridge = access(op);
+        SaveAsAccess bridge = access.get(op);
         JsonObject row = new JsonObject();
         row.addProperty("id", current.id);
         row.addProperty("method", SAVE_AS);

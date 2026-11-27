@@ -7,6 +7,7 @@ from pydantic import Field, model_validator
 
 from bitwig_agent.protocol.annotations import EDIT
 from bitwig_agent.protocol.base import (
+    NOT_RECORDING,
     PROJECT_READY,
     TRACK,
     Nonempty,
@@ -239,7 +240,7 @@ SPECS: dict[str, ToolSpec] = {
                 "insert": {"kind": "file", "path": "/samples/Snare.wav"},
             },
         ),
-        requires=PROJECT_READY,
+        requires=PROJECT_READY + NOT_RECORDING,
         summary="Add one empty chain to a layer device or Selector, or a Drum Machine pad (pad: its MIDI pitch, 36 is C1); insert? fills it in the same call (an audio file gives the pad a Sampler holding it). Returns the chain's ref; if the fill fails, finish with devices.insert on that ref, never repeat chains.insert.",
         wire=ChainInsertArgs,
         wire_description=CHAINS_INSERT_DESCRIPTION,
@@ -278,27 +279,31 @@ SPECS: dict[str, ToolSpec] = {
                 "params": {"Frequency": {"display": "800 Hz"}, "Resonance": 0.3},
             },
         ),
-        requires=PROJECT_READY,
+        requires=PROJECT_READY + NOT_RECORDING,
         summary="Insert a native device, plug-in or preset into a track's chain or a layer chain: to (track or chain ref), position? start|end|{before|after: deviceRef}, insert {kind, id|path} as presets.search or devices.catalog return it; params? {name: value} sets initial values (if a step fails, finish with parameters.set on the new ref, never re-insert). Identity is unproven: check requestedIdentifierVerified.",
         wire=DeviceInsertArgs,
         wire_description=DEVICES_INSERT_DESCRIPTION,
     ),
     "devices.delete": ToolSpec(
-        DeviceTargetArgs, DEVICES_DELETE_DESCRIPTION, False, examples=({"target": DEVICE_REF},), requires=PROJECT_READY
+        DeviceTargetArgs,
+        DEVICES_DELETE_DESCRIPTION,
+        False,
+        examples=({"target": DEVICE_REF},),
+        requires=PROJECT_READY + NOT_RECORDING,
     ),
     "devices.move": ToolSpec(
         DeviceMoveArgs,
         DEVICES_MOVE_DESCRIPTION,
         False,
         examples=({"target": {**DEVICE_REF, "index": 3, "name": "Comp"}, "position": "start"},),
-        requires=PROJECT_READY,
+        requires=PROJECT_READY + NOT_RECORDING,
     ),
     "devices.duplicate": ToolSpec(
         DeviceTargetArgs,
         DEVICES_DUPLICATE_DESCRIPTION,
         False,
         examples=({"target": DEVICE_REF},),
-        requires=PROJECT_READY,
+        requires=PROJECT_READY + NOT_RECORDING,
     ),
     "devices.replace": ToolSpec(
         DeviceReplaceArgs,
@@ -308,7 +313,7 @@ SPECS: dict[str, ToolSpec] = {
             {"target": DEVICE_REF, "insert": {"kind": "file", "path": "/presets/Warm Pad.bwpreset"}},
             {"target": {**DEVICE_REF, "index": 1, "name": "EQ-5"}, "insert": {"kind": "clap", "id": "org.example.eq"}},
         ),
-        requires=PROJECT_READY,
+        requires=PROJECT_READY + NOT_RECORDING,
         annotations=EDIT,
     ),
     "devices.remote.get": ToolSpec(

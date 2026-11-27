@@ -6,6 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from bitwig_agent.protocol import TOOLS, invalid_params_message, invalid_params_reason, validate_call
+from bitwig_agent.protocol.annotations import EDIT
 from bitwig_agent.protocol.clips import MAX_TRANSFORM_TARGETS
 from bitwig_agent.protocol.launcher import ARRANGER_CLIP_REF, CLIP_REF, SCENE_REF, SLOT_REF, TRACK_REF
 
@@ -351,6 +352,78 @@ def test_an_omitted_velocity_or_duration_is_an_update_of_an_existing_note():
     assert params["notes"] == [{"beat": 0, "pitch": 60, "velocity": 40}]
 
 
+OPERATORS = {
+    "chance": 0.85,
+    "velocitySpread": 0.2,
+    "releaseVelocity": 0,
+    "repeat": {"count": -3, "curve": 0.3, "velocityEnd": -0.4, "velocityCurve": 1},
+    "recurrence": {"length": 4, "mask": [False, False, False, True]},
+    "occurrence": "not_prev_channel",
+    "muted": True,
+    "timbre": -1,
+    "pressure": 1,
+    "pan": 0.5,
+    "gain": 0,
+    "transpose": -96,
+}
+
+
+def test_operators_and_expressions_ride_on_the_note_record_and_null_reaches_the_wire():
+    params, _ = validate_call("notes.set", {"target": CLIP_REF, "notes": [note(**OPERATORS)]})
+    assert params["notes"] == [note(**OPERATORS)]
+    off = dict.fromkeys(OPERATORS)
+    params, _ = validate_call("notes.set", {"target": CLIP_REF, "notes": [{"beat": 0, "pitch": 60, **off}]})
+    assert params["notes"] == [{"beat": 0, "pitch": 60, **off}], "explicit null turns a feature off"
+    partial = {"beat": 0, "pitch": 60, "repeat": {"curve": 0.5}}
+    assert validate_call("notes.set", {"target": CLIP_REF, "notes": [partial]})[0]["notes"] == [partial]
+    insert = {"to": SLOT, "loop": {"length": 4}, "name": "Sketch", "notes": [note(**OPERATORS)]}
+    assert validate_call("clips.insert", insert)[0]["notes"] == [note(**OPERATORS)]
+
+
+def test_under_a_range_a_repeat_needs_its_count_and_without_one_it_may_patch():
+    partial = {"beat": 0, "pitch": 60, "repeat": {"curve": 0.5}}
+    text = message("notes.set", {"target": CLIP_REF, "range": "all", "notes": [partial]})
+    assert "notes[0] repeat is off on this note: give repeat.count to turn it on" in text
+    assert validate_call("notes.set", {"target": CLIP_REF, "notes": [partial]})[0]["notes"] == [partial]
+    counted = {**partial, "repeat": {"count": 3}}
+    assert validate_call("notes.set", {"target": CLIP_REF, "range": "all", "notes": [counted]})[0]["notes"] == [counted]
+
+
+@pytest.mark.parametrize(
+    "feature",
+    [
+        {"chance": 1.01},
+        {"velocitySpread": -0.1},
+        {"releaseVelocity": 128},
+        {"repeat": {"count": 128}},
+        {"repeat": {"count": 1, "curve": 1.5}},
+        {"repeat": {"count": 1, "speed": 2}},
+        {"recurrence": {"length": 9, "mask": [True] * 9}},
+        {"recurrence": {"length": 4, "mask": [True]}},
+        {"recurrence": {"length": 4}},
+        {"occurrence": "sometimes"},
+        {"occurrence": "FIRST"},
+        {"muted": 1},
+        {"timbre": -1.5},
+        {"pressure": -0.1},
+        {"gain": 1.1},
+        {"transpose": 97},
+    ],
+)
+def test_operator_values_outside_bitwigs_ranges_are_refused(feature):
+    with pytest.raises(ValidationError):
+        validate_call("notes.set", {"target": CLIP_REF, "notes": [note(**feature)]})
+
+
+def test_a_new_note_turning_repeats_on_needs_a_count_and_arranger_notes_take_no_operators():
+    insert = {"to": SLOT, "loop": {"length": 4}, "name": "Sketch"}
+    text = message("clips.insert", {**insert, "notes": [note(repeat={"curve": 0.2})]})
+    assert "notes[0] repeat is off on this note: give repeat.count to turn it on" in text
+    arranger = {"to": START, "length": 16, "name": "Verse", "notes": [note(chance=0.5)]}
+    assert reason("clips.insert", arranger) == "unsupported_scope"
+    assert validate_call("clips.insert", {**arranger, "notes": [note()]})[0]["notes"] == [note()]
+
+
 @pytest.mark.parametrize(
     "args",
     [
@@ -451,3 +524,14 @@ def test_shared_note_rule_vectors(case):
     with pytest.raises(ValidationError) as error:
         validate_call(case["method"], args)
     assert error.value.errors()[0]["msg"].removeprefix("Value error, ") == case["error"]
+
+
+def test_clips_record_takes_a_slot_ref_and_needs_the_engine():
+    assert validate_call("clips.record", {"target": SLOT_REF})[0] == {"target": SLOT_REF}
+    for bad in ({"target": CLIP_REF}, {}, {"target": SLOT_REF, "length": 4}):
+        with pytest.raises(ValidationError):
+            validate_call("clips.record", bad)
+    spec = TOOLS["clips.record"]
+    assert spec.requires == ("engine",)
+    assert spec.inspect == "launcher.list"
+    assert spec.annotations is EDIT

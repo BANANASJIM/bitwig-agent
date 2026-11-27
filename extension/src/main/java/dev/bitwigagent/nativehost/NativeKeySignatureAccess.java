@@ -19,23 +19,12 @@ import java.util.*;
  * outermost begin and end to the undo recorder (depth counter), so Root Key and Scale are one Undo step.
  */
 public final class NativeKeySignatureAccess implements KeySignatureModule.Access {
-    public static final String UNDO_LABEL = "Set Key Signature";
     private final NativeHost.Access a;
     private final Class<?> projectProxyType, projectType;
     private final Method target, transport, tonalSpace, keySignature, root, scale, scaleName;
     private final Method value, definition, options, optionValue, optionLabel, setRaw, begin, end;
 
     /** The exact bindings, or native_unavailable when a key or descriptor does not match the loaded host. */
-    public static NativeKeySignatureAccess bind(NativeHost.Access a) {
-        try {
-            return new NativeKeySignatureAccess(a);
-        } catch (ReflectiveOperationException | LinkageError error) {
-            throw Errors.notApplied(
-                    Reason.NATIVE_UNAVAILABLE,
-                    "Exact key signature bindings unavailable: " + NativeHost.diagnostic(error));
-        }
-    }
-
     NativeKeySignatureAccess(NativeHost.Access a) throws ReflectiveOperationException {
         this.a = a;
         projectProxyType = a.type("proxy.project");
@@ -84,7 +73,7 @@ public final class NativeKeySignatureAccess implements KeySignatureModule.Access
         a.requireModelThread(signature);
         Map<String, Object> parameters = Map.of("root", a.invoke(root, signature), "scale", a.invoke(scale, signature));
         beforeWrite.run();
-        a.invoke(begin, project, UNDO_LABEL, false);
+        a.invoke(begin, project, KeySignatureModule.UNDO_LABEL, false);
         try {
             for (Map.Entry<String, Integer> entry : values.entrySet())
                 a.invoke(
