@@ -781,7 +781,7 @@ def test_up_aborts_on_a_stray_link_by_cutting_it_then_killing_the_sandbox(tmp_pa
     assert "; sandbox stopped;" in str(raised.value)
     assert str(raised.value).endswith(f"export BWA_NATIVE_RUN={run.name}\npixi run native-down")
     assert ("Bitwig Studio:out1", "alsa_output.pci:playback_FL") not in desktop.pw.links
-    assert desktop.events == ["shot", "cut", f"kill {signal.SIGTERM}", f"kill {signal.SIGKILL}"]
+    assert desktop.events == ["cut", "shot", f"kill {signal.SIGTERM}", f"kill {signal.SIGKILL}"]
     assert not bitwig.session_alive(102)
     assert bitwig.alive(102)  # the leader is a zombie, which counts as ended
     data = evidence.read_run(run)
@@ -821,6 +821,21 @@ def test_a_cut_that_cannot_run_pw_link_still_kills(tmp_path, desktop, monkeypatc
     assert data["cutFailed"].startswith("FileNotFoundError: ")
     assert desktop.killed == [(102, signal.SIGTERM)]
     assert not bitwig.session_alive(102)
+
+
+def test_a_failed_screenshot_still_kills(tmp_path, desktop, monkeypatch):
+    cfg = prepared(tmp_path, desktop, monkeypatch)
+    monkeypatch.setattr(audio, "ports_ready", lambda: False)
+    monkeypatch.setattr(harness, "PORTS_SECONDS", 0)
+
+    def no_xdotool(display, run):
+        raise FileNotFoundError(2, "No such file or directory", "xdotool")
+
+    monkeypatch.setattr(harness, "capture", no_xdotool)
+    with pytest.raises(SystemExit, match="sandbox stopped"):
+        harness.up(cfg, "6.1.7", "")
+    assert evidence.read_run(Path((lock.owner() or {})["run"]))["abortShot"].startswith("FileNotFoundError: ")
+    assert desktop.killed == [(102, signal.SIGTERM)]
 
 
 def test_an_unkillable_sandbox_is_reported_not_stopped(tmp_path, desktop, monkeypatch):

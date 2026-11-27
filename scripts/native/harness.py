@@ -86,16 +86,21 @@ def refuse_running() -> None:
         raise SystemExit(f"refusing: Bitwig already running ({listed}); quit it first")
 
 
-def stop_sandbox(run: Path, session: int, reason: str) -> bool:
-    """Fail closed: cut every Bitwig link outside the sink, then end the whole sandbox (TERM, then KILL).
+def stop_sandbox(run: Path, session: int, reason: str, display: str) -> bool:
+    """Fail closed: cut every Bitwig link outside the sink first, screenshot Bitwig's window, then end the whole
+    sandbox (TERM, then KILL).
 
-    Returns whether the sandbox is confirmed gone; a failed cut is recorded and never skips the kill.
+    Returns whether the sandbox is confirmed gone; a failed cut or screenshot is recorded and never skips the kill.
     """
     evidence.update_run(run, aborted=reason)
     try:
         evidence.update_run(run, strayLinksCut=audio.disconnect_strays())
     except Exception as exc:  # noqa: BLE001 - whatever the cut raised is recorded; the kill below must run
         evidence.update_run(run, cutFailed=f"{type(exc).__name__}: {exc}")
+    try:
+        evidence.update_run(run, abortShot=str(capture(display, run)))  # the GUI state before the kill
+    except Exception as exc:  # noqa: BLE001 - a missing screenshot tool must not skip the kill
+        evidence.update_run(run, abortShot=f"{type(exc).__name__}: {exc}")
     for sig in (signal.SIGTERM, signal.SIGKILL):
         if bitwig.session_alive(session):
             with contextlib.suppress(ProcessLookupError):  # the last process exited after the check
@@ -209,8 +214,7 @@ def up(config: Config, name: str, extension: str) -> Path:
         )
         pid = settle(config, run, session)
     except BaseException as exc:  # any failure, Ctrl-C included, must not leave a running sandbox
-        evidence.update_run(run, abortShot=str(capture(config.display, run)))  # the GUI state before the kill
-        stopped = stop_sandbox(run, session, f"{type(exc).__name__}: {exc}")
+        stopped = stop_sandbox(run, session, f"{type(exc).__name__}: {exc}", config.display)
         state = "sandbox stopped" if stopped else f"sandbox NOT stopped: session {session} is still running"
         raise SystemExit(
             f"ABORTED: {exc}; {state}; close the evidence in {run} with\n"
