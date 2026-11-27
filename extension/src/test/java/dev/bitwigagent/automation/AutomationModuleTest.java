@@ -51,6 +51,26 @@ public final class AutomationModuleTest {
         bad("automation.points.get", reversed);
         accepted("automation.points.set", set(points(point(0, 0.25, "linear"), point(4, 1, "hold"))));
         accepted("automation.points.set", set(new JsonArray()));
+        JsonObject omitted = point(0, 0.5, "linear");
+        omitted.remove("interpolation");
+        accepted("automation.points.set", set(points(omitted)));
+        JsonObject all = set(points(point(8, 0.5, "hold")));
+        all.addProperty("range", "all");
+        accepted("automation.points.set", all);
+        JsonObject everything = set(new JsonArray());
+        everything.addProperty("range", "everything");
+        bad("automation.points.set", everything);
+        JsonObject snapped = set(points(point(1.0000001, 0.5, "hold")));
+        snapped.add("range", range(1.0000001, 2));
+        accepted("automation.points.set", snapped);
+        assertEquals(
+                1.0,
+                AutomationModule.points(snapped).get(0).beat,
+                "a beat inside range snaps inside the snapped range");
+        bad("automation.points.set", set(points(point(1, 0.5, "hold"), point(1.0000003, 0.5, "hold"))));
+        JsonObject allGet = get("pan");
+        allGet.addProperty("range", "all");
+        bad("automation.points.get", allGet);
         bad("automation.points.set", set(points(point(4, 0.25, "linear"), point(0, 1, "hold"))));
         bad("automation.points.set", set(points(point(0, 0.25, "linear"), point(0, 1, "hold"))));
         bad("automation.points.set", set(points(point(0, 1.5, "linear"))));
@@ -87,18 +107,46 @@ public final class AutomationModuleTest {
                 !AutomationModule.hash(lane)
                         .equals(AutomationModule.hash(List.of(a, b, new AutomationModule.Point(16, 0.6, true, 0.1)))),
                 "curve changes the hash");
-        List<AutomationModule.Point> replaced =
-                AutomationModule.desired(lane, new double[] {8, 12}, List.of(p(9, 1, false)));
+        AutomationModule.Edit<String> ranged = new AutomationModule.Edit<>(
+                List.of("a", "b", "c"), lane, List.of(r(9, 1, false)), new double[] {8, 12});
         assertTrue(
-                replaced.size() == 3 && replaced.get(0) == a && replaced.get(1).beat == 9 && replaced.get(2) == c,
+                ranged.desired.size() == 3
+                        && ranged.desired.get(0) == a
+                        && ranged.desired.get(1).beat == 9
+                        && ranged.desired.get(2) == c,
                 "inclusive range replace keeps points outside it");
+        assertEquals(List.of("b"), ranged.delete);
+        assertEquals(List.of("a", "c"), ranged.kept);
+        assertEquals(List.of(1), ranged.at);
+        AutomationModule.Edit<String> upsert = new AutomationModule.Edit<>(
+                List.of("a", "b", "c"), lane, List.of(r(4, 1, null), r(16, 0.9, null)), null);
+        assertEquals(4, upsert.desired.size(), "without range nothing is removed");
+        assertEquals(List.of("c"), upsert.delete, "an updated point is replaced natively");
+        assertEquals(List.of(1, 3), upsert.at, "new points land at their lane index");
         assertTrue(
-                AutomationModule.desired(lane, null, List.of()).isEmpty(),
-                "whole-lane replace with no points clears the lane");
+                upsert.desired.get(1).linear && upsert.desired.get(3).linear,
+                "omitted interpolation is linear for a new point and kept for an updated one");
+        assertEquals(summary(1, 1, 0, 0), upsert.summary(true), "summary counts inserted, updated, removed, unchanged");
+        AutomationModule.Edit<String> holdKept =
+                new AutomationModule.Edit<>(List.of("a", "b", "c"), lane, List.of(r(8, 0.5, null)), null);
+        assertTrue(!holdKept.desired.get(1).linear, "an update without interpolation keeps hold");
+        AutomationModule.Edit<String> cleared =
+                new AutomationModule.Edit<>(List.of("a", "b", "c"), lane, List.of(), AutomationModule.ALL);
+        assertTrue(cleared.desired.isEmpty() && cleared.delete.size() == 3, "range all with no points clears the lane");
+        AutomationModule.Edit<String> equal = new AutomationModule.Edit<>(
+                List.of("a", "b", "c"), lane, List.of(r(8, 0.4 + 1e-12, false)), new double[] {8, 8});
         assertTrue(
-                AutomationModule.same(
-                        lane, AutomationModule.desired(lane, new double[] {8, 8}, List.of(p(8, 0.4 + 1e-12, false)))),
-                "an equal replacement is already matched");
+                equal.matched(lane) && equal.summary(false).equals(summary(0, 0, 0, 1)),
+                "an equal point is already matched");
+        AutomationModule.Point curved = new AutomationModule.Point(8, 0.4, false, 0.6);
+        AutomationModule.Edit<String> keepsCurve =
+                new AutomationModule.Edit<>(List.of("x"), List.of(curved), List.of(r(8, 0.4, false)), null);
+        assertTrue(keepsCurve.matched(List.of(curved)), "a listed point keeps the curve it omits");
+        AutomationModule.Edit<String> base =
+                new AutomationModule.Edit<>(List.of("base"), List.of(p(0, 0.5, true)), List.of(), AutomationModule.ALL);
+        assertTrue(
+                base.matched(List.of(p(0, 0.5, true))) && base.summary(false).equals(summary(0, 0, 0, 0)),
+                "a lane holding only Bitwig's base point is already cleared");
         AutomationModule.requireExpected(lane, AutomationModule.hash(lane));
         AutomationModule.requireExpected(lane, null);
         {
@@ -115,6 +163,9 @@ public final class AutomationModuleTest {
             assertTrue(e.reason.wire().equals("readback_mismatch") && e.unknown, "readback mismatch is unknown");
         }
         AutomationModule.verify(lane, List.of(a, p(8, 0.4 + 1e-12, false), c));
+        assertEquals(p(1.0 / 3, 0.1, true), p(1.0 / 3 + 1e-9, 0.1 + 1e-12, true), "points are canonical");
+        assertNotEquals(p(0, 0.1, true), p(0, 0.1, false));
+        assertNotEquals(p(0, 0.1, true), "point");
         List<AutomationModule.Point> big = new ArrayList<>();
         for (int i = 0; i < 1500; i++) big.add(p(i, 0.5, true));
         JsonObject summary = AutomationModule.lane(new JsonObject(), true, big, new double[] {10, 20});
@@ -124,6 +175,12 @@ public final class AutomationModuleTest {
                         && summary.getAsJsonArray("points").size() == 11
                         && !summary.get("truncated").getAsBoolean(),
                 "range filters listed points, count covers the lane");
+        assertEquals(
+                "all",
+                AutomationModule.lane(new JsonObject(), true, big, AutomationModule.ALL)
+                        .get("range")
+                        .getAsString(),
+                "range all echoes as all");
         JsonObject whole = AutomationModule.lane(new JsonObject(), true, big, null);
         assertTrue(
                 whole.getAsJsonArray("points").size() == AutomationModule.MAX_READ
@@ -138,7 +195,6 @@ public final class AutomationModuleTest {
         assertEquals(none, AutomationModule.withoutBasePoint(none, none));
         assertEquals(none, AutomationModule.withoutBasePoint(List.of(base), none));
         AutomationModule.verify(none, AutomationModule.withoutBasePoint(List.of(base), none));
-        assertTrue(AutomationModule.same(AutomationModule.withoutBasePoint(List.of(base), none), none));
         assertEquals(
                 List.of(other),
                 AutomationModule.withoutBasePoint(List.of(other), none),
@@ -204,12 +260,19 @@ public final class AutomationModuleTest {
         f.call("automation.points.set", p);
         assertNull(f.lastHash, "without expect there is no hash to compare");
         assertTrue(
-                f.lastPoints.get(0).linear
-                        && !f.lastPoints.get(1).linear
-                        && f.lastPoints.get(1).value == 0.75
-                        && f.lastPoints.get(1).curve == 0,
-                "point fields keep beat/value/interpolation; curve is 0");
+                f.lastPoints.get(0).linear && !f.lastPoints.get(1).linear && f.lastPoints.get(1).value == 0.75,
+                "point fields keep beat/value/interpolation");
         assertTrue(f.lastRange[0] == 2 && f.lastRange[1] == 6, "range passes through unchanged");
+        JsonObject omitted = set(points(point(2, 0.5, "linear")));
+        omitted.getAsJsonArray("points").get(0).getAsJsonObject().remove("interpolation");
+        omitted.addProperty("range", "all");
+        f.call("automation.points.set", omitted);
+        assertTrue(
+                f.lastPoints.get(0).linear == null && f.lastRange == AutomationModule.ALL,
+                "omitted interpolation stays omitted; range all is the whole lane");
+        omitted.remove("range");
+        f.call("automation.points.set", omitted);
+        assertNull(f.lastRange, "without range only the listed points are written");
     }
 
     @Test
@@ -275,6 +338,19 @@ public final class AutomationModuleTest {
         return new AutomationModule.Point(beat, value, linear, 0);
     }
 
+    static AutomationModule.Request r(double beat, double value, Boolean linear) {
+        return new AutomationModule.Request(beat, value, linear);
+    }
+
+    static JsonObject summary(int inserted, int updated, int removed, int unchanged) {
+        JsonObject out = new JsonObject();
+        out.addProperty("inserted", inserted);
+        out.addProperty("updated", updated);
+        out.addProperty("removed", removed);
+        out.addProperty("unchanged", unchanged);
+        return out;
+    }
+
     static JsonObject get(String kind) {
         JsonObject p = new JsonObject();
         p.add("target", Refs.parameter(TRACK, kind, null));
@@ -335,7 +411,7 @@ public final class AutomationModuleTest {
         int writes, calls, reads;
         String lastHash;
         double[] lastRange;
-        List<AutomationModule.Point> lastPoints;
+        List<AutomationModule.Request> lastPoints;
         AutomationModule.Target lastTarget;
 
         Fixture(boolean playing) {
@@ -362,7 +438,7 @@ public final class AutomationModuleTest {
                         String id,
                         AutomationModule.Target target,
                         String hash,
-                        List<AutomationModule.Point> points,
+                        List<AutomationModule.Request> points,
                         double[] range,
                         Runnable check,
                         Runnable before) {
