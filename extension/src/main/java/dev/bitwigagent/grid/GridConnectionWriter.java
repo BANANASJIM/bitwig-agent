@@ -280,7 +280,8 @@ public final class GridConnectionWriter {
         }
         /** False when native repair left another source: observed, but later entries may depend on it. */
         private boolean record(JsonObject item, JsonObject one) {
-            for (String key : new String[] {"outcome", "verification", "reason", "previousSource", "actualSource"})
+            Results.copyOutcome(item, one);
+            for (String key : new String[] {"reason", "previousSource", "actualSource"})
                 if (one.has(key)) item.add(key, one.get(key));
             lastGraph = one.getAsJsonObject("graph");
             if (one.get("mutationDispatched").getAsBoolean()) written++;

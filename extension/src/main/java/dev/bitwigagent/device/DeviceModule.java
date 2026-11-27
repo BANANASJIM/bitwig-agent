@@ -91,7 +91,7 @@ public final class DeviceModule implements HostModule {
             selection.requireFree();
             op.markDispatched();
             device.device.selectInEditor();
-            JsonObject result = Results.outcome(Outcome.SENT);
+            JsonObject result = Results.sent();
             result.add("ref", device.ref());
             op.result.complete(result);
             return;
@@ -125,7 +125,7 @@ public final class DeviceModule implements HostModule {
                 NativeChains.Device device = walk.device(target, true);
                 walk.dispatch(selection::requireFree);
                 walk.a.select(device.device);
-                JsonObject result = Results.outcome(Outcome.SENT);
+                JsonObject result = Results.sent();
                 result.add("ref", device.ref);
                 return result;
             });
@@ -250,7 +250,7 @@ public final class DeviceModule implements HostModule {
         JsonObject result = new JsonObject();
         result.addProperty("scope", "installed_bitwig_factory_devices");
         result.addProperty("completePluginCatalog", false);
-        result.addProperty("verification", Verification.FILE_READBACK.wire());
+        Results.readBy(result, Verification.FILE_READBACK);
         result.addProperty("bitwigIdAvailable", false);
         JsonArray devices = new JsonArray();
         result.add("devices", devices);

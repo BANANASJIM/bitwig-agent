@@ -215,7 +215,7 @@ public final class GridParameterWriter {
                     dispatch.run();
                     sent[0] = true;
                 });
-                GridDiff.copyOutcome(item, one);
+                Results.copyOutcome(item, one);
                 if (one.has("previousValues")) {
                     item.add("previousValues", one.get("previousValues"));
                     item.add("values", one.getAsJsonObject("parameter").get("values"));

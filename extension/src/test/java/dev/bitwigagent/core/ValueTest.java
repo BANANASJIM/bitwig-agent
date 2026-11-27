@@ -121,8 +121,8 @@ public final class ValueTest {
         assertEquals(List.of("a", "b"), Batch.checked(List.<Supplier<String>>of(() -> "a", () -> "b")));
         Batch batch = new Batch(4);
         assertTrue(batch.record(Results.outcome(Outcome.APPLIED, Verification.API_READBACK)));
-        assertTrue(batch.record(Results.outcome(Outcome.SENT)), "sent continues");
-        assertFalse(batch.record(Results.outcome(Outcome.UNKNOWN)), "unknown stops");
+        assertTrue(batch.record(Results.sent()), "sent continues");
+        assertFalse(batch.record(Results.unknown()), "unknown stops");
         JsonArray results = batch.entries();
         assertEquals(4, results.size());
         assertEquals(

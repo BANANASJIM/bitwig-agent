@@ -220,7 +220,7 @@ public final class NoteModule implements HostModule {
                     finish();
                     return;
                 }
-                JsonObject entry = Results.outcome(Outcome.NOT_APPLIED);
+                JsonObject entry = Results.notApplied();
                 entry.addProperty("reason", Reason.DEADLINE.wire());
                 entry.addProperty("message", "Too little time left for another window; send its notes again.");
                 record(index, entry);
@@ -238,11 +238,8 @@ public final class NoteModule implements HostModule {
                         return;
                     }
                     JsonObject entry = error == null ? result : Errors.entryResult(error);
-                    if (written != null && !entry.has("summary")) {
-                        Outcome outcome = Results.outcomeOf(entry);
-                        entry = merged(entry, unread(written.get(index), null));
-                        if (outcome != Outcome.UNKNOWN) entry.addProperty("outcome", Outcome.UNKNOWN.wire());
-                    }
+                    if (written != null && !entry.has("summary"))
+                        entry = Results.unknown(merged(entry, unread(written.get(index), null)));
                     record(index, entry);
                     boolean next = written != null || Results.outcomeOf(entry).succeeded();
                     if (next && index + 1 < parts.size()) run(index + 1);
@@ -285,7 +282,7 @@ public final class NoteModule implements HostModule {
                 JsonObject entry;
                 if (i < entries.size()) entry = entries.get(i).getAsJsonObject();
                 else {
-                    entry = Results.outcome(Outcome.NOT_APPLIED);
+                    entry = Results.notApplied();
                     entry.addProperty("reason", Reason.NOT_REACHED.wire());
                     entry.add("window", part.window.json());
                 }
@@ -327,7 +324,7 @@ public final class NoteModule implements HostModule {
 
     /** A natively written window that was not read back: every edit unknown, counted as dispatched or matched. */
     private static JsonObject unread(List<NoteGrid.Edit> changes, String message) {
-        JsonObject entry = Results.outcome(Outcome.UNKNOWN);
+        JsonObject entry = Results.unknown();
         entry.addProperty("reason", Reason.NOT_OBSERVED.wire());
         if (message != null) entry.addProperty("message", message);
         int matched = 0;

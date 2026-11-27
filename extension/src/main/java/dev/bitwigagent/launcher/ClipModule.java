@@ -781,7 +781,7 @@ public final class ClipModule implements HostModule {
             JsonObject evidence) {
         for (String key : order)
             if (!fields.has(key)) {
-                JsonObject skipped = Results.outcome(Outcome.NOT_APPLIED);
+                JsonObject skipped = Results.notApplied();
                 skipped.addProperty("reason", Reason.NOT_REACHED.wire());
                 fields.add(key, skipped);
             }
@@ -944,8 +944,8 @@ public final class ClipModule implements HostModule {
                 () -> done.accept(single(
                         key,
                         Results.field(requested, observed.get(), Outcome.APPLIED, null, Verification.API_READBACK))),
-                () -> done.accept(single(
-                        key, Results.field(requested, observed.get(), Outcome.UNKNOWN, Reason.READBACK_MISMATCH))));
+                () -> done.accept(
+                        single(key, Results.unknownField(requested, observed.get(), Reason.READBACK_MISMATCH))));
     }
 
     private static JsonObject single(String key, JsonObject field) {
@@ -973,8 +973,8 @@ public final class ClipModule implements HostModule {
                             requested, observed.get(), Outcome.ALREADY_MATCHED, null, Verification.API_READBACK)));
             return;
         }
-        Runnable unread = () -> done.accept(
-                single("loop", Results.field(requested, observed.get(), Outcome.UNKNOWN, Reason.READBACK_MISMATCH)));
+        Runnable unread = () ->
+                done.accept(single("loop", Results.unknownField(requested, observed.get(), Reason.READBACK_MISMATCH)));
         op.markDispatched();
         state.clip.getLoopLength().set(length);
         long end = state.until(op);

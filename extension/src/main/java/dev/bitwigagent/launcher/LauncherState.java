@@ -356,7 +356,7 @@ public final class LauncherState implements RenderModule.LauncherContent {
 
     /** An unknown result whose slot stays held until the agent inspects it and acks the hold. */
     JsonObject unresolved(JsonObject out, Reason reason, String message) {
-        out.addProperty("outcome", Outcome.UNKNOWN.wire());
+        Results.unknown(out);
         out.addProperty("reason", reason.wire());
         out.addProperty("message", message);
         out.addProperty(

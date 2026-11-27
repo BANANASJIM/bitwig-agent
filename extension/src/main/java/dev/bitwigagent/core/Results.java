@@ -3,7 +3,6 @@ package dev.bitwigagent.core;
 import com.google.gson.*;
 import dev.bitwigagent.host.ProjectState;
 import java.util.HashSet;
-import java.util.Objects;
 import java.util.Set;
 
 /** Result fragments shared by every domain. */
@@ -20,7 +19,7 @@ public final class Results {
         return result;
     }
 
-    /** A write result: {outcome, verification exactly when applied}. */
+    /** A write result: {outcome, verification exactly when applied (and a native no-op)}. */
     public static JsonObject outcome(Outcome outcome, Verification how) {
         JsonObject result = new JsonObject();
         stamp(result, outcome, how);
@@ -29,21 +28,59 @@ public final class Results {
 
     /** The one applied result with nothing to verify against Bitwig: {@code ack} records that a hold was inspected. */
     public static JsonObject released() {
-        JsonObject result = new JsonObject();
-        result.addProperty("outcome", Outcome.APPLIED.wire());
-        return result;
+        return bare(new JsonObject(), Outcome.APPLIED);
     }
 
-    /** A write result whose outcome is statically not applied. */
-    public static JsonObject outcome(Outcome outcome) {
-        return outcome(outcome, null);
+    /** An already-matched result whose match was not read back through a {@link Verification}. */
+    public static JsonObject alreadyMatched() {
+        return bare(new JsonObject(), Outcome.ALREADY_MATCHED);
+    }
+
+    /** A dispatched write that cannot be observed. */
+    public static JsonObject sent() {
+        return bare(new JsonObject(), Outcome.SENT);
+    }
+
+    public static JsonObject notApplied() {
+        return notApplied(new JsonObject());
+    }
+
+    /** Marks {@code result} not applied; any verification it carried goes. */
+    public static JsonObject notApplied(JsonObject result) {
+        return bare(result, Outcome.NOT_APPLIED);
+    }
+
+    public static JsonObject unknown() {
+        return unknown(new JsonObject());
+    }
+
+    /** Marks {@code result} unknown; any verification it carried goes. */
+    public static JsonObject unknown(JsonObject result) {
+        return bare(result, Outcome.UNKNOWN);
     }
 
     /** Sets {@code outcome} on a result built elsewhere; an applied one (and a native no-op) says how it was confirmed. */
     public static void stamp(JsonObject result, Outcome outcome, Verification how) {
+        bare(result, outcome);
+        if (outcome == Outcome.APPLIED || outcome == Outcome.ALREADY_MATCHED) how.put(result);
+    }
+
+    /** A readback or capability block that is not itself a write result: it only says how it was confirmed. */
+    public static JsonObject readBy(JsonObject block, Verification how) {
+        how.put(block);
+        return block;
+    }
+
+    /** An entry takes the outcome and the verification of the single write that produced it. */
+    public static void copyOutcome(JsonObject entry, JsonObject one) {
+        bare(entry, outcomeOf(one));
+        if (one.has("verification")) entry.add("verification", one.get("verification"));
+    }
+
+    private static JsonObject bare(JsonObject result, Outcome outcome) {
         result.addProperty("outcome", outcome.wire());
-        if (outcome == Outcome.APPLIED) Objects.requireNonNull(how, "an applied result needs a verification");
-        if (how != null && (outcome == Outcome.APPLIED || outcome == Outcome.ALREADY_MATCHED)) how.put(result);
+        result.remove("verification");
+        return result;
     }
 
     /** The worst outcome of {@code entries}, with the verification they share (the leaf rule). */
@@ -55,15 +92,16 @@ public final class Results {
 
     /**
      * Sets {@code outcome} on a result whose entries carry the confirmations. The leaf rule: when an applied result's
-     * entries all name one verification it repeats it; entries that differ keep their own.
+     * applied entries all name one verification it repeats it; entries that differ keep their own.
      */
     public static void stamp(JsonObject result, Outcome outcome, Iterable<JsonElement> entries) {
-        result.addProperty("outcome", outcome.wire());
+        bare(result, outcome);
         if (outcome != Outcome.APPLIED) return;
         Set<String> seen = new HashSet<>();
         for (JsonElement entry : entries) {
             JsonObject e = entry.getAsJsonObject();
-            if (e.has("verification")) seen.add(e.get("verification").getAsString());
+            if (outcomeOf(e) == Outcome.APPLIED && e.has("verification"))
+                seen.add(e.get("verification").getAsString());
         }
         if (seen.size() == 1) result.addProperty("verification", seen.iterator().next());
     }
@@ -103,17 +141,31 @@ public final class Results {
     /** One field or entry: {requested, observed (only when it differs), outcome, reason?}. */
     public static JsonObject field(
             JsonElement requested, JsonElement observed, Outcome outcome, Reason reason, Verification how) {
-        JsonObject field = new JsonObject();
-        field.add("requested", requested == null ? JsonNull.INSTANCE : requested);
-        if (observed != null && !observed.equals(requested)) field.add("observed", observed);
+        JsonObject field = field(requested, observed);
         stamp(field, outcome, how);
         if (reason != null) field.addProperty("reason", reason.wire());
         return field;
     }
 
-    /** A field whose outcome is statically not applied. */
-    public static JsonObject field(JsonElement requested, JsonElement observed, Outcome outcome, Reason reason) {
-        return field(requested, observed, outcome, reason, null);
+    /** A field whose write may have landed but was not confirmed. */
+    public static JsonObject unknownField(JsonElement requested, JsonElement observed, Reason reason) {
+        JsonObject field = unknown(field(requested, observed));
+        field.addProperty("reason", reason.wire());
+        return field;
+    }
+
+    /** A field that was not written. */
+    public static JsonObject notAppliedField(JsonElement requested, JsonElement observed, Reason reason) {
+        JsonObject field = notApplied(field(requested, observed));
+        field.addProperty("reason", reason.wire());
+        return field;
+    }
+
+    private static JsonObject field(JsonElement requested, JsonElement observed) {
+        JsonObject field = new JsonObject();
+        field.add("requested", requested == null ? JsonNull.INSTANCE : requested);
+        if (observed != null && !observed.equals(requested)) field.add("observed", observed);
+        return field;
     }
 
     /**

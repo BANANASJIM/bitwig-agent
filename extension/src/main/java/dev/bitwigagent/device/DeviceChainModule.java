@@ -362,7 +362,7 @@ public final class DeviceChainModule implements HostModule {
             throw Errors.notApplied(Reason.TARGET_NOT_FOUND, "The position is beyond the chain.");
         scheduler.check(op);
         if (dest == from) {
-            JsonObject result = Results.outcome(Outcome.ALREADY_MATCHED);
+            JsonObject result = Results.alreadyMatched();
             result.add("ref", device.ref());
             op.result.complete(result);
             return;

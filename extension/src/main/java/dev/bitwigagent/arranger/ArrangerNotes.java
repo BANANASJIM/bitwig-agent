@@ -1,6 +1,7 @@
 package dev.bitwigagent.arranger;
 
 import com.google.gson.*;
+import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.Verification;
 import dev.bitwigagent.nativehost.NativeArrangerAccess;
 import java.util.*;
@@ -89,7 +90,7 @@ public final class ArrangerNotes {
         out.addProperty("channel", channel);
         out.add("unverifiedNotes", missing);
         out.addProperty("invalidRows", invalid);
-        out.addProperty("verification", Verification.NATIVE_READBACK.wire());
+        Results.readBy(out, Verification.NATIVE_READBACK);
         return new Readback(out, invalid, invalid == 0 && verified == notes.size() && count == notes.size());
     }
 

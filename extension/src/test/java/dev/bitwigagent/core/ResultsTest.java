@@ -2,7 +2,6 @@ package dev.bitwigagent.core;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.google.gson.JsonArray;
@@ -15,12 +14,12 @@ final class ResultsTest {
     void anAppliedResultNeedsItsVerificationAndOnlyOnesThatSucceedCarryIt() {
         JsonObject applied = Results.outcome(Outcome.APPLIED, Verification.API_READBACK);
         assertEquals("api_readback", applied.get("verification").getAsString());
-        assertThrows(NullPointerException.class, () -> Results.outcome(Outcome.APPLIED, null));
         assertTrue(Results.outcome(Outcome.ALREADY_MATCHED, Verification.NATIVE_READBACK)
                 .has("verification"));
         assertFalse(
                 Results.outcome(Outcome.UNKNOWN, Verification.NATIVE_READBACK).has("verification"));
-        assertFalse(Results.outcome(Outcome.SENT).has("verification"));
+        assertFalse(Results.sent().has("verification"));
+        assertEquals("already_matched", Results.alreadyMatched().get("outcome").getAsString());
         JsonObject field = Results.field(null, null, Outcome.APPLIED, null, Verification.FILE_READBACK);
         assertEquals("file_readback", field.get("verification").getAsString());
     }
@@ -29,7 +28,7 @@ final class ResultsTest {
     void aComposedResultRepeatsTheVerificationItsEntriesShareAndOtherwiseLeavesThemTheirOwn() {
         JsonArray same = new JsonArray();
         same.add(Results.outcome(Outcome.APPLIED, Verification.NATIVE_READBACK));
-        same.add(Results.outcome(Outcome.ALREADY_MATCHED, Verification.NATIVE_READBACK));
+        same.add(Results.outcome(Outcome.ALREADY_MATCHED, Verification.API_READBACK));
         JsonObject top = Results.ofEntries(same);
         assertEquals("applied", top.get("outcome").getAsString());
         assertEquals("native_readback", top.get("verification").getAsString());
@@ -41,7 +40,7 @@ final class ResultsTest {
 
         JsonArray stopped = new JsonArray();
         stopped.add(Results.outcome(Outcome.APPLIED, Verification.NATIVE_READBACK));
-        stopped.add(Results.outcome(Outcome.UNKNOWN));
+        stopped.add(Results.unknown());
         assertEquals("unknown", Results.ofEntries(stopped).get("outcome").getAsString());
         assertFalse(Results.ofEntries(stopped).has("verification"));
     }
@@ -61,5 +60,36 @@ final class ResultsTest {
         ack.addProperty("released", "hold");
         assertTrue(Results.leafRuleHolds(ack), "ack's release is the one exception");
         assertTrue(Results.leafRuleHolds(Results.outcome(Outcome.APPLIED, Verification.FILE_READBACK)));
+    }
+
+    @Test
+    void aResultMarkedUnknownOrNotAppliedLosesTheVerificationItCarried() {
+        JsonObject entry = Results.outcome(Outcome.APPLIED, Verification.API_READBACK);
+        assertFalse(Results.unknown(entry).has("verification"));
+        assertEquals("unknown", entry.get("outcome").getAsString());
+        assertFalse(Results.notApplied(Results.outcome(Outcome.APPLIED, Verification.API_READBACK))
+                .has("verification"));
+        JsonObject field = Results.unknownField(null, null, Reason.NOT_OBSERVED);
+        assertEquals("not_observed", field.get("reason").getAsString());
+        assertFalse(field.has("verification"));
+        assertEquals(
+                "not_applied",
+                Results.notAppliedField(null, null, Reason.NOT_REACHED)
+                        .get("outcome")
+                        .getAsString());
+    }
+
+    @Test
+    void aCopiedEntryKeepsTheVerificationOfItsWrite() {
+        JsonObject entry = new JsonObject();
+        Results.copyOutcome(entry, Results.outcome(Outcome.APPLIED, Verification.NATIVE_READBACK));
+        assertTrue(Results.leafRuleHolds(entry));
+        Results.copyOutcome(entry, Results.unknown());
+        assertFalse(entry.has("verification"));
+        assertEquals(
+                "file_readback",
+                Results.readBy(new JsonObject(), Verification.FILE_READBACK)
+                        .get("verification")
+                        .getAsString());
     }
 }

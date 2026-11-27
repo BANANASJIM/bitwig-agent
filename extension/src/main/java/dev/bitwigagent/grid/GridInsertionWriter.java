@@ -362,7 +362,7 @@ public final class GridInsertionWriter {
                         one -> {
                             if (done) return;
                             try {
-                                GridDiff.copyOutcome(item, one);
+                                Results.copyOutcome(item, one);
                                 item.add("moduleId", one.get("moduleId"));
                                 item.add("actualPosition", one.get("actualPosition"));
                                 lastGraph = one.getAsJsonObject("graph");

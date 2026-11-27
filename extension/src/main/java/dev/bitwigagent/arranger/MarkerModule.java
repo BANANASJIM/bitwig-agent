@@ -208,7 +208,7 @@ public final class MarkerModule implements HostModule {
             Marker created = gained(now, before);
             if (created == null) {
                 JsonObject result = describe(now);
-                result.addProperty("outcome", Outcome.UNKNOWN.wire());
+                Results.unknown(result);
                 result.addProperty("reason", Reason.NOT_OBSERVED.wire());
                 result.addProperty("message", "The inserted marker was not observed as a single new entry.");
                 result.addProperty("next", INSPECT_THEN_ACK);

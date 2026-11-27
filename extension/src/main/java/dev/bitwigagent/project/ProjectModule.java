@@ -135,7 +135,7 @@ public final class ProjectModule implements HostModule, JobsModule.Source {
             return;
         }
         if (Boolean.FALSE.equals(projectState.modified())) {
-            JsonObject done = Results.outcome(Outcome.ALREADY_MATCHED);
+            JsonObject done = Results.alreadyMatched();
             done.addProperty("projectModified", false);
             op.result.complete(done);
             return;
@@ -153,7 +153,7 @@ public final class ProjectModule implements HostModule, JobsModule.Source {
 
     private void activateEngine(HostOperation op) {
         if (projectState.engineActive()) {
-            JsonObject done = Results.outcome(Outcome.ALREADY_MATCHED);
+            JsonObject done = Results.alreadyMatched();
             done.addProperty("engineActive", true);
             op.result.complete(done);
             return;
@@ -227,7 +227,7 @@ public final class ProjectModule implements HostModule, JobsModule.Source {
         result.addProperty(
                 "binding",
                 "exact_" + NativeHost.SUPPORTED + "_hash_gated_save_project_pipeline_with_native_completion_callback");
-        result.addProperty("verification", Verification.FILE_READBACK.wire());
+        Results.readBy(result, Verification.FILE_READBACK);
         return result;
     }
 

@@ -369,7 +369,7 @@ public final class TrackLifecycleModule implements HostModule {
     }
 
     private JsonObject unattributed(JsonObject p, Reason reason, String detail, String hold) {
-        JsonObject result = Results.outcome(Outcome.UNKNOWN);
+        JsonObject result = Results.unknown();
         result.addProperty("reason", reason.wire());
         result.addProperty("detail", detail);
         result.addProperty("nameApplied", false);

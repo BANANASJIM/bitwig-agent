@@ -164,7 +164,7 @@ final class NativeChainEdits {
             int insertion = Positions.index(p.get("position"), before.size(), anchor -> anchorIn(walk, chain, anchor));
             int dest = insertion > from ? insertion - 1 : insertion;
             if (dest == from) {
-                JsonObject result = Results.outcome(Outcome.ALREADY_MATCHED);
+                JsonObject result = Results.alreadyMatched();
                 result.add("ref", device.ref);
                 return already(result);
             }
