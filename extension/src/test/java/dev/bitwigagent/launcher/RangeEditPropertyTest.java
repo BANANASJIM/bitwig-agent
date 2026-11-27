@@ -2,6 +2,7 @@ package dev.bitwigagent.launcher;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import com.bitwig.extension.controller.api.NoteOccurrence;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import dev.bitwigagent.core.RangeEdit;
@@ -27,7 +28,8 @@ import net.jqwik.api.statistics.Statistics;
 /**
  * The convergence properties of the range rule (high-frequency representation design §4.1): a read written back
  * changes nothing, a replay changes nothing, nothing outside the range changes, an upsert removes nothing, the range
- * becomes the listed notes, and canonical() is idempotent. On the pure functions and on the fake native port.
+ * becomes the listed notes, and canonical() is idempotent, with operators and expressions on the notes. On the pure
+ * functions and on the fake native port.
  */
 final class RangeEditPropertyTest {
     private static final long TICKS = Note.TICKS;
@@ -37,13 +39,52 @@ final class RangeEditPropertyTest {
     Arbitrary<Note> notes() {
         Arbitrary<Long> beat = Combinators.combine(Arbitraries.longs().between(0, 31), Arbitraries.of(0L, 0L, 0L, 3L))
                 .as((quarter, offset) -> quarter * TICKS / 4 + offset);
-        return Combinators.combine(
+        Arbitrary<Note> plain = Combinators.combine(
                         Arbitraries.integers().between(0, 2),
                         Arbitraries.integers().between(60, 63),
                         beat,
                         Arbitraries.longs().between(1, 3 * TICKS),
                         Arbitraries.integers().between(1, 127))
                 .as(Note::ofTicks);
+        return Combinators.combine(plain, features()).as(Note::with);
+    }
+
+    /** Mostly plain notes; the rest with a mix of operators and expressions at arbitrary values. */
+    @Provide
+    Arbitrary<NoteFeatures> features() {
+        Arbitrary<NoteFeatures.Repeat> repeat = Combinators.combine(
+                        Arbitraries.integers().between(-127, 127),
+                        Arbitraries.doubles().between(-1, 1),
+                        Arbitraries.doubles().between(-1, 1),
+                        Arbitraries.doubles().between(-1, 1))
+                .as(NoteFeatures.Repeat::new);
+        Arbitrary<NoteFeatures.Recurrence> recurrence = Combinators.combine(
+                        Arbitraries.integers().between(1, 8),
+                        Arbitraries.integers().between(0, 255))
+                .as(NoteFeatures.Recurrence::new);
+        Arbitrary<NoteFeatures> some = Combinators.combine(
+                        Arbitraries.doubles().between(0, 1).injectNull(0.5),
+                        Arbitraries.doubles().between(0, 1),
+                        Arbitraries.integers().between(0, 127),
+                        repeat.injectNull(0.5),
+                        recurrence.injectNull(0.5),
+                        Arbitraries.of(NoteOccurrence.class).injectNull(0.5),
+                        Arbitraries.of(NoteFeatures.Expression.class),
+                        Arbitraries.doubles().between(0, 1))
+                .as((chance, spread, release, rep, rec, occurrence, expression, stored) -> {
+                    NoteFeatures.Builder b = new NoteFeatures.Builder();
+                    b.chance = chance;
+                    b.velocitySpread = spread;
+                    b.releaseVelocity = release;
+                    b.repeat = rep;
+                    b.recurrence = rec;
+                    b.occurrence = occurrence;
+                    b.muted = release % 2 == 0;
+                    return b.expression(expression, expression.fromStored(stored))
+                            .build();
+                });
+        return Arbitraries.frequencyOf(
+                net.jqwik.api.Tuple.of(3, Arbitraries.just(NoteFeatures.NONE)), net.jqwik.api.Tuple.of(2, some));
     }
 
     /** Notes with distinct identities, as a clip holds them and a request lists them. */
@@ -141,6 +182,15 @@ final class RangeEditPropertyTest {
         assertEquals(once, Note.read(channel, pitch, once.beatValue(), once.durationValue(), stored));
     }
 
+    /** A note's record, listed as a new note, is the same note: features are canonical like times and velocity. */
+    @Property
+    void aRecordListedAgainIsTheSameNote(@ForAll("notes") Note note) {
+        JsonArray list = new JsonArray();
+        list.add(note.json());
+        assertEquals(note, NotePlan.fresh(NotePlan.listed(list)).get(0));
+        Statistics.label("features").collect(note.features.equals(NoteFeatures.NONE) ? "plain" : "with features");
+    }
+
     /** Through notes.get and notes.set on the fake native port: whatever a clip holds reads back unchanged. */
     @Property(tries = 40)
     void getAllThenSetAllIsAlreadyMatchedOnTheFakePort(@ForAll("clip") List<Note> clip) {
@@ -173,6 +223,7 @@ final class RangeEditPropertyTest {
         JsonArray listed = new JsonArray();
         for (Note n : withoutOverlaps(inside(request, range)))
             listed.add(Note.ofTicks(n.channel, n.pitch, n.beat, Math.min(n.duration, range.end - n.beat), n.velocity)
+                    .with(n.features)
                     .json());
         p.add("notes", listed);
         dev.bitwigagent.core.HostOperation op = f.startAndDrain("notes.set", p);
@@ -219,6 +270,38 @@ final class RangeEditPropertyTest {
                 RpcException.class,
                 () -> new NotePlan(NotePlan.listed(patches), null, true).plan(observed, Long.MAX_VALUE));
         assertTrue(error.getMessage().contains("is a new note"), error.getMessage());
+    }
+
+    /** A listed note with only an operator changes that operator and keeps the rest of the note. */
+    @Property
+    void anOperatorAloneUpdatesOnlyThatOperator(
+            @ForAll("clip") List<Note> clip, @ForAll @DoubleRange(min = 0, max = 1) double chance) {
+        List<Note> observed = withoutOverlaps(clip);
+        JsonArray patches = new JsonArray();
+        for (Note n : observed) {
+            JsonObject patch = new JsonObject();
+            patch.addProperty("beat", n.beatValue());
+            patch.addProperty("pitch", n.pitch);
+            patch.addProperty("channel", n.channel);
+            patch.addProperty("chance", chance);
+            patch.add("repeat", com.google.gson.JsonNull.INSTANCE);
+            patches.add(patch);
+        }
+        RangeEdit.Change<Note> change =
+                new NotePlan(NotePlan.listed(patches), null, true).plan(observed, Long.MAX_VALUE);
+        assertTrue(change.remove.isEmpty() && change.insert.isEmpty());
+        for (RangeEdit.Update<Note> u : change.update) {
+            assertEquals(NoteFeatures.f32(chance), u.after.features.chance);
+            assertNull(u.after.features.repeat, "null turns repeats off");
+            assertEquals(u.before.velocity, u.after.velocity);
+            assertEquals(u.before.duration, u.after.duration);
+            assertEquals(u.before.features.recurrence, u.after.features.recurrence, "omitted: kept");
+            assertEquals(u.before.features.occurrence, u.after.features.occurrence);
+        }
+        List<Note> after = RangeEdit.apply(observed, change);
+        assertTrue(new NotePlan(NotePlan.listed(patches), null, true)
+                .plan(after, Long.MAX_VALUE)
+                .isEmpty());
     }
 
     private static List<Note> inside(List<Note> notes, java.util.function.Predicate<Note> keep) {

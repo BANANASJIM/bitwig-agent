@@ -245,6 +245,87 @@ public final class NoteModuleTest {
     }
 
     @Test
+    void operatorsAreWrittenThroughTheNoteStepAndReadBack() {
+        LauncherFake f = riff();
+        LauncherFake.Stored.operatorWrites = 0;
+        JsonObject chance = obj("{\"beat\":1,\"pitch\":64,\"chance\":0.5,\"occurrence\":\"first\","
+                + "\"recurrence\":{\"length\":2,\"mask\":[false,true]}}");
+        JsonObject fresh = obj("{\"beat\":3,\"pitch\":48,\"velocity\":90,\"duration\":0.5,"
+                + "\"repeat\":{\"count\":3,\"velocityEnd\":-0.25},\"muted\":true,\"velocitySpread\":0.25,"
+                + "\"releaseVelocity\":10}");
+        JsonObject out = f.call("notes.set", set(f, 0, null, chance, fresh));
+        assertEquals("applied", out.get("outcome").getAsString(), out.toString());
+        assertEquals("api_readback", out.get("verification").getAsString());
+        assertEquals("per_step", out.get("undo").getAsString(), "each operator setter is its own step");
+        assertEquals(obj("{\"inserted\":1,\"updated\":1,\"removed\":0,\"unchanged\":0}"), out.get("summary"));
+        assertEquals(Float.valueOf(0.5f), f.at(0, 0, 1, 64).features.chance);
+        assertEquals(90, f.at(0, 0, 1, 64).velocity);
+        assertEquals(new NoteFeatures.Repeat(3, 0, -0.25, 0), f.at(0, 0, 3, 48).features.repeat);
+        assertTrue(LauncherFake.Stored.operatorWrites > 0);
+        JsonObject read = f.call("notes.get", target(f, 0));
+        assertEquals(NoteModule.EXPRESSIONS, read.get("unreadFields").getAsString());
+        JsonObject p = set(f, 0, range(0, 4));
+        p.add("notes", read.getAsJsonArray("notes"));
+        JsonObject echo = f.call("notes.set", p);
+        assertEquals("already_matched", echo.get("outcome").getAsString(), "operators read back as written");
+        JsonObject off = obj("{\"beat\":1,\"pitch\":64,\"chance\":null,\"occurrence\":null,\"recurrence\":null}");
+        assertEquals(
+                "applied",
+                f.call("notes.set", set(f, 0, null, off)).get("outcome").getAsString());
+        assertEquals(NoteFeatures.NONE, f.at(0, 0, 1, 64).features);
+    }
+
+    @Test
+    void aChangedVelocityRewritesTheCellAndSetsTheNotesOperatorsAgain() {
+        LauncherFake f = riff();
+        f.call("notes.set", set(f, 0, null, obj("{\"beat\":1,\"pitch\":64,\"chance\":0.5}")));
+        int writes = f.writes;
+        JsonObject out = f.call("notes.set", set(f, 0, null, obj("{\"beat\":1,\"pitch\":64,\"velocity\":30}")));
+        assertEquals("applied", out.get("outcome").getAsString(), out.toString());
+        assertEquals(writes + 1, f.writes, "setStep replaces the note");
+        assertEquals(30, f.at(0, 0, 1, 64).velocity);
+        assertEquals(Float.valueOf(0.5f), f.at(0, 0, 1, 64).features.chance, "set again on the new note");
+    }
+
+    @Test
+    void expressionsAreRefusedWithoutTheNativeBindingBeforeAnythingIsSelected() {
+        LauncherFake f = riff();
+        f.selected = 5;
+        HostOperation op =
+                f.startAndDrain("notes.set", set(f, 0, null, obj("{\"beat\":1,\"pitch\":64,\"timbre\":0.5}")));
+        String message = assertRpcError("native_unavailable", op).getMessage();
+        assertTrue(message.contains("timbre, pressure, pan, gain, transpose, formant"), message);
+        assertFalse(op.dispatched());
+        assertEquals(5, f.selected, "nothing was selected");
+        HostOperation neutral =
+                f.startAndDrain("notes.set", set(f, 0, null, obj("{\"beat\":1,\"pitch\":64,\"gain\":null}")));
+        assertRpcError("native_unavailable", neutral);
+        JsonObject insert = params(
+                "to",
+                f.slot(1),
+                "loop",
+                obj("{\"length\":4}"),
+                "name",
+                "Lead",
+                "notes",
+                array(obj("{\"beat\":0,\"pitch\":60,\"velocity\":90,\"duration\":1,\"pan\":-1}")));
+        HostOperation created = f.startAndDrain("clips.insert", insert);
+        assertRpcError("native_unavailable", created);
+        assertEquals(0, f.creates, "no clip was created");
+        assertFalse(created.dispatched());
+    }
+
+    @Test
+    void anArrangerInsertTakesNoOperators() {
+        JsonArray notes = array(obj("{\"beat\":0,\"pitch\":60,\"velocity\":90,\"duration\":1,\"chance\":0.5}"));
+        assertRpcError("unsupported_scope", () -> dev.bitwigagent.arranger.ArrangerModule.notes(notes, 4));
+        assertEquals(
+                1,
+                dev.bitwigagent.arranger.ArrangerModule.notes(array(note(0, 60, 90, 1)), 4)
+                        .size());
+    }
+
+    @Test
     void withARangeTheRangeBecomesTheListedNotesAndAReplayConverges() {
         LauncherFake f = riff();
         JsonObject p = set(f, 0, range(0, 2), note(0, 60, 100, 1), note(.5, 62, 70, .5));

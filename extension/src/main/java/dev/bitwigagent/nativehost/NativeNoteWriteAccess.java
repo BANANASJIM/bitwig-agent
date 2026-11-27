@@ -23,7 +23,9 @@ import java.util.function.Function;
  * Write: removed and replaced notes are deleted from their rows with {@code note.rowEvents.delete(Collection)}, then
  * each written note is added with {@code note.clip.add(note.create(time, duration, velocity * 0.007874016f), channel,
  * key, null)}, which leaves the editor selection alone. Times and durations are canonical (2^-20 beat), the step the
- * public setter rounds to. Clip creation is {@code launcher.emptySlot.createClip()} plus the length the public
+ * public setter rounds to. A written note's operators and expressions are set on it after the add, in the same
+ * transaction ({@link NativeNoteFeatures}); an updated note is written as a new note, so a multi-point expression
+ * curve it had keeps only the value notes.get reads (its start). Clip creation is {@code launcher.emptySlot.createClip()} plus the length the public
  * {@code createEmptyClip} sets, without its slot selection.
  */
 public final class NativeNoteWriteAccess implements NativeNotes.Access {
@@ -34,6 +36,7 @@ public final class NativeNoteWriteAccess implements NativeNotes.Access {
     private final NativeHost.Access a;
     private final NativeLauncherClip launcher;
     private final NativeClipTiming timing;
+    private final NativeNoteFeatures features;
     private final Class<?> noteClip, rowOwner, polyTimeline;
     private final Method newNote, addNote, rows, allRows, channel, key, events, start, length, velocity, delete;
     private final Method begin, end, createClip, clipLength, setLength, rename, setNumber;
@@ -42,6 +45,7 @@ public final class NativeNoteWriteAccess implements NativeNotes.Access {
         this.a = a;
         launcher = new NativeLauncherClip(a);
         timing = new NativeClipTiming(a);
+        features = new NativeNoteFeatures(a);
         noteClip = a.type("note.clip");
         rowOwner = a.type("note.rowOwner");
         polyTimeline = a.type("note.polyTimeline");
@@ -90,6 +94,7 @@ public final class NativeNoteWriteAccess implements NativeNotes.Access {
         Snapshot before = snapshot(clip);
         RangeEdit.Change<Note> change = plan.apply(before.observed);
         if (change.isEmpty()) return before.observed;
+        features.requireExpressions(clip, change.written());
         bound.guard();
         beforeWrite.run();
         transaction(bound.project, EDIT_LABEL, () -> {
@@ -126,6 +131,7 @@ public final class NativeNoteWriteAccess implements NativeNotes.Access {
                     setNumber,
                     a.invoke(timing.position, a.invoke(timing.playStop, a.invoke(timing.timing, clip))),
                     (double) beats);
+            features.requireExpressions(clip, notes);
             for (Note n : notes) add(clip, n);
             created[0] = clip;
         });
@@ -158,8 +164,13 @@ public final class NativeNoteWriteAccess implements NativeNotes.Access {
                     throw Errors.notApplied(
                             Reason.UNSUPPORTED_SCOPE, "The clip has a note row outside channel 0..15 or key 0..127.");
                 for (Object e : list) {
-                    Note n = Note.read(c, k, (Double) a.invoke(start, e), (Double) a.invoke(length, e), (Double)
-                            a.invoke(velocity, e));
+                    Note n = Note.read(
+                            c,
+                            k,
+                            (Double) a.invoke(start, e),
+                            (Double) a.invoke(length, e),
+                            (Double) a.invoke(velocity, e),
+                            features.read(e));
                     notes.add(n);
                     natives.put(n, new Object[] {row, e});
                 }
@@ -194,6 +205,7 @@ public final class NativeNoteWriteAccess implements NativeNotes.Access {
     private void add(Object clip, Note n) {
         Object note = a.invoke(newNote, null, n.beatValue(), n.durationValue(), (double) (n.velocity * VELOCITY));
         a.invoke(addNote, clip, note, n.channel, n.pitch, null);
+        features.writeNew(clip, note, n.features);
     }
 
     private double number(Object nativeNumber) {

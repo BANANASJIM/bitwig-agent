@@ -13,9 +13,11 @@ import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.Scheduler;
 import dev.bitwigagent.core.Verification;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Note reads and writes of one launcher clip, in one record shape and one range rule. With the exact native binding a
@@ -24,10 +26,18 @@ import java.util.Set;
  */
 public final class NoteModule implements HostModule {
     static final Set<String> METHODS = Set.of("notes.get", "notes.set");
-    /** A bound on one note's JSON, so the notes a response may list fit the message cap that requests share. */
+    /** A bound on a plain note's JSON, so the notes a response may list fit the message cap that requests share. */
     static final int NOTE_BYTES = 128;
     /** At most this many notes per response; a request of as many notes fits the same cap. */
     static final int NOTE_LIMIT = HostLimits.LIMITS.maxMessageBytes / NOTE_BYTES;
+    /**
+     * The JSON a response's notes may take: notes with operators and expressions are larger than {@link #NOTE_BYTES},
+     * so the list also stops here; the rest of the result fits in the remainder.
+     */
+    static final int NOTES_BYTES = HostLimits.LIMITS.maxMessageBytes - (1 << 16);
+    /** The record fields only the native path reads back. */
+    static final String EXPRESSIONS =
+            Arrays.stream(NoteFeatures.Expression.values()).map(e -> e.wire).collect(Collectors.joining(", "));
     /** Expected or unexpected notes a readback mismatch lists. */
     private static final int MISMATCH_LIMIT = 16;
 
@@ -70,6 +80,8 @@ public final class NoteModule implements HostModule {
             if (write) state.requireResolved(target.id(), target.scene());
             LauncherState.requireContent(target.slot);
             NativeNotes.Access access = natives.access(op);
+            if (access == null && write)
+                for (NotePlan.Listed l : listed) if (l.features.setsExpression()) refuseExpressions();
             if (access == null) state.acquire(op);
             if (write) {
                 NotePlan plan = new NotePlan(listed, range, access != null);
@@ -85,6 +97,15 @@ public final class NoteModule implements HostModule {
             } else if (access != null) readNative(op, target, range, access);
             else publicNotes.read(op, target, range, read -> op.result.complete(publicRead(target, range, read)));
         });
+    }
+
+    /** Without the native binding expressions are refused before anything is selected or written. */
+    static void refuseExpressions() {
+        throw Errors.notApplied(
+                Reason.NATIVE_UNAVAILABLE,
+                "Without the native note binding the note expressions (" + EXPRESSIONS + ") are not written: the"
+                        + " public API does not read them back (its getters do not return what its setters take)."
+                        + " Nothing was written.");
     }
 
     // ---- native ----
@@ -196,6 +217,7 @@ public final class NoteModule implements HostModule {
                 "loop",
                 loop(state.clip.getLoopStart().get(), state.clip.getLoopLength().get()));
         listing(out, range, read.notes);
+        out.addProperty("unreadFields", EXPRESSIONS);
         if (read.incomplete != null) {
             out.addProperty("complete", false);
             out.addProperty("incompleteReason", read.incomplete);
@@ -218,8 +240,17 @@ public final class NoteModule implements HostModule {
             out.addProperty("reason", Reason.READBACK_MISMATCH.wire());
             out.add("mismatch", mismatch);
         }
-        written(out, target, range, change, NativeNotes.undo(false, dispatched), false);
+        written(out, target, range, change, publicUndo(change, dispatched), false);
         return out;
+    }
+
+    /**
+     * The undo of a public write: every note is its own step, and a note whose operators are set has a step per
+     * setter, so the steps are not one per note.
+     */
+    private static String publicUndo(RangeEdit.Change<Note> change, int dispatched) {
+        for (Note n : change.written()) if (!n.features.equals(NoteFeatures.NONE)) return NativeNotes.PER_STEP;
+        return NativeNotes.undo(false, dispatched);
     }
 
     // ---- the note stage of clips.insert ----
@@ -228,9 +259,7 @@ public final class NoteModule implements HostModule {
     public static List<Note> insertNotes(JsonArray notes, java.math.BigDecimal length) {
         List<NotePlan.Listed> listed = NotePlan.listed(notes);
         NotePlan.rules(listed, null, length);
-        List<Note> out = new ArrayList<>(listed.size());
-        for (NotePlan.Listed l : listed) out.add(l.resolve(null));
-        return out;
+        return NotePlan.fresh(listed);
     }
 
     /** noteWrite of a native clips.insert: the created clip, read back natively, against the requested notes. */
@@ -283,13 +312,20 @@ public final class NoteModule implements HostModule {
         out.addProperty("exact", exact);
     }
 
-    /** count, complete and notes of the range (all notes without one), capped at {@link #NOTE_LIMIT}. */
+    /**
+     * count, complete and notes of the range (all notes without one), capped at {@link #NOTE_LIMIT} notes and
+     * {@link #NOTES_BYTES} of JSON.
+     */
     private static void listing(JsonObject out, NoteRange range, List<Note> notes) {
         JsonArray list = new JsonArray();
         int count = 0;
+        long bytes = 0;
         for (Note n : notes) {
             if (range != null && !range.test(n)) continue;
-            if (count++ < NOTE_LIMIT) list.add(n.json());
+            if (count++ >= NOTE_LIMIT || bytes > NOTES_BYTES) continue;
+            JsonObject json = n.json();
+            bytes += json.toString().length() + 1;
+            if (bytes <= NOTES_BYTES) list.add(json);
         }
         if (range != null) out.add("range", range.json());
         out.addProperty("count", count);

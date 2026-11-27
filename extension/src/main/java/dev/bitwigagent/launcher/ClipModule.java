@@ -253,6 +253,7 @@ public final class ClipModule implements HostModule {
                 insertNative(op, target, p, access);
                 return;
             }
+            for (Note n : launcherNotes(p)) if (n.features.hasExpression()) NoteModule.refuseExpressions();
             op.markDispatched();
             state.beginMutation(target, "clips.insert");
             int length = p.getAsJsonObject("loop").get("length").getAsInt();
