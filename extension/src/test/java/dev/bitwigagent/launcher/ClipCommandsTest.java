@@ -5,6 +5,8 @@ import static dev.bitwigagent.TestJson.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 import com.google.gson.*;
+import dev.bitwigagent.core.HostLimits;
+import dev.bitwigagent.core.HostOperation;
 import dev.bitwigagent.core.Refs;
 import dev.bitwigagent.core.RpcException;
 import java.util.ArrayList;
@@ -300,5 +302,76 @@ final class ClipCommandsTest {
         f.commands.strandFocus = true;
         assertRpcError("not_ready", f.startAndDrain("clips.gain", params("target", f.clip(1), "deltaDb", 1)));
         assertEquals("device panel", f.commands.focus);
+    }
+
+    private static final long MS = 1_000_000;
+
+    @Test
+    void anEffectNearTheDeadlineLeavesTheBatchTimeToPutBackAndReport() {
+        LauncherFake f = clips(ClipCommands.Kind.NOTES, 1, 2);
+        f.commands.refocusMs = 150;
+        HostOperation op = new HostOperation(f.tasks.after(2000));
+        f.onAction =
+                id -> f.tasks.schedule(() -> f.put(1, 0, 3, 67, 80, 1), (op.deadline - 100 * MS - f.tasks.now()) / MS);
+        JsonObject out = f.startAndDrain(op, "clips.transform", params("targets", targets(f, 1, 2), "op", "reverse"))
+                .result
+                .join();
+        assertTrue(out.has("entries"), out.toString());
+        assertEquals("unknown", entry(out, 0).get("outcome").getAsString());
+        assertEquals("not_reached", entry(out, 1).get("reason").getAsString());
+        assertEquals("restored", entry(out, 0).get("focusSideEffect").getAsString());
+    }
+
+    @Test
+    void puttingBackKeepsItsOwnDeadlinePastTheRequests() {
+        LauncherFake f = clips(ClipCommands.Kind.AUDIO, 1, 2);
+        f.slots[2].name = "Other";
+        f.selected = 2;
+        f.commands.kindMs = 1800;
+        f.commands.refocusMs = 150;
+        HostOperation op = new HostOperation(f.tasks.after(2000));
+        JsonObject out = f.startAndDrain(op, "clips.duplicate", params("target", f.clip(1)))
+                .result
+                .join();
+        assertEquals("unknown", out.get("outcome").getAsString());
+        assertTrue(f.tasks.now() > op.deadline, "the put-back ran past the request deadline");
+        assertEquals("restored", out.get("focusSideEffect").getAsString());
+        assertEquals("restored", out.get("selectionSideEffect").getAsString());
+        assertEquals(2, f.selected);
+    }
+
+    @Test
+    void aPutBackThatRunsOutOfTimeReportsWhatItCouldNotConfirm() {
+        LauncherFake f = clips(ClipCommands.Kind.AUDIO, 1, 2);
+        f.slots[2].name = "Other";
+        f.selected = 2;
+        f.commands.refocusMs = 300;
+        JsonObject out = f.call("clips.gain", params("target", f.clip(1), "deltaDb", 1));
+        assertEquals("sent", out.get("outcome").getAsString());
+        assertEquals("launcher", out.get("focusSideEffect").getAsString());
+        assertEquals("replaced", out.get("selectionSideEffect").getAsString());
+        assertEquals("gain", out.get("op").getAsString());
+        assertEquals(1, f.selected);
+    }
+
+    @Test
+    void aSliceOfAClipOnTheLastTrackOfTheWindowIsRefused() {
+        LauncherState.Target last =
+                new LauncherState.Target(new LauncherTargets.Loc(HostLimits.TRACKS - 1, 0, 0, null, null), null, null);
+        RpcException refused = assertThrows(
+                RpcException.class, () -> ClipCommands.admit(ClipCommands.slice(), ClipCommands.Kind.AUDIO, last));
+        assertEquals("outside_window", refused.reason.wire());
+    }
+
+    @Test
+    void aBatchAcrossWindowsPutsTheCursorClipBackInItsOwnWindow() {
+        LauncherFake f = clips(ClipCommands.Kind.AUDIO, 1, 5, 30);
+        f.scenes = 40;
+        f.slots[5].name = "Other";
+        f.selected = 5;
+        JsonObject out = transform(f, "normalize", 1, 30);
+        assertEquals("sent", out.get("outcome").getAsString());
+        assertEquals("restored", entry(out, 1).get("selectionSideEffect").getAsString());
+        assertEquals(5, f.selected);
     }
 }

@@ -1091,7 +1091,7 @@ public final class ClipModule implements HostModule {
             LauncherState.ready(target.slot);
             state.acquire(op);
             state.requireResolved(target.id(), target.scene());
-            commands.run(op, method, target, command, commands.restore(), op.result::complete);
+            commands.run(op, method, target, command, commands.restore(op), op.result::complete);
         });
     }
 
@@ -1099,10 +1099,11 @@ public final class ClipModule implements HostModule {
     private void transform(HostOperation op, JsonArray refs, ClipCommands.Command command) {
         JsonArray refused = new JsonArray();
         Reason[] first = new Reason[1];
+        ClipCommands.Restore restore = command == null ? null : commands.restore(op);
         checkAll(op, refs, 0, refused, first, command, () -> {
             state.acquire(op);
             Batch batch = new Batch(refs.size());
-            transformNext(op, refs, 0, batch, command, command == null ? null : commands.restore());
+            transformNext(op, refs, 0, batch, command, restore);
         });
     }
 

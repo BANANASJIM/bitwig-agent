@@ -192,26 +192,30 @@ public final class ClipCommands {
      * selection. One per call; a batch's entries share it, so each entry puts back the user's own state.
      */
     static final class Restore {
+        /** The call's operation, which holds the scene window the cursor clip is reselected in. */
+        final HostOperation holder;
+
         final String track, name;
         final int scene;
         boolean focusRead;
         Object focus;
 
-        private Restore(String track, int scene, String name) {
+        private Restore(HostOperation holder, String track, int scene, String name) {
+            this.holder = holder;
             this.track = track;
             this.scene = scene;
             this.name = name;
         }
     }
 
-    /** Records the launcher cursor clip now, before anything is selected; no track when it is not in the windows. */
-    Restore restore() {
-        String track = state.clip.exists().get() ? state.clipTrack.channelId().get() : null;
-        int scene = state.cursorScene();
-        LauncherState.Slot slot = track == null ? null : slotOf(track, scene);
-        return slot == null
-                ? new Restore(null, -1, null)
-                : new Restore(track, scene, slot.api.name().get());
+    /** Records the launcher cursor clip now, before anything is selected or the scene window moves. */
+    Restore restore(HostOperation holder) {
+        boolean any = state.clip.exists().get();
+        return new Restore(
+                holder,
+                any ? state.clipTrack.channelId().get() : null,
+                state.cursorScene(),
+                any ? state.clip.clipLauncherSlot().name().get() : null);
     }
 
     /**
@@ -297,23 +301,36 @@ public final class ClipCommands {
         state.scheduler.afterNative(
                 back, access::execute, () -> refocus(access, restore, () -> state.scheduler.check(back)), refocused -> {
                     out.addProperty("focusSideEffect", refocused ? "restored" : "launcher");
-                    LauncherState.Slot prior = restore.track == null ? null : slotOf(restore.track, restore.scene);
-                    if (prior == null) {
-                        out.addProperty("selectionSideEffect", "replaced");
-                        back.result.complete(out);
-                        return;
-                    }
-                    prior.api.select();
-                    state.scheduler.poll(
-                            back,
-                            state.scheduler.deadlineUntil(back),
-                            () -> state.bound(restore.track, prior)
-                                    && restore.name.equals(prior.api.name().get()),
-                            restored -> {
-                                out.addProperty("selectionSideEffect", restored ? "restored" : "replaced");
-                                back.result.complete(out);
-                            });
+                    if (restore.track == null) reselected(back, out, false);
+                    else if (slotOf(restore.track, restore.scene) != null) reselect(back, restore, out);
+                    else
+                        // A batch's later entry moved the scene window away from the cursor clip.
+                        state.targets.lease.moveAfterWrite(
+                                restore.holder,
+                                state.window.sceneWindowFor(restore.scene),
+                                () -> reselect(back, restore, out),
+                                () -> reselected(back, out, false));
                 });
+    }
+
+    private void reselect(HostOperation back, Restore restore, JsonObject out) {
+        LauncherState.Slot prior = slotOf(restore.track, restore.scene);
+        if (prior == null) {
+            reselected(back, out, false);
+            return;
+        }
+        prior.api.select();
+        state.scheduler.poll(
+                back,
+                state.scheduler.deadlineUntil(back),
+                () -> state.bound(restore.track, prior)
+                        && restore.name.equals(prior.api.name().get()),
+                restored -> reselected(back, out, restored));
+    }
+
+    private static void reselected(HostOperation back, JsonObject out, boolean restored) {
+        out.addProperty("selectionSideEffect", restored ? "restored" : "replaced");
+        back.result.complete(out);
     }
 
     /** Moves focus back to what it was before the call; false when that is not confirmed or the binding throws. */
@@ -389,7 +406,8 @@ public final class ClipCommands {
                 return;
             }
             hold = state.hold(target, method);
-            long until = state.scheduler.deadlineUntil(op);
+            // The put-back has its own deadline but must end inside op's, or a batch could not go on.
+            long until = state.scheduler.deadlineUntil(op) - RESTORE_NANOS;
             if (read.verify == Verify.NOTES) awaitNotes(until);
             else
                 state.scheduler.poll(

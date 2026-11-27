@@ -349,6 +349,7 @@ public final class LauncherFake {
                             && tracks[0].clipLauncherSlotBank().getItemAt(selected - bankOffset) == target);
         });
         cursorSlot.live("sceneIndex", () -> cursorSceneUnknown ? -1 : selected);
+        cursorSlot.live("name", () -> selected >= 0 ? slots[selected].name : "");
         clip.on("clipLauncherSlot", a -> cursorSlot.proxy());
         clip.on("setName", a -> {
             nameWrites++;
@@ -684,6 +685,9 @@ public final class LauncherFake {
         public final Map<Integer, ClipCommands.Kind> kinds = new HashMap<>();
         public boolean focusable = true, refocusable = true, refocusThrows, strandFocus;
         public int focusRequests, kindReads;
+        /** Host time the kind read and the refocus take, in milliseconds. */
+        public long kindMs, refocusMs;
+
         public Object focus = "device panel";
 
         @Override
@@ -694,6 +698,7 @@ public final class LauncherFake {
         @Override
         public ClipCommands.Kind kind(Object slot, String trackId, String expectedName, Runnable check) {
             kindReads++;
+            tasks.advance(java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(kindMs));
             return kinds.getOrDefault(nativeNotes.target(slot, trackId, expectedName, check), kind);
         }
 
@@ -714,6 +719,7 @@ public final class LauncherFake {
         @Override
         public boolean refocus(Object widget, Runnable check) {
             check.run();
+            tasks.advance(java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(refocusMs));
             if (refocusThrows) throw new IllegalStateException("fixture refocus failure");
             if (refocusable) focus = widget;
             return refocusable;
