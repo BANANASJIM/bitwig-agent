@@ -272,7 +272,8 @@ def verify_world(tmp_path: Path) -> tuple[Path, Path, dict[str, Any], dict[str, 
             ]
         },
         "audio.analyze": {"integratedLufs": -14.2, "durationSeconds": 16.0},
-        "transport.get": {"tempoBpm": 120.0},
+        "transport.get": {"tempoBpm": 120.0, "playing": True},
+        "transport.set": {"outcome": "applied"},
         "export.audio": {"outcome": "applied"},
         "devices.catalog": {"devices": [{"name": "Compressor", "path": "/lib/Compressor.bwdevice"}]},
         "tracks.insert": {
@@ -312,6 +313,8 @@ def test_verify_reads_state_through_the_condition_client(tmp_path: Path) -> None
     assert {t: verdict[t]["status"] for t in ("t1", "t2", "t3", "t4", "t5")} == dict.fromkeys(
         ("t1", "t2", "t3", "t4", "t5"), "pass"
     )
+    assert verdict["transportPlayingAtEnd"] is True
+    assert 'transport.set {"playing":false}' in (state / "log").read_text()
     assert verdict["t1"]["grid"] is True
     assert verdict["t1"]["devices"] == ["Poly Grid", "Compressor"]
     assert verdict["t1"]["strong"] == "pass"

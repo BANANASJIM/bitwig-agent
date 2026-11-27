@@ -6,6 +6,7 @@
 # Reads back with the condition's own client (0.4 dialect for A, the CLI for B and C). Every read is kept in
 # RAW_DIR so a verdict can be rechecked by hand. Each task is pass | fail | review; review means the state was
 # read but this script cannot decide it (T3: the host exposes no default to compare the new value with).
+# Before any check it stops the transport (recorded as transportPlayingAtEnd, diagnostic only).
 # Row shapes are assumed from PROTOCOL.md; confirm them on the first real run by reading RAW_DIR.
 #
 # Per task: status is the original check (kept so round-1 results stay comparable), goals the sub-goals a lost
@@ -45,6 +46,11 @@ put() { results="$(jq -c --arg k "$1" --arg s "$2" --argjson d "$3" '.[$k] = ({s
 verdict() { if [[ "$1" == true ]]; then echo pass; else echo fail; fi; }
 
 assert_test_instance "$dialect"
+
+# The agent is done, so a still-playing transport is not its problem: record it, then stop the transport (only the
+# transport; launcher and arranger playback state stay as the agent left them) so the exports below are not refused.
+transport_playing="$(rd "$dialect" transport.get '{}' 2>/dev/null </dev/null | jq -c '.playing // null' 2>/dev/null || echo null)"
+rd "$dialect" transport.set '{"playing":false}' >"$raw/transport-stop.json" 2>"$raw/transport-stop.err" </dev/null || true
 
 tracks="$(read_state tracks tracks.list)"
 # key of a track as the dialect addresses it: a ref (new) or a UUID (old)
@@ -217,4 +223,4 @@ measured="$(jq '. != null and . > -70' <<<"$lufs")"
 t5_strong="$(verdict "$(jq -n --argjson l "$lufs" --argjson b "$bass_lufs" '$l != null and $l > -70 and $b != null and $b > -40')")"
 put t5 "$(verdict "$measured")" "{\"file\":$(jq -Rn --arg w "$wav" '$w // null'),\"lufs\":$lufs,\"bassRender\":\"$bass_render\",\"bassLufs\":$bass_lufs,\"strong\":\"$t5_strong\",\"goals\":{\"export\":$([[ -n "$wav" ]] && echo true || echo false)}}"
 
-jq -c --arg cond "$cond" '{condition: $cond} + .' <<<"$results"
+jq -c --arg cond "$cond" --argjson playing "${transport_playing:-null}" '{condition: $cond, transportPlayingAtEnd: $playing} + .' <<<"$results"
