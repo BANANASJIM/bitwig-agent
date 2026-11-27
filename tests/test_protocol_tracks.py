@@ -94,6 +94,8 @@ def test_send_ref_value_and_expect():
     }
     assert validate_call("tracks.sends.set", args)[0] == args
     assert validate_call("tracks.sends.set", {"target": SEND, "enabled": False})[0]
+    mode = {"target": SEND, "mode": "PRE", "expect": {"mode": "POST"}}
+    assert validate_call("tracks.sends.set", mode)[0] == mode
     for bad in (
         {"target": SEND},
         {"target": SEND, "value": 1.1},
@@ -101,6 +103,7 @@ def test_send_ref_value_and_expect():
         {"target": {**SEND, "index": -1}, "value": 0.1},
         {"target": TRACK, "value": 0.1},
         {"target": SEND, "value": {"display": ""}},
+        {"target": SEND, "mode": ""},
         {"target": SEND, "value": 0.1, "expect": {}},
         {"target": SEND, "value": 0.1, "levelDb": -6},
         {"trackId": TRACK["id"], "sendIndex": 0, "valueNormalized": 0.1},

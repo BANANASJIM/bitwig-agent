@@ -38,7 +38,8 @@ public final class MixModule implements HostModule {
     private static final Set<String> WRITABLE = Set.of(
             "name", "volume", "pan", "mute", "solo", "arm", "color", "activated", "monitorMode", "crossFadeMode");
     private static final Map<String, ValueMatch> TRACK_RULES = rules(Set.of("volume", "pan"), WRITABLE);
-    private static final Map<String, ValueMatch> SEND_RULES = rules(Set.of("value"), Set.of("value", "enabled"));
+    private static final Map<String, ValueMatch> SEND_RULES =
+            rules(Set.of("value"), Set.of("value", "enabled", "mode"));
     private final Scheduler scheduler;
     private final TrackWindow window;
     private final TrackRefs trackRefs;
@@ -91,6 +92,7 @@ public final class MixModule implements HostModule {
                 observe(state, prefix + "display", send.displayedValue());
                 observe(state, prefix + "enabled", send.isEnabled());
                 observe(state, prefix + "preFader", send.isPreFader());
+                observe(state, prefix + "mode", send.sendMode());
             }
         }
     }
@@ -115,8 +117,8 @@ public final class MixModule implements HostModule {
         ValueMatch.requireNamed(p);
         if (method.equals("tracks.set") && WRITABLE.stream().noneMatch(p::has))
             throw Errors.invalid("tracks.set requires at least one changed field.");
-        if (method.equals("tracks.sends.set") && !p.has("value") && !p.has("enabled"))
-            throw Errors.invalid("tracks.sends.set requires value or enabled.");
+        if (method.equals("tracks.sends.set") && !p.has("value") && !p.has("enabled") && !p.has("mode"))
+            throw Errors.invalid("tracks.sends.set requires value, enabled or mode.");
     }
 
     private static Map<String, ValueMatch> rules(Set<String> normalized, Set<String> keys) {
@@ -425,7 +427,26 @@ public final class MixModule implements HostModule {
         JsonObject current = Refs.send(trackRefs.ref(trackSlot), index, name.getAsString());
         if (!Refs.matches(ref, current, true))
             throw Errors.targetChanged("Another send is at this index than the one read.", current);
-        if (p.has("expect")) requireExpectedSend(state, prefix, p.getAsJsonObject("expect"));
+        Send send = (Send) state.track.sendBank().getItemAt(slot);
+        if (p.has("expect")) {
+            JsonObject expect = p.getAsJsonObject("expect");
+            if (expect.has("mode"))
+                expect.addProperty(
+                        "mode",
+                        EnumOptions.canonical(
+                                send.sendMode(), expect.get("mode").getAsString()));
+            requireExpectedSend(state, prefix, expect);
+        }
+        if (p.has("mode")) {
+            p.addProperty(
+                    "mode", EnumOptions.canonical(send.sendMode(), p.get("mode").getAsString()));
+            JsonElement mode = state.meta(prefix + "mode");
+            EnumOptions.require(
+                    "mode",
+                    send.sendMode(),
+                    p.get("mode").getAsString(),
+                    mode.isJsonNull() ? null : mode.getAsString());
+        }
         Solve solve = null;
         if (p.has("value")) {
             ValueInput input = ValueInput.parse("value", p.get("value"));
@@ -434,17 +455,7 @@ public final class MixModule implements HostModule {
                 solve.parse();
             }
         }
-        new SendWrite(
-                        op,
-                        target,
-                        trackSlot,
-                        slot,
-                        index,
-                        name.getAsString(),
-                        (Send) state.track.sendBank().getItemAt(slot),
-                        p,
-                        solve)
-                .start();
+        new SendWrite(op, target, trackSlot, slot, index, name.getAsString(), send, p, solve).start();
     }
 
     private void requireExpectedSend(State state, String prefix, JsonObject expect) {
@@ -574,6 +585,7 @@ public final class MixModule implements HostModule {
                     boolean on = p.get("enabled").getAsBoolean();
                     write("enabled", p.get("enabled"), !on && (level || solvedValue));
                 }
+                if (p.has("mode")) write("mode", p.get("mode"), false);
             } catch (RpcException error) {
                 if (!op.dispatched()) throw error;
                 finish(error.reason);
@@ -593,6 +605,7 @@ public final class MixModule implements HostModule {
             guardSend();
             op.markDispatched();
             if (key.equals("enabled")) send.isEnabled().set(value.getAsBoolean());
+            else if (key.equals("mode")) send.sendMode().set(value.getAsString());
             else send.value().setImmediately(value.getAsDouble());
             return true;
         }
@@ -876,9 +889,12 @@ public final class MixModule implements HostModule {
             else sendsComplete = false;
             item.add("value", Results.unit(state.send(prefix, "value"), text(state.meta(prefix + "display")), null));
             for (String key : List.of("enabled", "preFader")) item.add(key, state.meta(prefix + key));
+            Send send = (Send) state.track.sendBank().getItemAt(i);
+            item.add("mode", Results.unit(state.meta(prefix + "mode"), null, EnumOptions.json(send.sendMode())));
             sendsComplete &= !state.send(prefix, "value").isJsonNull()
                     && !state.meta(prefix + "enabled").isJsonNull()
-                    && !state.meta(prefix + "preFader").isJsonNull();
+                    && !state.meta(prefix + "preFader").isJsonNull()
+                    && !state.meta(prefix + "mode").isJsonNull();
             JsonObject effect = offset.isJsonNull() ? null : effectTrack(offset.getAsInt() + i);
             item.add("effectTrack", effect == null ? JsonNull.INSTANCE : effect);
             sends.add(item);
@@ -994,6 +1010,14 @@ public final class MixModule implements HostModule {
         });
     }
 
+    private static void observe(State state, String key, EnumValue source) {
+        state.metadataSources.put(key, source);
+        source.addValueObserver((EnumValueChangedCallback) v -> {
+            state.metadata.put(key, new JsonPrimitive(EnumOptions.canonical(source, (String) v)));
+            state.metaSeq.merge(key, 1L, Long::sum);
+        });
+    }
+
     private static void observe(State state, String key, RangedValue source) {
         state.metadataSources.put(key, source);
         source.addValueObserver((DoubleValueChangedCallback) v -> {
@@ -1006,6 +1030,8 @@ public final class MixModule implements HostModule {
         if (source instanceof StringValue) return new JsonPrimitive(((StringValue) source).get());
         if (source instanceof BooleanValue) return new JsonPrimitive(((BooleanValue) source).get());
         if (source instanceof IntegerValue) return new JsonPrimitive(((IntegerValue) source).get());
+        if (source instanceof EnumValue)
+            return new JsonPrimitive(EnumOptions.canonical((EnumValue) source, ((EnumValue) source).get()));
         return finite(((RangedValue) source).get());
     }
 

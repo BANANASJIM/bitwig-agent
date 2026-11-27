@@ -20,6 +20,7 @@ from bitwig_agent.protocol.limits import LONG_DEFAULT_TIMEOUT_MS, TRACK_WINDOW
 from bitwig_agent.protocol.refs import TrackRef
 
 TRACK_REF = {"kind": "track", "id": TRACK, "name": "Lead"}
+FileType = Literal["wav", "flac", "mp3", "ogg", "opus"]
 FLOAT_BIT_DEPTH = 32
 RENDER_MAX_BEATS = MAX_BEAT
 RENDER_MAX_LENGTH = 65536
@@ -53,8 +54,12 @@ class ExportAudioArgs(RenderRangeArgs):
         max_length=128,
         description="File name without extension: <baseName>.<fileType> for one source, <baseName>-01, -02, ... for several.",
     )
-    fileType: Literal["wav", "flac"]
-    bitDepth: Literal[16, 24, 32] = omitted(description="Default 24; 32 = 32-bit float (wav only).")
+    fileType: FileType | Annotated[list[FileType], Field(min_length=1)] = Field(
+        description="wav, flac, mp3, ogg (Vorbis) or opus, or a list of distinct types rendered in one pass: one file per source and type."
+    )
+    bitDepth: Literal[16, 24, 32] = omitted(
+        description="Default 24; 32 = 32-bit float (wav only). Applies to wav/flac; mp3/ogg/opus use Bitwig's high quality setting."
+    )
     sampleRate: Literal[44100, 48000] = omitted(description="Omitted: the current engine rate.")
     tap: Literal["post_fader", "pre_fader"] = omitted(description="Default post_fader.")
     dither: bool = omitted()
@@ -71,7 +76,10 @@ class ExportAudioArgs(RenderRangeArgs):
             raise ValueError(
                 "baseName must not contain '/', '\\', control characters, a leading dot or surrounding whitespace"
             )
-        if self.fileType == "flac" and self.bitDepth == FLOAT_BIT_DEPTH:
+        types = self.fileType if isinstance(self.fileType, list) else [self.fileType]
+        if len(set(types)) != len(types):
+            raise ValueError("fileType entries must be distinct")
+        if "flac" in types and self.bitDepth == FLOAT_BIT_DEPTH:
             raise ValueError("flac supports bitDepth 16 or 24")
         return self
 
@@ -93,7 +101,7 @@ class TracksBounceArgs(RenderRangeArgs):
 
 
 EXPORT_AUDIO_DESCRIPTION = (
-    "Renders each track as it is set to play over a beat range: the Arranger timeline only while the track follows the arranger. A track playing a launcher clip overrides the arranger and renders that clip instead; a track stopped from the launcher renders silent whatever the arranger holds; a launcher clip not playing is never in the file unless clips.copy put it on the arranger (to {track, start}). Per requested track whose render would differ from the arranger in range or be silent the result carries a warning naming the state and the fix, and next: actions.invoke switch_playback_to_arranger_for_all_tracks (playback state is never changed for you), plus clips.copy where the arranger is empty in range; the files are still written. Writes the master and/or tracks to audio files without the Export Audio dialog, through the job the dialog starts (version-gated). One file per source in directory: <baseName>.<fileType>, or <baseName>-01, -02, ... in sources order for several. Refused before dispatch (an error, nothing changed): an existing file unless overwrite (target_exists), a missing directory, playing transport/recording/automation write, a render already running (busy), Bitwig's own refusals (host_refused: engine not connected, no project directory, recording), missing files/plugins (needs_confirmation: Bitwig would ask in a dialog). outcome applied only after the job's completion latch and every file read back: new or changed, nonempty, a valid WAV/FLAC header with the requested bit depth and sample rate, at least one frame. Completed but not verified: job_failed (an error if nothing was written, else outcome unknown). On success Bitwig may open the folder in the file manager (mayOpenFileManager). A requested track that has launcher clips but no arranger clip overlapping the range adds a warnings entry to the result (that file would be silent). The call waits up to "
+    "Renders each track as it is set to play over a beat range: the Arranger timeline only while the track follows the arranger. A track playing a launcher clip overrides the arranger and renders that clip instead; a track stopped from the launcher renders silent whatever the arranger holds; a launcher clip not playing is never in the file unless clips.copy put it on the arranger (to {track, start}). Per requested track whose render would differ from the arranger in range or be silent the result carries a warning naming the state and the fix, and next: launcher.returnToArrangement target=all (playback state is never changed for you), plus clips.copy where the arranger is empty in range; the files are still written. Writes the master and/or tracks to audio files without the Export Audio dialog, through the job the dialog starts (version-gated). One file per source and file type in directory: <baseName>.<fileType>, or <baseName>-01, -02, ... in sources order for several; a fileType list renders every type in one pass. Refused before dispatch (an error, nothing changed): an existing file unless overwrite (target_exists), a missing directory, playing transport/recording/automation write, a render already running (busy), Bitwig's own refusals (host_refused: engine not connected, no project directory, recording), missing files/plugins (needs_confirmation: Bitwig would ask in a dialog). outcome applied only after the job's completion latch and every file read back: new or changed, nonempty, and for wav/flac a valid header with the requested bit depth and sample rate and at least one frame; for mp3/ogg/opus the container and codec signature (an MPEG frame header, after any ID3 tag; Ogg with a Vorbis or Opus header), not decoded. Completed but not verified: job_failed (an error if nothing was written, else outcome unknown). On success Bitwig may open the folder in the file manager (mayOpenFileManager). A requested track that has launcher clips but no arranger clip overlapping the range adds a warnings entry to the result (that file would be silent). The call waits up to "
     + str(LONG_DEFAULT_TIMEOUT_MS)
     + " ms; a longer render returns outcome unknown, reason deadline and job: follow it with jobs.get; further renders are busy until it completes or you ack its job hold after inspecting. Never retry unknown."
 )
@@ -129,9 +137,17 @@ SPECS: dict[str, ToolSpec] = {
                 "tap": "pre_fader",
                 "overwrite": True,
             },
+            {
+                "sources": ["master"],
+                "directory": "/home/me/Music/Exports",
+                "baseName": "Agent Sketch",
+                "start": 0,
+                "end": 64,
+                "fileType": ["wav", "mp3"],
+            },
         ),
         annotations=EDIT,
-        summary="Renders each track as it is set to play over a beat range to wav/flac in an existing directory (<baseName>.<fileType>, -01, -02, ... for several): the arranger only while the track follows it; a launcher clip it plays, or a launcher stop, overrides it and is warned with the fix. Needs a stopped transport; existing files need overwrite. Longer: unknown + job, jobs.get.",
+        summary="Renders each track as it is set to play over a beat range to wav/flac/mp3/ogg/opus files (a list: several types in one pass) in an existing directory: the arranger only while the track follows it; a launcher clip it plays, or a launcher stop, overrides it and is warned with the fix. Needs a stopped transport; existing files need overwrite. Longer: unknown + job, jobs.get.",
     ),
     "tracks.bounce": ToolSpec(
         TracksBounceArgs,

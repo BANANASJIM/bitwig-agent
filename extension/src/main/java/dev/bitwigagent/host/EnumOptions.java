@@ -36,6 +36,12 @@ public final class EnumOptions {
         return !options.contains(reported) && options.contains(value.get()) ? value.get() : reported;
     }
 
+    /** The listed id equal to the value ignoring case (Bitwig 6.1.7 reports some send modes as "auto" for "AUTO"), else the value. */
+    public static String canonical(EnumValue value, String id) {
+        for (String option : ids(value)) if (option.equalsIgnoreCase(id)) return option;
+        return id;
+    }
+
     /** True when the host currently reports a value its own option list does not contain (e.g. a stored project value). */
     static boolean outsideOptions(EnumValue value) {
         return outsideOptions(value, value.get());

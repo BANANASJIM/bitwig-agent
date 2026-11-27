@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from bitwig_agent.client import package_version
+from bitwig_agent.core import text_views
 from bitwig_agent.protocol import (
     TOOLS,
     ToolSpec,
@@ -62,6 +63,48 @@ def read_only(name: str) -> bool:
 def records(name: str) -> str | None:
     """The top-level array of objects a read returns, when it has one: the key row output prints."""
     return TOOLS[name].records
+
+
+def text_views_of(name: str) -> tuple[str, ...]:
+    """The named read-only text views a read declares (format=<view>)."""
+    return TOOLS[name].views
+
+
+JSON = "json"
+RECORD_FORMATS = ("jsonl", "csv", "tsv")
+
+
+def formats(name: str) -> tuple[str, ...]:
+    """Every format a method's result takes: json, the record formats of a record list, its text views."""
+    return (JSON, *(RECORD_FORMATS if records(name) else ()), *text_views_of(name))
+
+
+def shapeable(name: str) -> bool:
+    return formats(name) != (JSON,)
+
+
+def shaping_schema(name: str) -> dict[str, Any]:
+    """The JSON schema properties of format and fields for a method that takes them; {} otherwise."""
+    if not shapeable(name):
+        return {}
+    key = records(name)
+    described = [f"{view}: {text_views.summary(name, view)}" for view in text_views_of(name)]
+    if key:
+        described.insert(0, f"jsonl|csv|tsv: only the {key} records, as text")
+    properties: dict[str, Any] = {
+        "format": {
+            "type": "string",
+            "enum": list(formats(name)),
+            "description": "json (default): the result object. " + ". ".join(described) + ".",
+        }
+    }
+    if key:
+        properties["fields"] = {
+            "type": "array",
+            "items": {"type": "string", "minLength": 1},
+            "description": f'Only these {key} record fields, in order; dotted paths reach nested fields: ["ref.name"].',
+        }
+    return properties
 
 
 def index(prefix: str = "") -> dict[str, dict[str, Any]]:
@@ -207,8 +250,10 @@ def _advertised(name: str, spec: ToolSpec) -> str:
     return lead + pointer + example
 
 
-def _without_timeout(schema: dict[str, Any]) -> dict[str, Any]:
-    schema = {**schema, "properties": {k: v for k, v in schema["properties"].items() if k != "timeoutMs"}}
+def _offered(name: str, schema: dict[str, Any]) -> dict[str, Any]:
+    """The schema an MCP client sees: no timeoutMs (the client keeps the wait), format and fields when they apply."""
+    properties = {k: v for k, v in schema["properties"].items() if k != "timeoutMs"}
+    schema = {**schema, "properties": {**properties, **shaping_schema(name)}}
     if "required" in schema:
         schema["required"] = [key for key in schema["required"] if key != "timeoutMs"]
     return schema
@@ -220,7 +265,7 @@ def tools() -> list[ToolView]:
         ToolView(
             name,
             _advertised(name, spec),
-            _without_timeout(spec.model.model_json_schema()),
+            _offered(name, spec.model.model_json_schema()),
             resolve(name, spec.annotations),
         )
         for name, spec in _exposed().items()
