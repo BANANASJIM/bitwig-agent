@@ -1,13 +1,13 @@
 package dev.bitwigagent.nativehost;
 
-import dev.bitwigagent.core.Errors;
-import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.launcher.ClipCommands;
 import java.lang.reflect.Method;
+import java.util.function.BiPredicate;
+import java.util.function.UnaryOperator;
 
 /**
  * Exact bindings for Bitwig's clip commands (H1 route A): the kind of a launcher clip, and the main window's keyboard
- * focus.
+ * focus: read, moved to the Clip Launcher, and moved back.
  *
  * <p>An Action runs on the selection of the panel holding keyboard focus: {@code ActionImpl.doInvoke} starts from the
  * main window's deepest focused widget ({@code ui.windowRoot.focusedWidget}) and walks its parents to a handler. The
@@ -54,24 +54,70 @@ public final class NativeClipCommandAccess implements ClipCommands.Access {
     @Override
     public ClipCommands.Kind kind(Object slot, String trackId, String expectedName, Runnable check) {
         Object clip = launcher.clip(slot, trackId, expectedName, check).clip;
-        if (instrumentClip.isInstance(clip)) return ClipCommands.Kind.NOTES;
-        if (audioClip.isInstance(clip)) return ClipCommands.Kind.AUDIO;
-        throw Errors.notApplied(Reason.UNSUPPORTED_SCOPE, "The launcher clip is neither a note nor an audio clip.");
+        return instrumentClip.isInstance(clip)
+                ? ClipCommands.Kind.NOTES
+                : audioClip.isInstance(clip) ? ClipCommands.Kind.AUDIO : null;
+    }
+
+    @Override
+    public Object focused(Runnable check) {
+        a.documentThread();
+        check.run();
+        return follow(window(), w -> a.invoke(focusedWidget, w));
     }
 
     @Override
     public boolean focusLauncher(Runnable check) {
         a.documentThread();
         check.run();
-        Object window = a.invoke(mainWindow, a.invoke(application, null));
-        // Null while the main window shows no Arrange panel (another panel layout).
-        Object arranger = a.invoke(panel, a.invoke(view, window), arrangerKind);
-        if (!arrangerPanel.isInstance(arranger)) return false;
-        Object clipLauncher = a.invoke(launcherWidget, a.invoke(arrangerWidget, arranger));
-        a.invoke(requestFocus, clipLauncher);
-        Object focused = a.invoke(focusedWidget, window);
-        return FOCUSED.equals(((Enum<?>) a.invoke(focusState, clipLauncher)).name())
-                && (focused == clipLauncher
-                        || focused != null && Boolean.TRUE.equals(a.invoke(isInside, focused, clipLauncher)));
+        Object window = window();
+        // Every link can be null: no Arrange panel in the layout, or (6.1.4) a launcher field not bound yet.
+        Object clipLauncher = follow(
+                window,
+                w -> a.invoke(view, w),
+                v -> a.invoke(panel, v, arrangerKind),
+                p -> arrangerPanel.isInstance(p) ? a.invoke(arrangerWidget, p) : null,
+                w -> a.invoke(launcherWidget, w));
+        return clipLauncher != null && focus(clipLauncher, window);
+    }
+
+    @Override
+    public boolean refocus(Object widget, Runnable check) {
+        a.documentThread();
+        check.run();
+        return widget != null && focus(widget, window());
+    }
+
+    private Object window() {
+        return follow(a.invoke(application, null), app -> a.invoke(mainWindow, app));
+    }
+
+    /** Requests focus for {@code widget} and reads it back. */
+    private boolean focus(Object widget, Object window) {
+        a.invoke(requestFocus, widget);
+        Object focused = follow(window, w -> a.invoke(focusedWidget, w));
+        return holds(
+                widget, a.invoke(focusState, widget), focused, (f, w) -> Boolean.TRUE.equals(a.invoke(isInside, f, w)));
+    }
+
+    /** {@code start} through each link in turn; null as soon as a link gives null, without calling the rest. */
+    @SafeVarargs
+    static Object follow(Object start, UnaryOperator<Object>... links) {
+        Object at = start;
+        for (UnaryOperator<Object> link : links) {
+            if (at == null) return null;
+            at = link.apply(at);
+        }
+        return at;
+    }
+
+    /**
+     * Whether {@code widget} holds keyboard focus: its own focus state (an enum whose constant names are kept) is
+     * FOCUSED and the window's deepest focused widget is it or inside it.
+     */
+    static boolean holds(Object widget, Object state, Object focused, BiPredicate<Object, Object> inside) {
+        return state instanceof Enum
+                && FOCUSED.equals(((Enum<?>) state).name())
+                && (focused == widget || focused != null && inside.test(focused, widget));
     }
 }

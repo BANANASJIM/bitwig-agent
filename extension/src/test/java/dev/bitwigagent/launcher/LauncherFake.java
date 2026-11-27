@@ -265,7 +265,7 @@ public final class LauncherFake {
             tracks[t] = tracks[HostFixture.DETAILED_TRACKS - 1];
         FakeHost clip = FakeHost.of(Clip.class, "clip");
         clip.on("getTrack", a -> tracks[0]);
-        clip.live("exists", () -> slots[selected].content);
+        clip.live("exists", () -> selected >= 0 && slots[selected].content);
         FakeHost loopLength = FakeHost.of(SettableBeatTimeValue.class, "loopLength");
         loopLength.on("get", a -> slots[selected].length);
         loopLength.on("addValueObserver", a -> {
@@ -675,11 +675,16 @@ public final class LauncherFake {
         }
     }
 
-    /** The clip command bindings: the clip's kind and whether keyboard focus reaches the Clip Launcher. */
+    /**
+     * The clip command bindings: each clip's kind ({@link #kinds} by scene, else {@link #kind}) and the window's
+     * keyboard focus, which reaches the Clip Launcher when {@link #focusable} and goes back when {@link #refocusable}.
+     */
     public final class CommandsAccess implements ClipCommands.Access {
         public ClipCommands.Kind kind = ClipCommands.Kind.NOTES;
-        public boolean focusable = true;
-        public int focusRequests;
+        public final Map<Integer, ClipCommands.Kind> kinds = new HashMap<>();
+        public boolean focusable = true, refocusable = true;
+        public int focusRequests, kindReads;
+        public Object focus = "device panel";
 
         @Override
         public void execute(Runnable work) {
@@ -688,15 +693,29 @@ public final class LauncherFake {
 
         @Override
         public ClipCommands.Kind kind(Object slot, String trackId, String expectedName, Runnable check) {
-            nativeNotes.target(slot, trackId, expectedName, check);
-            return kind;
+            kindReads++;
+            return kinds.getOrDefault(nativeNotes.target(slot, trackId, expectedName, check), kind);
+        }
+
+        @Override
+        public Object focused(Runnable check) {
+            check.run();
+            return focus;
         }
 
         @Override
         public boolean focusLauncher(Runnable check) {
             check.run();
             focusRequests++;
+            if (focusable) focus = "launcher";
             return focusable;
+        }
+
+        @Override
+        public boolean refocus(Object widget, Runnable check) {
+            check.run();
+            if (refocusable) focus = widget;
+            return refocusable;
         }
     }
 

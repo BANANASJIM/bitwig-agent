@@ -46,6 +46,22 @@ public final class Scheduler implements AutoCloseable {
                 delayMs);
     }
 
+    /**
+     * Runs {@code work} through {@code executor} (onto a native thread), then {@code then} with its value back on the
+     * controller thread; a failure in either fails {@code operation}.
+     */
+    public <T> void afterNative(
+            HostOperation operation, Consumer<Runnable> executor, Supplier<T> work, Consumer<T> then) {
+        executor.accept(() -> {
+            try {
+                T value = work.get();
+                schedule(operation, () -> then.accept(value), 0);
+            } catch (RuntimeException | Error failure) {
+                operation.fail(failure);
+            }
+        });
+    }
+
     /** Samples now and then every {@link #POLL_MS} until {@code done} holds or {@code until} passes. */
     public void poll(HostOperation operation, long until, BooleanSupplier done, Runnable onDone, Runnable onTimeout) {
         if (done.getAsBoolean()) onDone.run();

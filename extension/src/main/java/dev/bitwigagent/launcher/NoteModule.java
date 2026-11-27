@@ -122,14 +122,11 @@ public final class NoteModule implements HostModule {
     private void readNative(HostOperation op, LauncherState.Target target, NoteRange range, NativeNotes.Access access) {
         String id = target.id(), expected = target.slot.api.name().get();
         Runnable check = state.nativeCheck(op, target);
-        access.execute(() -> {
-            try {
-                NativeNotes.Observed clip = access.read(target.slot.api, id, expected, check);
-                scheduler.schedule(op, () -> op.result.complete(nativeRead(target, range, clip, access.unread())), 0);
-            } catch (RuntimeException | Error failure) {
-                op.fail(failure);
-            }
-        });
+        scheduler.afterNative(
+                op,
+                access::execute,
+                () -> access.read(target.slot.api, id, expected, check),
+                clip -> op.result.complete(nativeRead(target, range, clip, access.unread())));
     }
 
     private JsonObject nativeRead(
@@ -154,9 +151,10 @@ public final class NoteModule implements HostModule {
         Runnable check = state.nativeCheck(op, target);
         List<Note> before = new ArrayList<>();
         Object[] hold = new Object[1];
-        access.execute(() -> {
-            try {
-                NativeNotes.Observed after = access.edit(
+        scheduler.afterNative(
+                op,
+                access::execute,
+                () -> access.edit(
                         target.slot.api,
                         id,
                         expected,
@@ -169,13 +167,8 @@ public final class NoteModule implements HostModule {
                             check.run();
                             op.markDispatched();
                             hold[0] = state.hold(target, "notes.set");
-                        });
-                scheduler.schedule(
-                        op, () -> op.result.complete(nativeWritten(target, range, plan, before, after, hold[0])), 0);
-            } catch (RuntimeException | Error failure) {
-                op.fail(failure);
-            }
-        });
+                        }),
+                after -> op.result.complete(nativeWritten(target, range, plan, before, after, hold[0])));
     }
 
     private JsonObject nativeWritten(

@@ -735,10 +735,12 @@ CLIPS_QUANTIZE_DESCRIPTION = (
     "no hold). Below amount 1 an unobserved outcome holds the slot; never retry."
 )
 NATIVE_COMMAND = (
-    "Bitwig's own command runs on the clip it selects: the clip is selected (selectionSideEffect replaced: the "
-    "previous clip selection is not restored), keyboard focus is moved to the Clip Launcher and read back first, and a "
-    "launcher that is not shown (or a dialog holding focus) is not_applied/not_ready with nothing sent: show the Clip "
-    "Launcher in the Arrange view. Bitwig 6.1.4/6.1.7 only. Each command is one Bitwig Undo step."
+    "Bitwig's own command runs on the clip it selects. Keyboard focus is moved to the Clip Launcher and read back "
+    "before anything is selected: a launcher that is not shown (or a dialog holding focus) is not_applied/not_ready "
+    "with nothing selected or sent; show the Clip Launcher in the Arrange view. Then the clip is selected and the "
+    "command sent; afterwards the previous focus and launcher cursor clip are put back: focusSideEffect restored or "
+    "launcher, selectionSideEffect restored or replaced (a multi-clip selection comes back as its cursor clip). Bitwig "
+    "6.1.4/6.1.7 only. Each command is one Bitwig Undo step."
 )
 CLIPS_TRANSFORM_DESCRIPTION = (
     "Apply op to each launcher clip of targets in order. doubleContent doubles the loop and repeats the content "
@@ -754,12 +756,14 @@ CLIPS_TRANSFORM_DESCRIPTION = (
 )
 CLIPS_DUPLICATE_DESCRIPTION = (
     "Duplicate one launcher clip in place with Bitwig's Duplicate (alias:true: Duplicate as Alias); Bitwig puts the "
-    "copy in a slot below. Verified by a clip appearing in an empty slot of the track's scene window: created lists "
-    "the new refs. " + NATIVE_COMMAND + " An unobserved duplicate is unknown and holds the slot; never retry."
+    "copy in a slot below. Verified by a clip of the same name appearing in an empty slot of the track's 16-scene "
+    "window: created lists the new refs; a clip in the window's last row is refused (outside_window). "
+    + NATIVE_COMMAND
+    + " An unobserved duplicate is unknown and holds the slot; never retry."
 )
 CLIPS_SLICE_DESCRIPTION = (
     "Slice one launcher audio clip into a new track with a sliced Sampler (Bitwig's Slice to sliced Sampler, no "
-    "dialog). Verified by a new track appearing: track is its ref (devices.list and launcher.list show the Sampler "
+    "dialog). Verified by a new track appearing right after the clip's track: track is its ref (devices.list and launcher.list show the Sampler "
     "and its note clip). " + NATIVE_COMMAND + " An unobserved slice is unknown and holds the slot; never retry."
 )
 CLIPS_STRETCH_DESCRIPTION = (

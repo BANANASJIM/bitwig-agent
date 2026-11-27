@@ -12,6 +12,7 @@ import dev.bitwigagent.core.Outcome;
 import dev.bitwigagent.core.PortHandle;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Results;
+import dev.bitwigagent.core.RpcException;
 import dev.bitwigagent.core.Scheduler;
 import dev.bitwigagent.core.Verification;
 import dev.bitwigagent.host.TrackRefs;
@@ -20,8 +21,11 @@ import java.util.function.Consumer;
 
 /**
  * Bitwig's own clip commands on one launcher clip (capability expansion §5.3): the clip's kind decides whether the
- * command takes it and how its effect is verified; the clip is selected into the launcher cursor, the command is
- * dispatched under launcher focus ({@link LauncherDispatch}), and the effect is read back.
+ * command takes it and how its effect is verified; keyboard focus is moved to the Clip Launcher before anything is
+ * selected, the clip is selected into the launcher cursor, the command is dispatched under launcher focus
+ * ({@link LauncherDispatch}) and the effect is read back. Then the previous focus and launcher cursor clip are put back
+ * where that can be confirmed; every result after the selection says which were ({@code focusSideEffect},
+ * {@code selectionSideEffect}).
  */
 public final class ClipCommands {
     /** The kind of a launcher clip, as a command row names it. */
@@ -46,14 +50,20 @@ public final class ClipCommands {
     public interface Access {
         void execute(Runnable work);
 
-        /** The kind of the slot's clip, resolved with its track UUID and clip name checked. */
+        /** The kind of the slot's clip, resolved with its track UUID and clip name checked; null for any other. */
         Kind kind(Object slot, String trackId, String expectedName, Runnable check);
+
+        /** The widget holding keyboard focus in the main window; null when there is none. */
+        Object focused(Runnable check);
 
         /**
          * Moves keyboard focus to the main window's Clip Launcher and reads it back: false when it did not get there
          * (no Arrange panel or Clip Launcher shown, or a dialog holding focus).
          */
         boolean focusLauncher(Runnable check);
+
+        /** Moves keyboard focus back to {@code widget} (from {@link #focused}) and reads it back. */
+        boolean refocus(Object widget, Runnable check);
     }
 
     /** One command: the actions invoked in order and, by each clip kind it takes, how its effect is verified. */
@@ -73,6 +83,7 @@ public final class ClipCommands {
     private static final Map<String, String> STRETCH =
             Map.of("detected", "stretch_to_analyzed_tempo", "project", "stretch_to_project_tempo");
     private static final int GAIN_STEP_DB = 6;
+    private static final long RESTORE_NANOS = java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(250);
 
     static Command duplicate(boolean alias) {
         return new Command("duplicate", List.of(alias ? "Duplicate Reference" : "Duplicate"), CLIPS_OF_ANY);
@@ -130,33 +141,168 @@ public final class ClipCommands {
         return ops.get(name);
     }
 
+    /** How {@code command} verifies a clip of {@code kind}; a kind it does not take is refused. */
+    static Verify verify(Command command, Kind kind) {
+        Verify verify = kind == null ? null : command.verify.get(kind);
+        if (verify == null)
+            throw Errors.notApplied(
+                    Reason.UNSUPPORTED_SCOPE,
+                    command.name + " does not take " + (kind == null ? "this kind of" : kind.wire()) + " clip.");
+        return verify;
+    }
+
+    /** Reads the target's clip kind natively; {@code next} gets the refusal, or null when the command takes it. */
+    void checkKind(HostOperation op, LauncherState.Target target, Command command, Consumer<RpcException> next) {
+        Access access = port.get(op);
+        String id = target.id(), name = target.slot.api.name().get();
+        Runnable check = state.nativeCheck(op, target);
+        state.scheduler.afterNative(
+                op,
+                access::execute,
+                () -> {
+                    try {
+                        verify(command, access.kind(target.slot.api, id, name, check));
+                        return null;
+                    } catch (RpcException refused) {
+                        return refused;
+                    }
+                },
+                next);
+    }
+
+    /**
+     * What a call puts back after each command: the launcher cursor clip and the keyboard focus from before its first
+     * selection. One per call; a batch's entries share it, so each entry puts back the user's own state.
+     */
+    static final class Restore {
+        final String track;
+        final int scene;
+        boolean focusRead;
+        Object focus;
+
+        private Restore(String track, int scene) {
+            this.track = track;
+            this.scene = scene;
+        }
+    }
+
+    /** Records the launcher cursor clip now, before anything is selected. */
+    Restore restore() {
+        return new Restore(
+                state.clip.exists().get() ? state.clipTrack.channelId().get() : null, state.cursorScene());
+    }
+
     /**
      * Runs {@code command} on the target's clip under {@code op}, which owns the launcher selection; {@code method}
      * names the hold an unobserved effect places on the slot.
      */
-    void run(HostOperation op, String method, LauncherState.Target target, Command command, Consumer<JsonObject> done) {
+    void run(
+            HostOperation op,
+            String method,
+            LauncherState.Target target,
+            Command command,
+            Restore restore,
+            Consumer<JsonObject> done) {
         state.guard(op, target);
         Access access = port.get(op);
         NativeNotes.Access reader = command.verify.containsValue(Verify.NOTES) ? notes.get(op) : null;
         String id = target.id(), name = target.slot.api.name().get();
         Runnable check = state.nativeCheck(op, target);
-        state.onNative(
+        state.scheduler.afterNative(
                 op,
                 access::execute,
                 () -> {
-                    Kind kind = access.kind(target.slot.api, id, name, check);
-                    Verify verify = command.verify.get(kind);
-                    if (verify == null)
+                    Verify verify = verify(command, access.kind(target.slot.api, id, name, check));
+                    if (verify == Verify.CLIPS && target.at.position() == HostLimits.SCENES - 1)
                         throw Errors.notApplied(
-                                Reason.UNSUPPORTED_SCOPE, command.name + " does not take " + kind.wire() + " clips.");
-                    return new Read(
-                            verify,
-                            verify == Verify.NOTES ? sorted(reader.read(target.slot.api, id, name, check)) : null);
+                                Reason.OUTSIDE_WINDOW,
+                                "Scene " + target.scene() + " is the last row of its 16-scene window, so the new clip "
+                                        + "would land outside the window it is read back in; nothing was sent. Use "
+                                        + "clips.copy to an empty slot instead.");
+                    List<Note> before =
+                            verify == Verify.NOTES ? sorted(reader.read(target.slot.api, id, name, check)) : null;
+                    if (!restore.focusRead) {
+                        restore.focus = access.focused(check);
+                        restore.focusRead = true;
+                    }
+                    if (!access.focusLauncher(check)) throw LauncherDispatch.notFocused();
+                    return new Read(verify, before);
                 },
-                read -> state.bind(op, target, false, null, state.until(op), (o, t, end, w) -> {
-                    Effect effect = new Effect(o, method, t, command, read, access, reader, done);
-                    dispatch.dispatch(o, t, access, command.actions, effect::await);
-                }));
+                read -> select(op, method, target, command, read, restore, access, reader, done));
+    }
+
+    /**
+     * Selects the target into the launcher cursor and runs the command as one step of {@code op}; whatever the step
+     * ends with, focus and the previous cursor clip are put back before {@code done} gets the result.
+     */
+    private void select(
+            HostOperation op,
+            String method,
+            LauncherState.Target target,
+            Command command,
+            Read read,
+            Restore restore,
+            Access access,
+            NativeNotes.Access reader,
+            Consumer<JsonObject> done) {
+        HostOperation step = op.child();
+        step.result.whenComplete((result, error) -> state.scheduler.schedule(
+                op, () -> putBack(op, target, command, access, restore, result, error, done), 0));
+        state.selection.handOff(step);
+        state.bind(step, target, false, null, state.until(step), (o, t, end, w) -> {
+            Effect effect = new Effect(o, method, t, command, read, access, reader, step.result::complete);
+            dispatch.dispatch(o, t, access, command.actions, effect::await);
+        });
+    }
+
+    private void putBack(
+            HostOperation op,
+            LauncherState.Target target,
+            Command command,
+            Access access,
+            Restore restore,
+            JsonObject result,
+            Throwable error,
+            Consumer<JsonObject> done) {
+        state.selection.handOff(op);
+        JsonObject out = error == null ? result : Errors.entryResult(error);
+        out.addProperty("op", command.name);
+        out.add("ref", state.clipRef(target));
+        JsonArray actions = new JsonArray();
+        command.actions.forEach(actions::add);
+        out.add("actions", actions);
+        state.scheduler.afterNative(
+                op,
+                access::execute,
+                () -> access.refocus(restore.focus, () -> state.scheduler.check(op)),
+                refocused -> {
+                    out.addProperty("focusSideEffect", refocused ? "restored" : "launcher");
+                    LauncherState.Slot prior = restore.track == null ? null : slotOf(restore.track, restore.scene);
+                    if (prior == null) {
+                        selected(out, false, done);
+                        return;
+                    }
+                    prior.api.select();
+                    state.scheduler.poll(
+                            op,
+                            state.scheduler.deadlineUntil(op),
+                            () -> state.bound(restore.track, prior),
+                            restored -> selected(out, restored, done));
+                });
+    }
+
+    private static void selected(JsonObject out, boolean restored, Consumer<JsonObject> done) {
+        out.addProperty("selectionSideEffect", restored ? "restored" : "replaced");
+        done.accept(out);
+    }
+
+    /** The slot proxy of a track and absolute scene inside the current windows; null when either is outside. */
+    private LauncherState.Slot slotOf(String trackId, int scene) {
+        int position = scene - state.window.sceneOffset();
+        if (position < 0 || position >= HostLimits.SCENES) return null;
+        for (int i = 0; i < HostLimits.TRACKS; i++)
+            if (state.window.trackMatches(trackId, state.window.at(i))) return state.slots[i][position];
+        return null;
     }
 
     /** The kind's verification and, for a notes check, the clip's notes before the command. */
@@ -180,6 +326,7 @@ public final class ClipCommands {
         final Access access;
         final NativeNotes.Access reader;
         final Consumer<JsonObject> finish;
+        final String name;
         final boolean[] occupied;
         final Set<String> tracks;
         Object hold;
@@ -201,6 +348,7 @@ public final class ClipCommands {
             this.access = access;
             this.reader = reader;
             this.finish = finish;
+            name = target.slot.api.name().get();
             occupied = occupied();
             tracks = trackIds();
         }
@@ -208,42 +356,44 @@ public final class ClipCommands {
         /** Runs right after the actions were invoked, on the controller thread. */
         void await() {
             if (read.verify == Verify.NONE) {
-                done(Results.sent());
+                finish.accept(Results.sent());
                 return;
             }
             hold = state.hold(target, method);
-            long until = state.scheduler.deadlineUntil(op);
+            // The rest of the deadline is left for putting focus and the cursor clip back.
+            long until = state.scheduler.deadlineUntil(op) - RESTORE_NANOS;
             if (read.verify == Verify.NOTES) awaitNotes(until);
             else
                 state.scheduler.poll(
                         op,
                         until,
-                        () -> !(read.verify == Verify.CLIPS ? created() : newTracks()).isEmpty(),
+                        () -> read.verify == Verify.CLIPS ? created().size() > 0 : slicedTrack() != null,
                         this::observed,
                         this::unobserved);
         }
 
         private void awaitNotes(long until) {
-            String id = target.id(), name = target.slot.api.name().get();
+            String id = target.id();
             Runnable check = state.nativeCheck(op, target);
-            state.onNative(op, access::execute, () -> sorted(reader.read(target.slot.api, id, name, check)), now -> {
-                if (!now.equals(read.notes)) {
-                    JsonObject compared = new JsonObject();
-                    compared.addProperty("notesBefore", read.notes.size());
-                    compared.addProperty("notesAfter", now.size());
-                    JsonObject out = applied(Verification.NATIVE_READBACK);
-                    out.add("compared", compared);
-                    done(out);
-                } else if (state.scheduler.now() >= until) unobserved();
-                else state.scheduler.schedule(op, () -> awaitNotes(until), Scheduler.POLL_MS);
-            });
+            state.scheduler.afterNative(
+                    op, access::execute, () -> sorted(reader.read(target.slot.api, id, name, check)), now -> {
+                        if (!now.equals(read.notes)) {
+                            JsonObject compared = new JsonObject();
+                            compared.addProperty("notesBefore", read.notes.size());
+                            compared.addProperty("notesAfter", now.size());
+                            JsonObject out = applied(Verification.NATIVE_READBACK);
+                            out.add("compared", compared);
+                            finish.accept(out);
+                        } else if (state.scheduler.now() >= until) unobserved();
+                        else state.scheduler.schedule(op, () -> awaitNotes(until), Scheduler.POLL_MS);
+                    });
         }
 
         private void observed() {
             JsonObject out = applied(Verification.API_READBACK);
             if (read.verify == Verify.CLIPS) out.add("created", created());
-            else out.add("track", newTracks().get(0));
-            done(out);
+            else out.add("track", slicedTrack());
+            finish.accept(out);
         }
 
         private JsonObject applied(Verification how) {
@@ -252,20 +402,10 @@ public final class ClipCommands {
         }
 
         private void unobserved() {
-            done(state.unresolved(
+            finish.accept(state.unresolved(
                     new JsonObject(),
                     Reason.NOT_OBSERVED,
                     "Bitwig's " + command.name + " was sent but its effect was not observed; the slot is held."));
-        }
-
-        private void done(JsonObject out) {
-            out.addProperty("op", command.name);
-            out.add("ref", state.clipRef(target));
-            JsonArray actions = new JsonArray();
-            command.actions.forEach(actions::add);
-            out.add("actions", actions);
-            out.addProperty("selectionSideEffect", "replaced");
-            finish.accept(out);
         }
 
         /** Which slots of the target's track in the scene window hold a clip. */
@@ -277,33 +417,32 @@ public final class ClipCommands {
             return out;
         }
 
-        /** The refs of the clips now in slots that were empty before the command. */
+        /** The refs of the clips named like the source now in slots that were empty before the command. */
         private JsonArray created() {
-            boolean[] now = occupied();
             JsonArray out = new JsonArray();
             int offset = target.at.offset;
-            for (int j = 0; j < now.length; j++)
-                if (now[j] && !occupied[j]) {
+            LauncherState.Slot[] slots = state.slots[target.at.track];
+            for (int j = 0; j < slots.length; j++)
+                if (!occupied[j]
+                        && slots[j].api.hasContent().get()
+                        && name.equals(slots[j].api.name().get())) {
                     LauncherTargets.Loc at = new LauncherTargets.Loc(
                             target.at.track,
                             offset + j,
                             offset,
                             target.at.trackRef,
                             state.targets.sceneRef(offset + j, offset));
-                    out.add(state.targets.clipRef(
-                            at, state.slots[target.at.track][j].api.name().get()));
+                    out.add(state.targets.clipRef(at, name));
                 }
             return out;
         }
 
-        /** The refs of the window's tracks that were not there before the command. */
-        private JsonArray newTracks() {
-            JsonArray out = new JsonArray();
-            for (int i = 0; i < HostLimits.TRACKS; i++) {
-                Track track = state.window.at(i);
-                if (track.exists().get() && !tracks.contains(track.channelId().get())) out.add(trackRefs.ref(i));
-            }
-            return out;
+        /** The ref of a track new since the command right after the source track, where Bitwig puts the slice. */
+        private JsonObject slicedTrack() {
+            int slot = target.at.track + 1;
+            if (slot >= HostLimits.TRACKS) return null;
+            Track track = state.window.at(slot);
+            return track.exists().get() && !tracks.contains(track.channelId().get()) ? trackRefs.ref(slot) : null;
         }
     }
 

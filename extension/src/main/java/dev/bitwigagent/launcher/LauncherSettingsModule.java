@@ -105,35 +105,31 @@ public final class LauncherSettingsModule {
             if (write) safety.run();
         };
         try {
-            access.execute(() -> {
-                try {
-                    check.run();
-                    JsonObject result = access.apply(slot, id, expected, changes, check, () -> {
+            // A failure fails op, whose completion releases PENDING below.
+            scheduler.afterNative(
+                    op,
+                    access::execute,
+                    () -> {
                         check.run();
-                        op.markDispatched();
-                        holds.place(QUARANTINE, QUARANTINE_HOLD);
+                        JsonObject result = access.apply(slot, id, expected, changes, check, () -> {
+                            check.run();
+                            op.markDispatched();
+                            holds.place(QUARANTINE, QUARANTINE_HOLD);
+                        });
+                        check.run();
+                        return result;
+                    },
+                    result -> {
+                        check.run();
+                        if (!window.trackMatches(id, track)
+                                || slot.sceneIndex().get() != scene
+                                || !expected.equals(slot.name().get()))
+                            throw Errors.notApplied(
+                                    Reason.TARGET_CHANGED, "Launcher public target changed after native access");
+                        if (write) holds.release(QUARANTINE);
+                        holds.release(PENDING);
+                        done.accept(result);
                     });
-                    check.run();
-                    scheduler.schedule(
-                            op,
-                            () -> {
-                                check.run();
-                                if (!window.trackMatches(id, track)
-                                        || slot.sceneIndex().get() != scene
-                                        || !expected.equals(slot.name().get()))
-                                    throw Errors.notApplied(
-                                            Reason.TARGET_CHANGED,
-                                            "Launcher public target changed after native access");
-                                if (write) holds.release(QUARANTINE);
-                                holds.release(PENDING);
-                                done.accept(result);
-                            },
-                            0);
-                } catch (RuntimeException | Error e) {
-                    holds.release(PENDING);
-                    op.fail(e);
-                }
-            });
         } catch (RuntimeException | Error e) {
             holds.release(PENDING);
             throw e;
