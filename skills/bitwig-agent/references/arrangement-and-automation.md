@@ -56,9 +56,11 @@ bitwig-agent batch <<'EOF'
 EOF
 ```
 
+With MCP it is the same method: one `batch` tool call whose `calls` holds those objects in that order, e.g. `{"calls":[{"method":"markers.insert","params":{"beat":0,"name":"intro"}}, ...]}`.
+
 - To fill a section with one clip, copy it once and lengthen that copy with `clips set` `length`, not N copies. `clips.set` needs the new arranger clip ref the copy returned, so send the lengths as a second batch: `{"method":"clips.set","params":{"target":<new arranger clip ref>,"length":64}}`.
 - The same material in several places is one `clips.copy` per place.
-- The batch continues past `sent` and stops at the first error or at the first outcome that is neither `applied`, `already_matched` nor `sent`; every finished call printed one line and each line it never sent printed `{"outcome":"not_applied","reason":"not_reached"}`. Fix the cause and resend only the `not_reached` lines.
+- The batch continues past `sent` and stops at the first error or at the first outcome that is neither `applied`, `already_matched` nor `sent`. There is one result per call, in order (CLI: one line each; MCP: `entries`), and every call after the stop is `{"outcome":"not_applied","reason":"not_reached"}`. Follow the result's `next`: fix the stopping call (inspect it if `unknown`, never resend that one) and send only the calls not done.
 - Verify against the table by reading, not by writing again: one `arranger list` (no target) returns every track's clips sorted by `start`, with `length`, `bar` and the markers.
 
 ## Record and edit audio
