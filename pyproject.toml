@@ -10,7 +10,7 @@ readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.11"
-dependencies = ["mcp>=2.3.0,<3", "pydantic>=2.12,<3"]
+dependencies = ["mcp>=2.3.0,<3", "pydantic>=2.12,<3", "wcwidth>=0.3,<1"]
 keywords = ["bitwig", "mcp", "midi", "audio"]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -98,6 +98,7 @@ mcp = "==2.3.0"
 diff-cover = "==11.0.4"
 mypy = "==2.4.1"
 pytest = ">=8.3,<9"
+hypothesis = ">=6.100,<7"  # property tests
 pytest-cov = "==7.1.0"
 ruff = "==0.17.6"
 pyloudnorm = "==0.2.0"  # test-only loudness reference
