@@ -2,7 +2,7 @@
 """Generate docs/capabilities.md, what Bitwig Agent can do, from the capability table and the verification records.
 
 pixi run capabilities                      # rewrite the map and print its headline
-pixi run capabilities --to-verify [--json] # the maintainers' queue: covered but unverified on the headline host
+pixi run capabilities --to-verify [--json] # the maintainers' queue: available but unverified on the headline host
 """
 
 import argparse
@@ -46,30 +46,33 @@ def slug(heading: str) -> str:
 
 
 def protocol_anchors(text: str) -> dict[str, str]:
-    """By method, the anchor of the PROTOCOL.md section where it first leads a table row, heading or paragraph."""
-    anchors: dict[str, str] = {}
+    """By method, the anchor of the most specific PROTOCOL.md section (deepest heading, then first) where the method
+    leads a heading, table row or paragraph; a heading naming the method wins."""
+    found: dict[str, tuple[int, str]] = {}
     seen: dict[str, int] = {}
-    anchor, fenced = "", False
+    anchor, level, fenced = "", 0, False
     for line in text.splitlines():
         fenced ^= line.startswith("```")
-        heading = None if fenced else re.match(r"#+ (.*)", line)
+        heading = None if fenced else re.match(r"(#+) (.*)", line)
         if heading:
-            base = slug(heading.group(1))
-            anchor = base + (f"-{seen[base]}" if base in seen else "")
+            base = slug(heading.group(2))
+            anchor, level = base + (f"-{seen[base]}" if base in seen else ""), len(heading.group(1))
             seen[base] = seen.get(base, 0) + 1
         lead = re.match(r"\**(`[^`]+`)", line)
         cell = (
             line.split("|")[1]
             if line.startswith("|")
-            else heading.group(1)
+            else heading.group(2)
             if heading
             else lead.group(1)
             if lead
             else ""
         )
+        rank = level + (100 if heading else 0)
         for method in re.findall(r"`([a-zA-Z]+(?:\.[a-zA-Z]+)*)`", cell):
-            anchors.setdefault(method, anchor)
-    return anchors
+            if rank > found.get(method, (-1, ""))[0]:
+                found[method] = (rank, anchor)
+    return {method: anchor for method, (_, anchor) in found.items()}
 
 
 def bar(counts: list[int]) -> str:
@@ -92,15 +95,14 @@ def shown(host: str) -> str:
 
 def status_cell(standing: Standing, host: str) -> str:
     kind = status(standing, host)
+    verified = host in standing.verified_on
     others = [shown(label) for label in standing.verified_on if label != host]
     text = f"{SYMBOLS[kind]} {LABELS[kind]}"
     if kind == "verified":
         text += f" on {shown(host)}"
-    if kind == "partial":
-        assert standing.partial is not None
+    if standing.partial:
+        text += f", verified on {shown(host)}" if verified else ", not yet verified"
         text += f": {standing.partial.missing}"
-        if host in standing.verified_on:
-            text += f" Verified on {shown(host)}."
     if others:
         text += f" (also verified on {', '.join(others)})"
     return text
@@ -112,14 +114,14 @@ def how_cell(standing: Standing, anchors: dict[str, str]) -> str:
     )
 
 
-def render(standings: list[Standing], host: str, records: int, anchors: dict[str, str]) -> str:
+def render(standings: list[Standing], host: str, anchors: dict[str, str]) -> str:
     high = [s for s in standings if s.capability.tier == "high"]
     kinds = list(SYMBOLS)
 
-    def count(rows: list[Standing], weighted: bool = False) -> list[int]:
-        return [sum(s.capability.weight if weighted else 1 for s in rows if status(s, host) == kind) for kind in kinds]
+    def count(rows: list[Standing]) -> list[int]:
+        return [sum(status(s, host) == kind for s in rows) for kind in kinds]
 
-    totals, weights = count(high), count(high, weighted=True)
+    totals = count(high)
     version, platform = shown(host).split()
     lines = [
         "# What Bitwig Agent can do",
@@ -132,24 +134,21 @@ def render(standings: list[Standing], host: str, records: int, anchors: dict[str
         "(`tracks.duplicate` is `bitwig-agent tracks duplicate`). Each method links to its reference in PROTOCOL.md.",
         "",
         f"**Verified on Bitwig {version} ({platform}): {totals[0]} of {len(high)} common tasks "
-        f"({percent(totals[0], len(high))}).** Counted by the {sum(weights)} rows of the feature audit "
-        f"they merge: {weights[0]} of {sum(weights)} ({percent(weights[0], sum(weights))}).",
+        f"({percent(totals[0], len(high))}).**",
         "",
-        "| Status | Common tasks | Audit rows |",
-        "|---|---:|---:|",
-        *(
-            f"| {SYMBOLS[kind]} {LABELS[kind]} | {total} | {weight} |"
-            for kind, total, weight in zip(kinds, totals, weights, strict=True)
-        ),
+        "| Status | Common tasks |",
+        "|---|---:|",
+        *(f"| {SYMBOLS[kind]} {LABELS[kind]} | {total} |" for kind, total in zip(kinds, totals, strict=True)),
         "",
         f"- **{LABELS['verified']}**: tested end to end on a real Bitwig {version} on {platform}, "
         "and the methods have not changed since.",
         f"- **{LABELS['available']}**: the methods exist and pass the offline tests, but no one has confirmed them "
         "on a real Bitwig yet.",
-        f"- **{LABELS['partial']}**: part of the task works; the row says what is missing.",
+        f"- **{LABELS['partial']}**: part of the task is available; the row says what is missing and whether the "
+        "available part is verified.",
         f"- **{LABELS['none']}**: no method does it yet.",
         "",
-        f"Tasks marked † are less common and not counted above. Verification records read: {records}.",
+        "Tasks marked † are less common and not counted above.",
         "",
         "## By chapter",
         "",
@@ -184,29 +183,48 @@ def gap_rows(gaps: list[Gap]) -> list[dict[str, object]]:
     ]
 
 
+def summary(standings: list[Standing], host: str, records: int) -> dict[str, object]:
+    """The headline counts, also weighted by the weighted task list, for maintainers."""
+    high = [s for s in standings if s.capability.tier == "high"]
+    return {
+        "host": host,
+        "records": records,
+        "tasks": len(high),
+        "weight": sum(s.capability.weight for s in high),
+        **{
+            kind: {
+                "tasks": sum(status(s, host) == kind for s in high),
+                "weight": sum(s.capability.weight for s in high if status(s, host) == kind),
+            }
+            for kind in SYMBOLS
+        },
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--to-verify", action="store_true", help="print the to-verify queue instead")
     parser.add_argument("--json", action="store_true", help="with --to-verify: as JSON")
     args = parser.parse_args()
+    if args.json and not args.to_verify:
+        parser.error("--json needs --to-verify")
     records = load_records()
     verdicts, host = Verdicts(records), headline_host()
+    standings, gaps = verdicts.standings(), verdicts.gaps(host)
+    counts = summary(standings, host, len(records))
+    if args.json:
+        print(json.dumps({"summary": counts, "capabilities": gap_rows(gaps)}, indent=2))
+        return
+    if not args.to_verify:
+        MAP.write_text(
+            render(standings, host, protocol_anchors(PROTOCOL.read_text(encoding="utf-8"))), encoding="utf-8"
+        )
+        print(f"Wrote {MAP.relative_to(ROOT)}")
+    print(json.dumps(counts))
+    print(f"To verify on {shown(host)}: {len(gaps)}")
     if args.to_verify:
-        gaps = verdicts.gaps(host)
-        if args.json:
-            print(json.dumps({"host": host, "capabilities": gap_rows(gaps)}, indent=2))
-            return
-        print(f"To verify on {shown(host)}: {len(gaps)}")
         for gap in gaps:
             print(f"{gap.capability.id}\t{gap.capability.tier}\t{', '.join(gap.methods)}\t{gap.reason}")
-        return
-    standings = verdicts.standings()
-    MAP.write_text(
-        render(standings, host, len(records), protocol_anchors(PROTOCOL.read_text(encoding="utf-8"))), encoding="utf-8"
-    )
-    high = [s for s in standings if s.capability.tier == "high"]
-    counts = {LABELS[kind]: sum(status(s, host) == kind for s in high) for kind in SYMBOLS}
-    print(f"{MAP.relative_to(ROOT)} on {shown(host)}: {counts} of {len(high)}; to verify: {len(verdicts.gaps(host))}")
 
 
 if __name__ == "__main__":

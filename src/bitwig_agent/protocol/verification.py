@@ -21,11 +21,22 @@ HEADLINE_PLATFORM = "linux"
 
 Platform = Literal["linux", "macos", "windows"]
 Sha256 = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+Opaque = Annotated[str, Field(pattern=r"^[A-Za-z0-9._:+-]+$")]
+"""An identifier, never a path or free text."""
+
+
+def _undescribed(node: Any) -> Any:
+    """A JSON schema without its description texts (a property named description is kept)."""
+    if isinstance(node, dict):
+        return {k: _undescribed(v) for k, v in node.items() if not (k == "description" and isinstance(v, str))}
+    if isinstance(node, list):
+        return [_undescribed(v) for v in node]
+    return node
 
 
 def contract_hash(entry: dict[str, Any]) -> str:
     """The SHA-256 of a protocol bundle method entry's contract."""
-    contract = json.dumps({key: entry[key] for key in CONTRACT_KEYS}, sort_keys=True)
+    contract = json.dumps({key: _undescribed(entry[key]) for key in CONTRACT_KEYS}, sort_keys=True)
     return "sha256:" + hashlib.sha256(contract.encode()).hexdigest()
 
 
@@ -46,7 +57,7 @@ class Host(_Strict):
 
 class Extension(_Strict):
     commit: str = Field(pattern=r"^[0-9a-f]{7,40}$")
-    build: str = Field(min_length=1)
+    build: Opaque
 
 
 class Check(_Strict):
@@ -73,7 +84,7 @@ class Record(_Strict):
     host: Host
     extension: Extension
     checks: list[Check] = Field(min_length=1)
-    evidence: str = Field(min_length=1)
+    evidence: Opaque
 
 
 @dataclass(frozen=True)
@@ -95,7 +106,7 @@ class Standing:
 
 @dataclass(frozen=True)
 class Gap:
-    """A fully covered capability with no passing current verdict on a host."""
+    """A capability with something available but no passing current verdict on a host."""
 
     capability: Capability
     methods: tuple[str, ...]
@@ -168,10 +179,10 @@ class Verdicts:
         ]
 
     def gaps(self, host: str) -> list[Gap]:
-        """The to-verify queue for host: fully covered capabilities without a passing current verdict there."""
+        """The to-verify queue for host: available or partial capabilities without a passing current verdict there."""
         out = []
         for standing in self.standings():
-            if standing.coverage != "full" or host in standing.verified_on:
+            if standing.coverage == "none" or host in standing.verified_on:
                 continue
             out.append(Gap(standing.capability, *self._missing(standing, host)))
         return sorted(out, key=lambda gap: ("high", "medium", "low").index(gap.capability.tier))

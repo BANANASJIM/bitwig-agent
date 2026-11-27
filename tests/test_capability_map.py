@@ -1,3 +1,4 @@
+import copy
 import json
 import re
 import sys
@@ -32,7 +33,7 @@ def record(checks, *, version="6.1.7", platform="linux", jar=None, date="2026-11
             "host": {"version": version, "jarSha256": jar or JARS[version], "platform": platform},
             "extension": {"commit": "2e1bd8c9", "build": "2e1bd8c9+dev"},
             "checks": checks,
-            "evidence": "e2e-2026-11-27-post-x8",
+            "evidence": "run-1",
         }
     )
 
@@ -45,32 +46,43 @@ def check(capability, result="pass", **hashes):
 def render(records):
     verdicts = Verdicts(records)
     anchors = generator.protocol_anchors(generator.PROTOCOL.read_text(encoding="utf-8"))
-    return generator.render(verdicts.standings(), headline_host(), len(records), anchors)
+    return generator.render(verdicts.standings(), headline_host(), anchors)
 
 
 def test_generated_map_is_current():
     assert generator.MAP.read_text(encoding="utf-8") == render(generator.load_records()), "run `pixi run capabilities`"
 
 
-def test_the_first_map_claims_nothing_verified_and_counts_by_task_and_by_audit_row():
+def test_the_first_map_claims_nothing_verified_and_keeps_maintainer_figures_out():
     text = render([])
     assert "**Verified on Bitwig 6.1.7 (Linux): 0 of 116 common tasks (0%).**" in text
-    assert "| ◔ Available, not yet verified | 86 | 107 |" in text
-    assert "| ◑ Partial | 13 | 18 |" in text
-    assert "| ○ Not supported | 17 | 20 |" in text
+    assert "| ◔ Available, not yet verified | 82 |" in text
+    assert "| ◑ Partial | 16 |" in text
+    assert "| ○ Not supported | 18 |" in text
     assert "| Duplicate a track | ◔ Available, not yet verified | [`tracks.duplicate`](../PROTOCOL.md#" in text
     assert "| Split a timeline clip | ○ Not supported | — |" in text
-    assert f"◑ Partial: {PARTIAL['project.export-audio'].missing} |" in text
-    assert "sha256" not in text
-    assert "evidence" not in text.lower()
+    assert f"◑ Partial, not yet verified: {PARTIAL['project.export-audio'].missing} |" in text
+    for internal in ("sha256", "evidence", "145", "audit", "records"):
+        assert internal not in text.lower()
 
 
-def test_the_contract_hash_ignores_the_description_but_not_the_schema_or_requirements():
+def test_the_contract_hash_ignores_descriptions_but_not_the_schema_or_requirements():
     entry = export_bundle()["methods"]["tracks.set"]
     assert HASHES["tracks.set"] == contract_hash(entry) == contract_hash({**entry, "description": "reworded"})
     assert contract_hash({**entry, "requires": ["engine"]}) != HASHES["tracks.set"]
     assert contract_hash({**entry, "inputSchema": {}}) != HASHES["tracks.set"]
     assert all(re.fullmatch(r"sha256:[0-9a-f]{64}", value) for value in HASHES.values())
+
+
+def test_a_field_docstring_change_does_not_make_a_verdict_stale():
+    entry = copy.deepcopy(export_bundle()["methods"]["tracks.set"])
+    field = next(iter(entry["inputSchema"]["properties"].values()))
+    field["description"] = "reworded"
+    assert contract_hash(entry) == HASHES["tracks.set"]
+    reworded = check("arrange.tracks.rename", **{"tracks.set": contract_hash(entry)})
+    assert Verdicts([record([reworded])]).passes("arrange.tracks.rename", HEADLINE)
+    named = {**entry, "inputSchema": {"properties": {"description": {"type": "string"}}}}
+    assert contract_hash(named) != contract_hash({**entry, "inputSchema": {"properties": {}}})
 
 
 def test_a_record_holds_only_the_verdict_and_an_opaque_evidence_reference():
@@ -80,6 +92,12 @@ def test_a_record_holds_only_the_verdict_and_an_opaque_evidence_reference():
         Record.model_validate(good)
     with pytest.raises(ValidationError, match="unknown capability"):
         record([check("arrange.tracks.fold")])
+    opaque = record([check("project.save")]).model_dump(mode="json")
+    for path in ("/home/user/runs/1", "run 1"):
+        with pytest.raises(ValidationError, match="pattern"):
+            Record.model_validate({**opaque, "evidence": path})
+        with pytest.raises(ValidationError, match="pattern"):
+            Record.model_validate({**opaque, "extension": {**opaque["extension"], "build": path}})
 
 
 def test_a_current_pass_on_the_headline_host_verifies_a_capability():
@@ -123,28 +141,45 @@ def test_the_newest_current_verdict_decides_and_a_failure_wins_a_tie():
     assert Verdicts([record([failed]), record([passed], date="2026-11-28")]).passes("project.save", HEADLINE)
 
 
-def test_the_queue_lists_every_fully_covered_unverified_capability_common_tasks_first():
+def test_the_queue_lists_every_available_or_partial_unverified_capability_common_tasks_first():
     gaps = Verdicts([]).gaps(HEADLINE)
-    assert len(gaps) == 95
-    assert all(g.capability.id not in PARTIAL and tagged(g.capability.id) for g in gaps)
+    assert len(gaps) == 107
+    assert {g.capability.id for g in gaps} >= PARTIAL.keys()
+    assert all(tagged(g.capability.id) for g in gaps)
     tiers = [g.capability.tier for g in gaps]
     assert tiers == sorted(tiers, key=["high", "medium", "low"].index)
+    verified = Verdicts([record([check("project.export-audio")])]).gaps(HEADLINE)
+    assert "project.export-audio" not in {g.capability.id for g in verified}
+
+
+NOT_VERIFIED_ON_HEADLINE = {
+    "project.save": record([check("project.save")], version="6.1.4"),
+    "project.save-as": record([check("project.save-as")], platform="windows"),
+    "arrange.tracks.group": record([check("arrange.tracks.group")], jar="f" * 64),
+    "devices.sidechain": record([check("devices.sidechain", **{"devices.sidechain.set": "sha256:" + "0" * 64})]),
+    "project.export-audio": record([check("project.export-audio", "fail")], date="2026-11-28"),
+}
+
+
+def missing_one(capability, method):
+    one_short = check(capability)
+    del one_short["methods"][method]
+    return record([one_short])
 
 
 def test_the_map_never_claims_verified_without_a_current_pass_for_every_tagged_method():
+    excluded = {*NOT_VERIFIED_ON_HEADLINE, "arrange.markers"} - {"project.export-audio"}
     records = [
-        record([check(c.id) for c in TAXONOMY if tagged(c.id) and c.id != "arrange.markers"]),
-        record([check("arrange.markers", **{"markers.set": "sha256:" + "0" * 64})]),
-        record([check("project.save", "fail")], date="2026-11-28"),
-        record([check("arrange.tracks.duplicate")], jar="f" * 64, date="2026-11-29"),
+        record([check(c.id) for c in TAXONOMY if tagged(c.id) and c.id not in excluded]),
+        *NOT_VERIFIED_ON_HEADLINE.values(),
+        missing_one("arrange.markers", "markers.delete"),
     ]
     claimed = []
     for line in render(records).splitlines():
         cells = line.split(" | ")
-        if len(cells) == 3 and "Verified on 6.1.7 Linux" in cells[1]:
+        if len(cells) == 3 and "erified on 6.1.7 Linux" in cells[1]:
             claimed.append(TITLES[cells[0].removeprefix("| ").removesuffix(" †")])
-    assert "arrange.markers" not in claimed
-    assert "project.save" not in claimed
+    assert not ({*NOT_VERIFIED_ON_HEADLINE, "arrange.markers"} & set(claimed))
     assert len(claimed) > 90
     for capability in claimed:
         assert any(
@@ -162,7 +197,7 @@ def test_rows_name_other_hosts_and_partial_rows_their_verification():
     text = render([record([check("project.save"), check("project.export-audio")], version="6.1.4")])
     assert "| Save the project | ◔ Available, not yet verified (also verified on 6.1.4 Linux) |" in text
     text = render([record([check("project.export-audio")])])
-    assert f"◑ Partial: {PARTIAL['project.export-audio'].missing} Verified on 6.1.7 Linux. |" in text
+    assert f"◑ Partial, verified on 6.1.7 Linux: {PARTIAL['project.export-audio'].missing} |" in text
 
 
 def test_protocol_anchors_skip_code_blocks_and_number_repeated_headings():
@@ -170,11 +205,25 @@ def test_protocol_anchors_skip_code_blocks_and_number_repeated_headings():
     assert generator.protocol_anchors(text) == {"tracks.list": "tracks", "batch": "tracks-1"}
 
 
-def test_the_queue_prints_as_text_and_json(monkeypatch, capsys):
+def test_protocol_anchors_prefer_a_heading_then_the_most_specific_section():
+    text = "## Domain\n| `clips.set` | x |\n| `grid.apply` | x |\n### Arranger\n| `clips.set` | y |\n### `grid.apply`\n"
+    assert generator.protocol_anchors(text) == {"clips.set": "arranger", "grid.apply": "gridapply"}
+
+
+def test_the_cli_prints_the_queue_and_the_maintainer_figures(monkeypatch, capsys):
     monkeypatch.setattr(sys, "argv", ["capabilities.py", "--to-verify", "--json"])
     generator.main()
     queue = json.loads(capsys.readouterr().out)
-    assert queue["host"] == HEADLINE
+    assert queue["summary"] == {
+        "host": HEADLINE,
+        "records": 0,
+        "tasks": 116,
+        "weight": 145,
+        "verified": {"tasks": 0, "weight": 0},
+        "available": {"tasks": 82, "weight": 102},
+        "partial": {"tasks": 16, "weight": 22},
+        "none": {"tasks": 18, "weight": 21},
+    }
     assert queue["capabilities"][0] == {
         "id": "concepts.transport",
         "title": TAXONOMY[0].title,
@@ -184,4 +233,13 @@ def test_the_queue_prints_as_text_and_json(monkeypatch, capsys):
     }
     monkeypatch.setattr(sys, "argv", ["capabilities.py", "--to-verify"])
     generator.main()
-    assert capsys.readouterr().out.startswith("To verify on 6.1.7 Linux: 95\n")
+    lines = capsys.readouterr().out.splitlines()
+    assert json.loads(lines[0]) == queue["summary"]
+    assert lines[1] == "To verify on 6.1.7 Linux: 107"
+    assert len(lines) == 2 + 107
+
+
+def test_json_alone_is_refused(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["capabilities.py", "--json"])
+    with pytest.raises(SystemExit):
+        generator.main()
