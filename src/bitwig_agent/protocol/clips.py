@@ -787,7 +787,7 @@ SPECS: dict[str, ToolSpec] = {
         annotations=STEER,
         records="notes",
         views=("grid",),
-        summary="Read every note of a launcher clip, all channels, as records {beat, pitch, velocity, duration, channel?, operators and expressions when set} that notes.set takes; range limits the output. exact=false means the public note grid (onsets snapped, clip selected, expressions unread).",
+        summary="Read every note of a launcher clip, all channels, as records {beat, pitch, velocity, duration, channel?, operators?} that notes.set takes; range limits the output. exact=false means the public note grid (onsets snapped, clip selected).",
     ),
     "notes.set": ToolSpec(
         NotesSetArgs,
