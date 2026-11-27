@@ -35,6 +35,7 @@ import dev.bitwigagent.launcher.LauncherModule;
 import dev.bitwigagent.launcher.LauncherSettingsModule;
 import dev.bitwigagent.launcher.LauncherState;
 import dev.bitwigagent.launcher.LauncherTargets;
+import dev.bitwigagent.launcher.NativeNotes;
 import dev.bitwigagent.launcher.NoteModule;
 import dev.bitwigagent.launcher.SceneModule;
 import dev.bitwigagent.launcher.SceneWindowLease;
@@ -159,11 +160,21 @@ public final class TestServices {
     }
 
     public NoteModule notes() {
-        return new NoteModule(launcherState());
+        return notes(null);
+    }
+
+    /** {@code access} null: the bindings are tried on the test host, which fails closed to the public setters. */
+    public NoteModule notes(NativeNotes.Access access) {
+        return new NoteModule(launcherState(), new NativeNotes(natives, access));
     }
 
     public ClipModule clips(LauncherSettingsModule.Access settings, ArrangerModule.Access arranger) {
-        return new ClipModule(launcherState(), trackRefs, notes(), launcherSettings(settings), arranger(arranger));
+        return clips(settings, arranger, null);
+    }
+
+    public ClipModule clips(
+            LauncherSettingsModule.Access settings, ArrangerModule.Access arranger, NativeNotes.Access notes) {
+        return new ClipModule(launcherState(), trackRefs, notes(notes), launcherSettings(settings), arranger(arranger));
     }
 
     public ContextModule context(MixModule mix, TransportModule transport) {

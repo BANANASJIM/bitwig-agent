@@ -5,7 +5,6 @@ import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.Outcome;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Results;
-import dev.bitwigagent.host.NativeReadContext;
 import dev.bitwigagent.launcher.LauncherSettingsModule;
 import java.lang.reflect.Method;
 import java.util.*;
@@ -13,27 +12,15 @@ import java.util.*;
 /** Exact 6.1.4 bindings for a source-bound launcher slot; no cursor or GUI selection. */
 public final class Bitwig614LauncherSettingsAccess implements LauncherSettingsModule.Access {
     private final Bitwig614Runtime.Access a;
-    private final NativeReadContext context;
-    private final Bitwig614TrackResolver resolver;
-    private final Class<?> event, slotType, projectType;
-    private final Method target, clip, slot, name, actionString;
+    private final Bitwig614LauncherClip launcher;
+    private final Method actionString;
     private final Bitwig614ClipTiming clipTiming;
     private final Map<String, Method> getters = new LinkedHashMap<>(), setters = new LinkedHashMap<>();
     private final Map<String, Object> actions = new LinkedHashMap<>();
 
     public Bitwig614LauncherSettingsAccess(Bitwig614Runtime.Access a) throws ReflectiveOperationException {
         this.a = a;
-        context = new NativeReadContext(new Bitwig614ReadContextAccess(a));
-        resolver = new Bitwig614TrackResolver(a);
-        event = a.type("zZi");
-        slotType = a.type("Us");
-        projectType = a.type("com.bitwig.flt.document.core.master.g2L");
-        Class<?> proxy = a.type("com.bitwig.flt.control_surface.proxy.ControlSurfaceProxy");
-        target = a.exactMethod(proxy, "getTarget", Object.class, false);
-        clip = a.exactMethod(
-                a.type("com.bitwig.flt.control_surface.proxy.ClipLauncherSlotProxy"), "getClip", a.type("Ob"), false);
-        slot = a.exactMethod(a.type("Ob"), "kFU", slotType, false);
-        name = a.exactMethod(a.type("Ob"), "dJ_", String.class, false);
+        launcher = new Bitwig614LauncherClip(a);
         clipTiming = new Bitwig614ClipTiming(a);
         Class<?> t = a.type("t3q"), action = a.type("bY");
         bind(t, "nextAction", "FPW", "cfM", action);
@@ -66,20 +53,8 @@ public final class Bitwig614LauncherSettingsAccess implements LauncherSettingsMo
             JsonObject changes,
             Runnable check,
             Runnable beforeWrite) {
-        a.documentThread();
-        check.run();
-        Object nativeSlot = a.invoke(target, proxy), value = a.invoke(clip, proxy);
-        if (!slotType.isInstance(nativeSlot) || !event.isInstance(value) || a.invoke(slot, value) != nativeSlot)
-            throw Errors.notApplied(
-                    Reason.TARGET_CHANGED, "Launcher proxy does not resolve to one attached native clip slot.");
-        Object track = resolver.require(resolver.slotTrack(nativeSlot), trackId, Bitwig614TrackResolver.Kind.CHANNEL);
-        if (!expectedName.equals(a.invoke(name, value)))
-            throw Errors.notApplied(Reason.TARGET_CHANGED, "Native clip name differs from expectedClipName.");
-        Object owningProject = resolver.owner(value, projectType);
-        Object[] models = {value, nativeSlot, track};
-        String[] labels = {"clipDeleted", "slotDeleted", "trackDeleted", "projectDeleted"};
-        NativeReadContext.Capture capture = context.capture(owningProject, models, labels, check, false);
-        a.requireModelThread(value);
+        Bitwig614LauncherClip.Bound bound = launcher.clip(proxy, trackId, expectedName, check);
+        Object value = bound.clip;
         Object timing = a.invoke(clipTiming.timing, value), loopRange = a.invoke(clipTiming.loop, timing);
         Map<String, Object> properties = new LinkedHashMap<>();
         properties.put("playStartBeats", a.invoke(clipTiming.position, a.invoke(clipTiming.playStart, timing)));
@@ -88,16 +63,7 @@ public final class Bitwig614LauncherSettingsAccess implements LauncherSettingsMo
         properties.put("loopLengthBeats", a.invoke(clipTiming.duration, loopRange));
         properties.put("loopEnabled", a.invoke(clipTiming.loopEnabled, timing));
         JsonObject before = read(value, properties);
-        Runnable guard = () -> {
-            check.run();
-            a.requireModelThread(value);
-            context.guard(capture, models, labels, check);
-            if (a.invoke(target, proxy) != nativeSlot
-                    || a.invoke(clip, proxy) != value
-                    || a.invoke(slot, value) != nativeSlot
-                    || resolver.slotTrack(nativeSlot) != track)
-                throw Errors.notApplied(Reason.TARGET_CHANGED, "Launcher target changed during native operation.");
-        };
+        Runnable guard = bound::guard;
         guard.run();
         JsonObject fields = new JsonObject();
         for (String key : LauncherSettingsModule.WRITE_ORDER) {
@@ -134,7 +100,7 @@ public final class Bitwig614LauncherSettingsAccess implements LauncherSettingsMo
                             already ? Outcome.ALREADY_MATCHED : Outcome.APPLIED,
                             null));
         }
-        after.addProperty("name", (String) a.invoke(name, value));
+        after.addProperty("name", (String) a.invoke(launcher.name, value));
         after.add("fields", fields);
         after.addProperty("nativeVersion", Bitwig614Runtime.VERSION);
         after.addProperty("nativeJarSha256", a.actualHash());
