@@ -46,7 +46,7 @@ bitwig-agent-install = "bitwig_agent.install:main"
 testpaths = ["tests"]
 
 [tool.coverage.run]
-source = ["src/bitwig_agent"]
+source = ["src/bitwig_agent", "scripts/remap"]
 data_file = "build/coverage/.coverage"
 
 
@@ -116,6 +116,7 @@ py311-mcp-min = ["py311", "mcp-min", "dev", "native-music", "package"]
 [tool.pixi.feature.dev.tasks]
 test = "pytest -q"
 surface = "python scripts/surface.py"
+remap = { cmd = "python -m remap", env = { PYTHONPATH = "scripts" } }
 
 [tool.pixi.feature.java.tasks]
 lint = "python scripts/lint.py"
