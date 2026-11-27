@@ -9,7 +9,6 @@ from typing import Any
 
 
 @cache
-def shared(name: str) -> dict[str, Any]:
+def shared(name: str) -> Any:
     text = resources.files("bitwig_agent").joinpath(f"shared/{name}.json").read_text(encoding="utf-8")
-    loaded: dict[str, Any] = json.loads(text)
-    return loaded
+    return json.loads(text)

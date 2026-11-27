@@ -1,8 +1,6 @@
 package dev.bitwigagent.device;
 
 import com.google.gson.JsonObject;
-import dev.bitwigagent.bitwig614.Bitwig614ChainAccess;
-import dev.bitwigagent.bitwig614.Bitwig614Runtime;
 import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.HostOperation;
 import dev.bitwigagent.core.Reason;
@@ -11,6 +9,8 @@ import dev.bitwigagent.core.RpcException;
 import dev.bitwigagent.core.Scheduler;
 import dev.bitwigagent.host.DeviceSources;
 import dev.bitwigagent.host.NativeRuntime;
+import dev.bitwigagent.nativehost.NativeChainAccess;
+import dev.bitwigagent.nativehost.NativeHost;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -113,11 +113,10 @@ public final class NativeChains {
     private Access access(HostOperation op) {
         if (access == null) {
             try {
-                access = new Bitwig614ChainAccess(natives.get(op).access());
+                access = new NativeChainAccess(natives.get(op).access());
             } catch (ReflectiveOperationException | LinkageError error) {
                 throw Errors.notApplied(
-                        Reason.NATIVE_UNAVAILABLE,
-                        "Native chain binding unavailable: " + Bitwig614Runtime.diagnostic(error));
+                        Reason.NATIVE_UNAVAILABLE, "Native chain binding unavailable: " + NativeHost.diagnostic(error));
             }
         }
         return access;

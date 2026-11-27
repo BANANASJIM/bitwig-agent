@@ -3,8 +3,6 @@ package dev.bitwigagent.render;
 import com.bitwig.extension.controller.api.Project;
 import com.bitwig.extension.controller.api.Track;
 import com.google.gson.*;
-import dev.bitwigagent.bitwig614.Bitwig614RenderAccess;
-import dev.bitwigagent.bitwig614.Bitwig614Runtime;
 import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.Holds;
 import dev.bitwigagent.core.HostModule;
@@ -22,6 +20,8 @@ import dev.bitwigagent.host.TrackEpochs;
 import dev.bitwigagent.host.TrackRefs;
 import dev.bitwigagent.host.TrackWindow;
 import dev.bitwigagent.host.TransportSafety;
+import dev.bitwigagent.nativehost.NativeHost;
+import dev.bitwigagent.nativehost.NativeRenderAccess;
 import dev.bitwigagent.project.ProjectSaveAsPlan;
 import dev.bitwigagent.recovery.JobsModule;
 import java.nio.file.Path;
@@ -107,6 +107,8 @@ public final class RenderModule implements HostModule, JobsModule.Source {
 
     public interface Access {
         void execute(Runnable work);
+
+        String nativeVersion();
 
         String nativeJarSha256();
         /** Document thread: refuse what the native job would refuse or ask about, then dispatch once. null source = master. */
@@ -364,14 +366,14 @@ public final class RenderModule implements HostModule, JobsModule.Source {
         }
         result.addProperty(
                 "binding",
-                "exact_" + Bitwig614Runtime.VERSION
+                "exact_" + NativeHost.SUPPORTED
                         + "_hash_gated_export_audio_and_bounce_in_place_jobs_with_native_latch");
         result.addProperty("verification", "native_job_latch_then_file_headers_or_arranger_readback");
         return result;
     }
 
     private Access access(HostOperation op) {
-        if (access == null) access = Bitwig614RenderAccess.bind(natives.get(op).access());
+        if (access == null) access = NativeRenderAccess.bind(natives.get(op).access());
         return access;
     }
 
@@ -795,7 +797,7 @@ public final class RenderModule implements HostModule, JobsModule.Source {
         current.done();
         long end = current.handle != null && current.settled ? current.doneAt : scheduler.now();
         result.addProperty("elapsedMs", TimeUnit.NANOSECONDS.toMillis(end - current.started));
-        result.addProperty("nativeVersion", Bitwig614Runtime.VERSION);
+        result.addProperty("nativeVersion", bridge.nativeVersion());
         result.addProperty("nativeJarSha256", bridge.nativeJarSha256());
     }
 

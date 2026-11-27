@@ -11,13 +11,13 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import com.google.gson.*;
 import dev.bitwigagent.HostFixture;
-import dev.bitwigagent.bitwig614.Bitwig614GridAdapter;
-import dev.bitwigagent.bitwig614.Bitwig614Runtime;
 import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.HostOperation;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.RpcException;
 import dev.bitwigagent.host.NativeReadContext;
+import dev.bitwigagent.nativehost.NativeGridAdapter;
+import dev.bitwigagent.nativehost.NativeHost;
 import java.util.*;
 import java.util.function.Consumer;
 import org.junit.jupiter.api.Test;
@@ -491,7 +491,7 @@ public final class GridInsertionWriterTest {
                     "actual Method.invoke conversion failure is cleaned once and quarantined before settlement");
             assertTrue(
                     f.cleanupError instanceof RpcException
-                            && Bitwig614Runtime.isInvocationFailure(f.cleanupError)
+                            && NativeHost.isInvocationFailure(f.cleanupError)
                             && f.cleanupError.getCause() instanceof java.lang.reflect.InvocationTargetException
                             && f.cleanupError.getCause().getCause() == cause,
                     "RPC translation retains reflection boundary and original native throwable identity");
@@ -523,7 +523,7 @@ public final class GridInsertionWriterTest {
                     f.cleanups == 1
                             && !f.guard.quarantined()
                             && !op.result.isDone()
-                            && !Bitwig614Runtime.isInvocationFailure(f.cleanupError),
+                            && !NativeHost.isInvocationFailure(f.cleanupError),
                     "ordinary deadline/context validation remains a cleanup-and-settle rejection");
             f.next();
             f.guard.requireAvailable(device(f));
@@ -1014,7 +1014,7 @@ public final class GridInsertionWriterTest {
                 "Inspect with grid.export, then ack grid:" + device(f) + ".",
                 held.next,
                 "the refusal names the hold id");
-        JsonObject state = Bitwig614GridAdapter.quarantineState(f.guard);
+        JsonObject state = NativeGridAdapter.quarantineState(f.guard);
         JsonObject entry = state.getAsJsonArray("devices").get(0).getAsJsonObject();
         assertTrue(
                 state.get("state").getAsString().equals("quarantined")
@@ -1346,7 +1346,7 @@ public final class GridInsertionWriterTest {
         @Override
         public List<?> converted(Object result) {
             if (reflectedConversion != null)
-                return (List<?>) Bitwig614Runtime.invoke(ReflectedConversion.READ, reflectedConversion);
+                return (List<?>) NativeHost.invoke(ReflectedConversion.READ, reflectedConversion);
             if (failConverted) throw new LinkageError("native callback reader failed");
             return loaded;
         }

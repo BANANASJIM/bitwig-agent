@@ -3,7 +3,6 @@ package dev.bitwigagent.launcher;
 import com.bitwig.extension.callback.*;
 import com.bitwig.extension.controller.api.*;
 import com.google.gson.*;
-import dev.bitwigagent.bitwig614.Bitwig614LauncherSettingsAccess;
 import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.Holds;
 import dev.bitwigagent.core.HostLimits;
@@ -15,6 +14,7 @@ import dev.bitwigagent.host.LauncherStructureLock;
 import dev.bitwigagent.host.NativeRuntime;
 import dev.bitwigagent.host.TrackWindow;
 import dev.bitwigagent.host.TransportSafety;
+import dev.bitwigagent.nativehost.NativeLauncherSettingsAccess;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicLongArray;
 import java.util.function.Consumer;
@@ -108,7 +108,7 @@ public final class LauncherSettingsModule {
         SafetyObservation safety = write ? transportSafety.stopped(op) : null;
         if (access == null)
             try {
-                access = new Bitwig614LauncherSettingsAccess(natives.get(op).access());
+                access = new NativeLauncherSettingsAccess(natives.get(op).access());
             } catch (ReflectiveOperationException e) {
                 throw Errors.notApplied(
                         Reason.NATIVE_UNAVAILABLE,

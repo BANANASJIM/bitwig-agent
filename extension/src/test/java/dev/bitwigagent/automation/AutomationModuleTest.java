@@ -116,14 +116,14 @@ public final class AutomationModuleTest {
         AutomationModule.verify(lane, List.of(a, p(8, 0.4 + 1e-12, false), c));
         List<AutomationModule.Point> big = new ArrayList<>();
         for (int i = 0; i < 1500; i++) big.add(p(i, 0.5, true));
-        JsonObject summary = AutomationModule.lane(new JsonObject(), true, big, new double[] {10, 20});
+        JsonObject summary = AutomationModule.lane(new JsonObject(), "6.1.4", true, big, new double[] {10, 20});
         assertTrue(
                 summary.getAsJsonObject("lane").get("count").getAsInt() == 1500
                         && summary.get("pointsInRange").getAsInt() == 11
                         && summary.getAsJsonArray("points").size() == 11
                         && !summary.get("truncated").getAsBoolean(),
                 "range filters listed points, count covers the lane");
-        JsonObject whole = AutomationModule.lane(new JsonObject(), true, big, null);
+        JsonObject whole = AutomationModule.lane(new JsonObject(), "6.1.4", true, big, null);
         assertTrue(
                 whole.getAsJsonArray("points").size() == AutomationModule.MAX_READ
                         && whole.get("truncated").getAsBoolean(),

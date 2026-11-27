@@ -3,7 +3,6 @@ package dev.bitwigagent.arranger;
 import com.bitwig.extension.callback.*;
 import com.bitwig.extension.controller.api.*;
 import com.google.gson.*;
-import dev.bitwigagent.bitwig614.Bitwig614ArrangerAccess;
 import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.Holds;
 import dev.bitwigagent.core.HostLimits;
@@ -20,6 +19,7 @@ import dev.bitwigagent.host.TrackWindow;
 import dev.bitwigagent.host.TransportSafety;
 import dev.bitwigagent.launcher.LauncherState;
 import dev.bitwigagent.launcher.NoteGrid;
+import dev.bitwigagent.nativehost.NativeArrangerAccess;
 import java.math.BigDecimal;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicLongArray;
@@ -238,8 +238,7 @@ public final class ArrangerModule implements HostModule {
         String id = track.channelId().get();
         if (write) op.inspect = dev.bitwigagent.core.Refs.read("clip:arranger");
         SafetyObservation safety = write ? transportSafety.stopped(op) : null;
-        if (access == null)
-            access = Bitwig614ArrangerAccess.bind(natives.get(op).access());
+        if (access == null) access = NativeArrangerAccess.bind(natives.get(op).access());
         long epoch = epochs.get(index);
         Runnable check = () -> {
             scheduler.check(op);

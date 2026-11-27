@@ -3,8 +3,6 @@ package dev.bitwigagent.automation;
 import com.bitwig.extension.callback.*;
 import com.bitwig.extension.controller.api.*;
 import com.google.gson.*;
-import dev.bitwigagent.bitwig614.Bitwig614AutomationAccess;
-import dev.bitwigagent.bitwig614.Bitwig614Runtime;
 import dev.bitwigagent.core.BoundedJson;
 import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.Holds;
@@ -20,6 +18,7 @@ import dev.bitwigagent.host.RequestSnapshot;
 import dev.bitwigagent.host.TrackEpochs;
 import dev.bitwigagent.host.TrackWindow;
 import dev.bitwigagent.host.TransportSafety;
+import dev.bitwigagent.nativehost.NativeAutomationAccess;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.*;
@@ -251,7 +250,8 @@ public final class AutomationModule implements HostModule {
     }
 
     /** Lane summary into {@code out}: whole-lane count and hash, plus the points inside range (bounded). */
-    public static JsonObject lane(JsonObject out, boolean exists, List<Point> all, double[] range) {
+    public static JsonObject lane(
+            JsonObject out, String nativeVersion, boolean exists, List<Point> all, double[] range) {
         JsonObject lane = new JsonObject();
         lane.addProperty("exists", exists);
         lane.addProperty("count", all.size());
@@ -273,7 +273,7 @@ public final class AutomationModule implements HostModule {
         out.add("points", rows);
         out.addProperty("pointsInRange", inRange);
         out.addProperty("truncated", inRange > rows.size());
-        out.addProperty("nativeVersion", Bitwig614Runtime.VERSION);
+        out.addProperty("nativeVersion", nativeVersion);
         out.addProperty("selectionSideEffect", "none");
         return out;
     }
@@ -312,8 +312,7 @@ public final class AutomationModule implements HostModule {
         String id = track.channelId().get();
         RequestSnapshot snapshot = resolved.snapshot();
         SafetyObservation safety = write ? transportSafety.stopped(op) : null;
-        if (access == null)
-            access = Bitwig614AutomationAccess.bind(natives.get(op).access());
+        if (access == null) access = NativeAutomationAccess.bind(natives.get(op).access());
         long epoch = epochs.get(index);
         Runnable check = () -> {
             scheduler.check(op);

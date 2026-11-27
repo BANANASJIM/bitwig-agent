@@ -2,7 +2,6 @@ package dev.bitwigagent.mix;
 
 import com.bitwig.extension.controller.api.*;
 import com.google.gson.*;
-import dev.bitwigagent.bitwig614.Bitwig614TrackGroupAccess;
 import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.Holds;
 import dev.bitwigagent.core.HostLimits;
@@ -19,6 +18,7 @@ import dev.bitwigagent.host.SelectionLease;
 import dev.bitwigagent.host.TrackRefs;
 import dev.bitwigagent.host.TrackWindow;
 import dev.bitwigagent.host.TransportSafety;
+import dev.bitwigagent.nativehost.NativeTrackGroupAccess;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 
@@ -232,7 +232,7 @@ public final class TrackLifecycleModule implements HostModule {
         }
         if (groupAccess == null) {
             try {
-                groupAccess = new Bitwig614TrackGroupAccess(natives.get(op).access());
+                groupAccess = new NativeTrackGroupAccess(natives.get(op).access());
             } catch (ReflectiveOperationException error) {
                 throw Errors.notApplied(
                         Reason.NATIVE_UNAVAILABLE, "Exact track group descriptors unavailable: " + error.getMessage());

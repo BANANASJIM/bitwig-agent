@@ -1,10 +1,10 @@
 package dev.bitwigagent.launcher;
 
-import dev.bitwigagent.bitwig614.Bitwig614NoteWriteAccess;
 import dev.bitwigagent.core.HostOperation;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.RpcException;
 import dev.bitwigagent.host.NativeRuntime;
+import dev.bitwigagent.nativehost.NativeNoteWriteAccess;
 import java.util.List;
 
 /**
@@ -109,7 +109,7 @@ public final class NativeNotes {
     Access access(HostOperation op) {
         if (access != null || unavailable != null) return access;
         try {
-            access = new Bitwig614NoteWriteAccess(natives.get(op).access());
+            access = new NativeNoteWriteAccess(natives.get(op).access());
         } catch (ReflectiveOperationException | LinkageError error) {
             unavailable = error.toString();
         } catch (RpcException error) {

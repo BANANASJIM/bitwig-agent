@@ -6,9 +6,9 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import dev.bitwigagent.BitwigAgentExtensionDefinition;
-import dev.bitwigagent.bitwig614.Bitwig614Runtime;
 import dev.bitwigagent.core.RpcException;
 import dev.bitwigagent.core.SharedData;
+import dev.bitwigagent.nativehost.NativeHost;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.DoubleUnaryOperator;
@@ -39,9 +39,8 @@ public final class SharedDataTest {
 
     @Test
     void hostTarget() {
-        JsonObject host = SharedData.read("host");
-        assertEquals(host.get("version").getAsString(), Bitwig614Runtime.VERSION);
-        assertEquals(host.get("jarSha256").getAsString(), Bitwig614Runtime.SHA256);
+        JsonObject host = SharedData.readArray("host").get(0).getAsJsonObject();
+        assertEquals(host.get("version").getAsString(), NativeHost.SUPPORTED);
         assertEquals(host.get("apiVersion").getAsInt(), new BitwigAgentExtensionDefinition().getRequiredAPIVersion());
     }
 

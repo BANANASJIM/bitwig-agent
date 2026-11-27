@@ -3,8 +3,6 @@ package dev.bitwigagent.routing;
 import com.bitwig.extension.callback.*;
 import com.bitwig.extension.controller.api.*;
 import com.google.gson.*;
-import dev.bitwigagent.bitwig614.Bitwig614RoutingAccess;
-import dev.bitwigagent.bitwig614.Bitwig614Runtime;
 import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.Holds;
 import dev.bitwigagent.core.HostLimits;
@@ -23,6 +21,8 @@ import dev.bitwigagent.host.RequestSnapshot;
 import dev.bitwigagent.host.TrackRefs;
 import dev.bitwigagent.host.TrackWindow;
 import dev.bitwigagent.host.TransportSafety;
+import dev.bitwigagent.nativehost.NativeHost;
+import dev.bitwigagent.nativehost.NativeRoutingAccess;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -262,11 +262,11 @@ public final class RoutingModule implements HostModule {
         SafetyObservation safety = write ? transportSafety.stopped(op) : null;
         if (access == null) {
             try {
-                access = new Bitwig614RoutingAccess(natives.get(op).access());
+                access = new NativeRoutingAccess(natives.get(op).access());
             } catch (ReflectiveOperationException | LinkageError error) {
                 throw Errors.notApplied(
                         Reason.NATIVE_UNAVAILABLE,
-                        "Exact routing descriptors unavailable: " + Bitwig614Runtime.diagnostic(error));
+                        "Exact routing descriptors unavailable: " + NativeHost.diagnostic(error));
             }
         }
         long generation = epoch.get();

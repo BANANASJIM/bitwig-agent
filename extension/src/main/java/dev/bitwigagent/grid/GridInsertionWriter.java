@@ -3,7 +3,6 @@ package dev.bitwigagent.grid;
 import static dev.bitwigagent.grid.GridSnapshotReader.Field.*;
 
 import com.google.gson.*;
-import dev.bitwigagent.bitwig614.Bitwig614Runtime;
 import dev.bitwigagent.core.Batch;
 import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.Outcome;
@@ -12,6 +11,7 @@ import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.RpcException;
 import dev.bitwigagent.host.DeviceSources;
+import dev.bitwigagent.nativehost.NativeHost;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
@@ -559,7 +559,7 @@ public final class GridInsertionWriter {
                                     ? (Exception) error
                                     : new Exception("Insertion preplacement gate failed", error));
                     normalHandling = true; // Record normal delivered cleanup BEFORE any outward notification.
-                    if (!(error instanceof RpcException) || Bitwig614Runtime.isInvocationFailure(error))
+                    if (!(error instanceof RpcException) || NativeHost.isInvocationFailure(error))
                         adapterFailure(error);
                     return true;
                 } catch (Throwable cleanupError) {
@@ -744,7 +744,7 @@ public final class GridInsertionWriter {
 
     static boolean settlementMismatch(Throwable error) {
         return error instanceof RpcException
-                && !Bitwig614Runtime.isInvocationFailure(error)
+                && !NativeHost.isInvocationFailure(error)
                 && MISMATCH_CODES.stream().anyMatch(((RpcException) error)::is);
     }
 

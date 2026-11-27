@@ -2,6 +2,7 @@
 """Build the extension using the installed Bitwig API and a verified Gson artifact."""
 
 import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -15,6 +16,7 @@ from tooling import dependency
 ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "build"
 SOURCES = ROOT / "extension/src/main/java"
+HOST_SOURCES = ROOT / "extension/src/host"
 SHARED = ROOT / "src/bitwig_agent/shared"
 LINUX_HOST_JAR = "/opt/bitwig-studio/bin/bitwig.jar"
 
@@ -43,8 +45,18 @@ def lint_flag(api):
 
 
 def verification_sources():
-    """Main sources minus the default-package class that needs the host's internal classes."""
-    return sorted(path for path in SOURCES.rglob("*.java") if path.parent != SOURCES)
+    """Main sources; the per-version host sources need that host's internal classes."""
+    return sorted(SOURCES.rglob("*.java"))
+
+
+def host_sources(jar):
+    """The sources compiled against this host jar, which must be one host.json names by SHA-256."""
+    digest = hashlib.sha256(jar.read_bytes()).hexdigest()
+    hosts = json.loads((SHARED / "host.json").read_text())
+    versions = [host["version"] for host in hosts if host["jarSha256"] == digest]
+    if not versions:
+        raise SystemExit(f"{jar} (SHA-256 {digest}) is not a supported host jar in host.json")
+    return sorted((HOST_SOURCES / versions[0]).glob("*.java"))
 
 
 def classes_digest(classes):
@@ -112,7 +124,7 @@ def build():
     classes = BUILD / "classes"
     if classes.exists():
         shutil.rmtree(classes)
-    compile_java(sorted(SOURCES.rglob("*.java")), classes, [api, dependency])
+    compile_java([*verification_sources(), *host_sources(api)], classes, [api, dependency])
     write_resources(classes)
     resources = ROOT / "extension/src/main/resources"
     service = resources / "META-INF/services/com.bitwig.extension.ExtensionDefinition"

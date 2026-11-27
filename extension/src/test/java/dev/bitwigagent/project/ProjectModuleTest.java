@@ -414,6 +414,10 @@ public final class ProjectModuleTest {
                     document.add(work);
                 }
 
+                public String nativeVersion() {
+                    return "simulated";
+                }
+
                 public String nativeJarSha256() {
                     return "simulated";
                 }

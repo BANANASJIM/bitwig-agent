@@ -1,7 +1,7 @@
 package dev.bitwigagent.arranger;
 
 import com.google.gson.*;
-import dev.bitwigagent.bitwig614.Bitwig614ArrangerAccess;
+import dev.bitwigagent.nativehost.NativeArrangerAccess;
 import java.util.*;
 
 /**
@@ -93,6 +93,6 @@ public final class ArrangerNotes {
     }
 
     private static boolean near(double a, double b) {
-        return Math.abs(a - b) <= Bitwig614ArrangerAccess.EPS;
+        return Math.abs(a - b) <= NativeArrangerAccess.EPS;
     }
 }

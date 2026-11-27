@@ -22,7 +22,8 @@ shared = _shared  # `shared/<name>.json`: also bundled into the extension jar, r
 
 
 def host_version() -> str:
-    version: str = shared("host")["version"]
+    """The newest supported host, whose Grid schema and notes offline planning uses."""
+    version: str = shared("host")[-1]["version"]
     return version
 
 
