@@ -19,12 +19,18 @@ ARRANGER_LIST_DESCRIPTION = (
     "(bpm), timeSignature and window. Beats are quarter notes from the arrangement start; bar is 1 + start / bar "
     "length at the current time signature (fractional off the bar line; time-signature changes are not applied); "
     "bar, tempo and timeSignature are null until observed. "
-    "Automation clips and take/comp lanes are not listed. Native read (inspected Bitwig 6.1.4 JAR); no selection."
+    "Automation clips and take/comp lanes are not listed. Native read (inspected Bitwig 6.1.4 JAR); no selection. "
+    "format=timeline returns a read-only tracks x bars text view with a clip legend in beats; it is never input."
 )
 
 
 SPECS: dict[str, ToolSpec] = {
     "arranger.list": ToolSpec(
-        ArrangerListArgs, ARRANGER_LIST_DESCRIPTION, True, examples=({}, {"target": TRACK_REF}), records="clips"
+        ArrangerListArgs,
+        ARRANGER_LIST_DESCRIPTION,
+        True,
+        examples=({}, {"target": TRACK_REF}),
+        records="clips",
+        views=("timeline",),
     ),
 }

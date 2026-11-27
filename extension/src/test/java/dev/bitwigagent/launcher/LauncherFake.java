@@ -78,6 +78,9 @@ public final class LauncherFake {
     boolean strayOnWrite;
 
     boolean applyStop = true;
+    /** Whether Track/Transport.returnToArrangement un-stops the track and stops its launcher clips. */
+    boolean applyReturn = true;
+
     boolean deferCreate, failCreate, failImport, emitCreateContent = true, applyName = true;
     Double pendingSize;
     Integer pendingStart;
@@ -229,19 +232,11 @@ public final class LauncherFake {
             bank.on("getItemAt", a -> slotApis[(Integer) a[0]]);
             bank.on("stop", a -> {
                 playbackDispatches++;
-                if (emitPlaybackState) {
-                    stopQueued = queueStop;
-                    if (!queueStop) {
-                        stopped = true;
-                        for (SlotData data : slots) {
-                            data.playing = false;
-                            data.queued = false;
-                        }
-                    }
-                }
+                if (emitPlaybackState) stop();
                 return null;
             });
             track.attach("clipLauncherSlotBank", bank);
+            track.on("returnToArrangement", a -> returnToArrangement());
             FakeHost devices = FakeHost.of(DeviceBank.class, "devices");
             devices.live("exists", () -> true);
             devices.live("scrollPosition", () -> 0);
@@ -398,6 +393,7 @@ public final class LauncherFake {
         application.live("hasActiveEngine", () -> true);
         FakeHost transport = base.transport;
         transport.live("isPlaying", () -> transportPlaying);
+        transport.on("returnToArrangement", a -> returnToArrangement());
         recordNode = transport.put("isArrangerRecordEnabled", record);
         transport.live("isArrangerAutomationWriteEnabled", () -> arrangerAutomation);
         transport.live("isClipLauncherAutomationWriteEnabled", () -> launcherAutomation);
@@ -547,6 +543,42 @@ public final class LauncherFake {
     }
 
     // ---- refs the module hands out, as a test builds them from this world ----
+
+    /** Milliseconds after which a queued stop applies; 0 leaves it queued. */
+    int stopAfterMs;
+
+    /** A stop as Bitwig shows it: queued first when queueStop (applied after stopAfterMs), else at once. */
+    void stop() {
+        stopQueued = queueStop;
+        if (!queueStop) applyStop();
+        else if (stopAfterMs > 0)
+            tasks.schedule(
+                    () -> {
+                        stopQueued = false;
+                        applyStop();
+                    },
+                    stopAfterMs);
+    }
+
+    private void applyStop() {
+        stopped = true;
+        for (SlotData data : slots) {
+            data.playing = false;
+            data.queued = false;
+        }
+    }
+
+    private Object returnToArrangement() {
+        playbackDispatches++;
+        if (applyReturn) {
+            stopped = false;
+            for (SlotData data : slots) {
+                data.playing = false;
+                data.queued = false;
+            }
+        }
+        return null;
+    }
 
     public JsonObject track() {
         return Refs.track(trackId, trackName);

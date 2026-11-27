@@ -37,12 +37,18 @@ public final class RenderModuleTest {
     void validationIsStrict() {
         valid("export.audio", export(TestPaths.absolute("/tmp"), "master"));
         valid("tracks.bounce", bounce(A));
+        JsonObject p;
         JsonObject flac24 = export(TestPaths.absolute("/tmp"), A);
         flac24.addProperty("fileType", "flac");
         flac24.addProperty("bitDepth", 24);
         valid("export.audio", flac24);
+        for (String types : List.of("\"mp3\"", "\"ogg\"", "\"opus\"", "[\"wav\",\"flac\",\"mp3\",\"ogg\",\"opus\"]")) {
+            p = export(TestPaths.absolute("/tmp"), "master");
+            p.add("fileType", JsonParser.parseString(types));
+            p.addProperty("bitDepth", types.contains("flac") ? 24 : 32);
+            valid("export.audio", p);
+        }
         List<JsonObject> bad = new ArrayList<>();
-        JsonObject p;
         p = export(TestPaths.absolute("/tmp"), "master");
         p.add("sources", new JsonArray());
         bad.add(p);
@@ -67,8 +73,14 @@ public final class RenderModuleTest {
         p = export(TestPaths.absolute("/tmp"), "master");
         p.addProperty("end", 65537);
         bad.add(p);
+        for (String types : List.of("\"aiff\"", "[]", "[\"wav\",\"wav\"]", "[\"wav\",\"aiff\"]")) {
+            p = export(TestPaths.absolute("/tmp"), "master");
+            p.add("fileType", JsonParser.parseString(types));
+            bad.add(p);
+        }
         p = export(TestPaths.absolute("/tmp"), "master");
-        p.addProperty("fileType", "mp3");
+        p.add("fileType", JsonParser.parseString("[\"mp3\",\"flac\"]"));
+        p.addProperty("bitDepth", 32);
         bad.add(p);
         p = export(TestPaths.absolute("/tmp"), "master");
         p.addProperty("bitDepth", 20);
@@ -153,28 +165,41 @@ public final class RenderModuleTest {
     @Test
     void planningNamesFilesAndRefusesExisting() throws IOException {
         Path dir = temp("bwa-render-plan");
-        RenderPlan one = RenderPlan.export(dir, "Mix", 1, "wav", false);
+        RenderPlan one = RenderPlan.export(dir, "Mix", 1, List.of("wav"), false);
         assertTrue(
                 one.files.equals(List.of(dir.resolve("Mix.wav")))
                         && one.basePaths()[0].equals(dir.resolve("Mix").toString()),
                 "one source: <baseName>.<format>, dispatched without the extension Bitwig appends");
-        RenderPlan stems = RenderPlan.export(dir, "Stem", 3, "flac", false);
+        RenderPlan stems = RenderPlan.export(dir, "Stem", 3, List.of("flac"), false);
         assertTrue(
                 stems.files.get(0).equals(dir.resolve("Stem-01.flac"))
                         && stems.files.get(2).equals(dir.resolve("Stem-03.flac")),
                 "several: -01, -02, ...");
+        RenderPlan both = RenderPlan.export(dir, "Both", 2, List.of("wav", "mp3"), false);
+        assertEquals(
+                List.of(
+                        dir.resolve("Both-01.wav"),
+                        dir.resolve("Both-01.mp3"),
+                        dir.resolve("Both-02.wav"),
+                        dir.resolve("Both-02.mp3")),
+                both.files,
+                "one file per source and type, source-major");
+        assertEquals(List.of("wav", "mp3", "wav", "mp3"), both.types);
+        assertEquals(List.of(0, 0, 1, 1), both.sources);
+        assertEquals(2, both.basePaths().length, "one extensionless base per source");
         Files.write(dir.resolve("Mix.wav"), new byte[] {1});
-        assertRpcError("target_exists", () -> RenderPlan.export(dir, "Mix", 1, "wav", false));
+        assertRpcError("target_exists", () -> RenderPlan.export(dir, "Mix", 1, List.of("wav"), false));
         assertTrue(
-                RenderPlan.export(dir, "Mix", 1, "wav", true).before.get(0).exists,
+                RenderPlan.export(dir, "Mix", 1, List.of("wav"), true).before.get(0).exists,
                 "overwrite records the old file for change detection");
         Files.createDirectory(dir.resolve("Dir.wav"));
-        assertRpcError("invalid_target", () -> RenderPlan.export(dir, "Dir", 1, "wav", true));
-        assertRpcError("invalid_target", () -> RenderPlan.export(dir.resolve("missing"), "Mix", 1, "wav", false));
+        assertRpcError("invalid_target", () -> RenderPlan.export(dir, "Dir", 1, List.of("wav"), true));
+        assertRpcError(
+                "invalid_target", () -> RenderPlan.export(dir.resolve("missing"), "Mix", 1, List.of("wav"), false));
         Path locked = Files.createDirectory(dir.resolve("locked"));
         assertTrue(locked.toFile().setWritable(false), "directory made read-only");
         if (!Files.isWritable(locked))
-            assertRpcError("invalid_target", () -> RenderPlan.export(locked, "Mix", 1, "wav", false));
+            assertRpcError("invalid_target", () -> RenderPlan.export(locked, "Mix", 1, List.of("wav"), false));
         assertTrue(locked.toFile().setWritable(true), "directory writable again for cleanup");
     }
 
@@ -233,6 +258,111 @@ public final class RenderModuleTest {
     }
 
     @Test
+    void compressedFilesAreIdentifiedByContainerAndCodec() throws IOException {
+        Path dir = temp("bwa-render-codecs");
+        ProjectSaveAsPlan.Stat none = ProjectSaveAsPlan.Stat.of(dir.resolve("none"));
+        JsonObject row = RenderPlan.inspect(mp3(dir.resolve("a.mp3"), true), none, "mp3", 24, 48000);
+        assertTrue(row.get("valid").getAsBoolean(), "an ID3-tagged mp3");
+        assertEquals("mp3", row.get("codec").getAsString());
+        assertFalse(row.has("bitDepth") || row.has("frames"), "never decoded");
+        assertTrue(
+                RenderPlan.inspect(mp3(dir.resolve("b.mp3"), false), none, "mp3", 16, 44100)
+                        .get("valid")
+                        .getAsBoolean(),
+                "an untagged mp3 starts with a frame sync; bit depth and rate are not checked");
+        assertEquals("not_mp3", problem(Files.write(dir.resolve("c.mp3"), new byte[64]), none, "mp3"));
+        byte[] tagOnly = java.util.Arrays.copyOf(new byte[] {'I', 'D', '3', 4, 0, 0, 0, 0, 0, 20}, 64);
+        assertEquals(
+                "not_mp3",
+                problem(Files.write(dir.resolve("d.mp3"), tagOnly), none, "mp3"),
+                "a tag with no frame after");
+        byte[] footer = java.util.Arrays.copyOf(new byte[] {'I', 'D', '3', 4, 0, 0x10, 0, 0, 0, 20}, 64);
+        footer[40] = (byte) 0xFF;
+        footer[41] = (byte) 0xFB;
+        assertTrue(
+                RenderPlan.inspect(Files.write(dir.resolve("f.mp3"), footer), none, "mp3", 24, 0)
+                        .get("valid")
+                        .getAsBoolean(),
+                "a flagged footer is skipped with the tag");
+        assertEquals(
+                "not_mp3",
+                problem(Files.write(dir.resolve("g.mp3"), new byte[] {(byte) 0xFF, (byte) 0xF9, 0, 0}), none, "mp3"),
+                "reserved layer");
+        assertEquals(
+                "not_mp3",
+                problem(Files.write(dir.resolve("h.mp3"), new byte[] {(byte) 0xFF, (byte) 0xEB, 0, 0}), none, "mp3"),
+                "reserved version");
+        assertEquals(
+                "not_mp3",
+                problem(Files.write(dir.resolve("i.mp3"), new byte[] {(byte) 0xFF}), none, "mp3"),
+                "too short for a frame header");
+        row = RenderPlan.inspect(ogg(dir.resolve("a.ogg"), "\u0001vorbis"), none, "ogg", 24, 0);
+        assertTrue(row.get("valid").getAsBoolean()
+                && row.get("codec").getAsString().equals("vorbis"));
+        row = RenderPlan.inspect(ogg(dir.resolve("a.opus"), "OpusHead"), none, "opus", 24, 0);
+        assertTrue(row.get("valid").getAsBoolean()
+                && row.get("codec").getAsString().equals("opus"));
+        assertEquals("codec_mismatch", problem(ogg(dir.resolve("b.ogg"), "OpusHead"), none, "ogg"));
+        assertEquals("not_ogg", problem(ogg(dir.resolve("c.ogg"), "garbage!"), none, "ogg"));
+        assertEquals("not_ogg", problem(Files.write(dir.resolve("d.opus"), new byte[64]), none, "opus"));
+        assertEquals("not_ogg", problem(Files.write(dir.resolve("e.opus"), new byte[] {'O'}), none, "opus"));
+        assertEquals("missing", problem(dir.resolve("absent.mp3"), none, "mp3"));
+    }
+
+    @Test
+    void aMultiFormatExportRendersEveryTypeInOnePassAndChecksEachFile() throws IOException {
+        Sim sim = new Sim();
+        JsonObject p = export(sim.dir.toString(), "master", A);
+        p.add("fileType", JsonParser.parseString("[\"wav\",\"mp3\",\"ogg\",\"opus\"]"));
+        HostOperation op = sim.start("export.audio", p, 5000);
+        sim.drainUntil(op);
+        JsonObject result = assertOutcome("applied", op);
+        assertEquals(1, sim.dispatches, "one native export renders every type");
+        assertEquals(List.of("wav", "mp3", "ogg", "opus"), sim.options.fileTypes);
+        assertEquals(p.get("fileType"), result.get("fileType"), "the requested list is echoed");
+        JsonArray files = result.getAsJsonArray("files");
+        assertEquals(8, files.size());
+        JsonObject opus = files.get(7).getAsJsonObject();
+        assertEquals(ref(A), opus.get("source"), "rows keep source order, each type under its source");
+        assertEquals("opus", opus.get("codec").getAsString());
+        assertEquals(sim.dir.resolve("Mix-02.opus").toString(), opus.get("file").getAsString());
+        assertEquals("wav", files.get(4).getAsJsonObject().get("fileType").getAsString());
+
+        Sim wrong = new Sim();
+        wrong.codecs = false;
+        p = export(wrong.dir.toString(), "master");
+        p.add("fileType", JsonParser.parseString("[\"wav\",\"opus\"]"));
+        op = wrong.start("export.audio", p, 5000);
+        wrong.drainUntil(op);
+        JsonObject failed = assertUnknown("job_failed", op);
+        assertTrue(failed.toString().contains("not_ogg"), "the WAV was written, the opus file did not verify");
+    }
+
+    private static String problem(Path file, ProjectSaveAsPlan.Stat before, String type) {
+        return RenderPlan.inspect(file, before, type, 24, 0).get("problem").getAsString();
+    }
+
+    static Path mp3(Path file, boolean id3) throws IOException {
+        byte[] frame = {(byte) 0xFF, (byte) 0xFB, (byte) 0x90, 0x64};
+        byte[] out = new byte[128];
+        int at = 0;
+        if (id3) {
+            System.arraycopy(new byte[] {'I', 'D', '3', 4, 0, 0, 0, 0, 0, 20}, 0, out, 0, 10);
+            at = 30; // ten header bytes and a 20-byte tag
+        }
+        System.arraycopy(frame, 0, out, at, frame.length);
+        return Files.write(file, out);
+    }
+
+    /** One Ogg page with a single segment whose packet starts with the codec's identification magic. */
+    static Path ogg(Path file, String magic) throws IOException {
+        ByteBuffer b = ByteBuffer.allocate(28 + 30);
+        b.put("OggS".getBytes()).put(new byte[22]).put((byte) 1).put((byte) 30);
+        b.put(magic.getBytes(java.nio.charset.StandardCharsets.ISO_8859_1));
+        return Files.write(file, b.array());
+    }
+
+    @Test
     void exportWarnsWhenALauncherTrackHasNoArrangerClipInTheRange() throws IOException {
         Sim bare = new Sim();
         bare.launcherContent = true;
@@ -282,11 +412,11 @@ public final class RenderModuleTest {
                     result.getAsJsonArray("warnings").size() == 1
                             && warning.contains(A)
                             && warning.contains("playing a launcher clip")
-                            && warning.contains("switch_playback_to_arranger_for_all_tracks")
+                            && warning.contains("launcher.returnToArrangement target=all")
                             && warning.contains("clips.copy") == !covered,
                     "a playing launcher clip warns with the switch fix, and the copy fix only for an empty arranger");
             assertTrue(
-                    result.get("next").getAsString().contains("switch_playback_to_arranger_for_all_tracks"),
+                    result.get("next").getAsString().contains("launcher.returnToArrangement target=all"),
                     "next names the fix");
         }
 
@@ -302,7 +432,7 @@ public final class RenderModuleTest {
         assertTrue(
                 warning.contains("stopped from the launcher")
                         && warning.contains("renders silent")
-                        && warning.contains("switch_playback_to_arranger_for_all_tracks")
+                        && warning.contains("launcher.returnToArrangement target=all")
                         && !warning.contains("clips.copy")
                         && !result.get("next").getAsString().contains("clips.copy"),
                 "a launcher-stopped track warns even with an arranger clip in range");
@@ -749,7 +879,7 @@ public final class RenderModuleTest {
         final Map<String, List<JsonObject>> clips = new HashMap<>();
 
         java.util.function.Function<List<JsonObject>, List<JsonObject>> afterBounce = before -> new ArrayList<>();
-        boolean finish = true, write = true, garbage, deleteOld, done, lost;
+        boolean finish = true, write = true, garbage, deleteOld, done, lost, codecs = true;
         /** What the launcher reports for every track: null = unobserved. */
         Boolean launcherContent;
         /** Launcher clip playing/queued and launcher-stopped, for every track: null = unobserved. */
@@ -847,20 +977,25 @@ public final class RenderModuleTest {
 
         void complete() {
             try {
-                if (deleteOld) for (String base : paths) Files.deleteIfExists(Path.of(base + "." + options.fileType));
-                if (write)
-                    for (String base : paths) {
-                        Path file = Path.of(base + "." + options.fileType);
-                        if (garbage) Files.write(file, new byte[64]);
-                        else
-                            wav(
-                                    file,
-                                    options.bitDepth == 32 ? 3 : 1,
-                                    2,
-                                    options.sampleRate == 0 ? 48000 : options.sampleRate,
-                                    options.bitDepth,
-                                    480);
-                    }
+                for (String type : options.fileTypes) {
+                    if (deleteOld) for (String base : paths) Files.deleteIfExists(Path.of(base + "." + type));
+                    if (write)
+                        for (String base : paths) {
+                            Path file = Path.of(base + "." + type);
+                            if (garbage || !codecs && !type.equals("wav")) Files.write(file, new byte[64]);
+                            else if (type.equals("mp3")) mp3(file, true);
+                            else if (type.equals("ogg")) ogg(file, "\u0001vorbis");
+                            else if (type.equals("opus")) ogg(file, "OpusHead");
+                            else
+                                wav(
+                                        file,
+                                        options.bitDepth == 32 ? 3 : 1,
+                                        2,
+                                        options.sampleRate == 0 ? 48000 : options.sampleRate,
+                                        options.bitDepth,
+                                        480);
+                        }
+                }
             } catch (IOException error) {
                 throw new AssertionError(error);
             }
