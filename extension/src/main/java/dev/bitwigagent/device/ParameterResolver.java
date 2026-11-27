@@ -88,7 +88,9 @@ public final class ParameterResolver {
         String id = ref.get("id").getAsString();
         switch (ParameterRefs.owner(ref)) {
             case ParameterRefs.DEVICE:
-                return NativeChains.nested(owner) ? new Nested() : direct(ref, devices.device(owner, false), id);
+                return NativeChains.nested(owner)
+                        ? new Nested(devices.device(NativeChains.rootDevice(owner), false))
+                        : direct(ref, devices.device(owner, false), id);
             case ParameterRefs.REMOTE_PAGE:
                 return remote(ref, devices.device(owner.getAsJsonObject("device"), false));
             case ParameterRefs.TRACK:
@@ -145,6 +147,9 @@ public final class ParameterResolver {
     /** One resolved parameter; its snapshot is taken right before dispatch. */
     public abstract static class Resolved {
         public abstract RequestSnapshot snapshot();
+
+        /** The root device the parameter is on or below; null for a track's own parameter. */
+        public abstract DeviceSources.Source device();
     }
 
     final class Direct extends Resolved {
@@ -154,6 +159,11 @@ public final class ParameterResolver {
         Direct(DeviceSources.Source device, String id) {
             this.device = device;
             this.id = id;
+        }
+
+        @Override
+        public DeviceSources.Source device() {
+            return device;
         }
 
         /** Also the id set: a parameter appearing or vanishing on the device changes the target under the request. */
@@ -171,9 +181,20 @@ public final class ParameterResolver {
      * parameter natively and compares the ref there, in the same document-thread pass as the write.
      */
     static final class Nested extends Resolved {
+        private final DeviceSources.Source root;
+
+        Nested(DeviceSources.Source root) {
+            this.root = root;
+        }
+
         @Override
         public RequestSnapshot snapshot() {
             return new RequestSnapshot();
+        }
+
+        @Override
+        public DeviceSources.Source device() {
+            return root;
         }
     }
 
@@ -202,6 +223,11 @@ public final class ParameterResolver {
                         Reason.NOT_READY, "The Remote Control is unobserved, being mapped or awaiting a fresh value.");
             JsonObject owner = ref.getAsJsonObject("owner");
             require(ref, Refs.parameter(page(owner, device, page), ref.get("id").getAsString(), control.name));
+        }
+
+        @Override
+        public DeviceSources.Source device() {
+            return device;
         }
 
         /** Also the remote generation, taken after the page switch settled so the switch itself does not count. */
@@ -233,6 +259,11 @@ public final class ParameterResolver {
         @Override
         public RequestSnapshot snapshot() {
             return RequestSnapshot.of(device);
+        }
+
+        @Override
+        public DeviceSources.Source device() {
+            return device;
         }
 
         /** On the document thread: the owner and parameter now, refused as stale when either is gone or changed. */
@@ -312,6 +343,11 @@ public final class ParameterResolver {
             return new RequestSnapshot()
                     .with(() -> window.at(slot).channelId().get())
                     .with(() -> window.at(slot).position().get());
+        }
+
+        @Override
+        public DeviceSources.Source device() {
+            return null;
         }
     }
 }

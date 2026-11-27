@@ -428,20 +428,6 @@ public final class ParameterModule implements HostModule, ParameterResolver.Dire
         });
     }
 
-    /** A parameter of a device inside a chain as found now: the parameter object, its device and its value. */
-    private static Object bind(NativeChains.Walk walk, JsonObject ref) {
-        NativeChains.Device device = walk.device(ref.getAsJsonObject("owner"), false);
-        String id = ref.get("id").getAsString();
-        Object parameter = Arrays.asList(walk.a.parameterIds(device.device)).contains(id)
-                ? walk.a.parameter(device.device, id)
-                : null;
-        if (parameter == null) throw Errors.targetNotFound(ref, "The device has no such parameter now.");
-        String name = walk.a.parameterName(parameter);
-        JsonObject current = Refs.parameter(device.ref, id, name == null || name.isEmpty() ? null : name);
-        if (!Refs.matches(ref, current, true)) throw Refs.parameterChanged(ref, current);
-        return parameter;
-    }
-
     /** Written and read back in one document-thread pass: the native value reflects the write at once. */
     private void nestedSet(HostOperation op, JsonObject ref, ValueInput input, JsonObject expect) {
         if (input.form == ValueInput.Form.DISPLAY) {
@@ -451,7 +437,7 @@ public final class ParameterModule implements HostModule, ParameterResolver.Dire
         double applied = step(input.normalized("value"));
         JsonElement asked = input.bare;
         chains.run(op, ref.getAsJsonObject("owner"), walk -> {
-            Object parameter = bind(walk, ref);
+            Object parameter = walk.parameter(ref);
             double before = walk.a.value(parameter);
             requireExpected(expect, before);
             if (Math.abs(before - applied) <= TOLERANCE)
@@ -495,7 +481,7 @@ public final class ParameterModule implements HostModule, ParameterResolver.Dire
         Runnable safety = transportSafety.writeGuard(op, true);
         JsonObject owner = ref.getAsJsonObject("owner");
         NativeParameterPort port =
-                new NativeParameterPort(chains, scheduler, op, owner, walk -> bind(walk, ref), safety);
+                new NativeParameterPort(chains, scheduler, op, owner, walk -> walk.parameter(ref), safety);
         chains.async(
                 op,
                 owner,

@@ -54,7 +54,7 @@ Java `core` holds the extension's shared protocol mechanisms; Python `core` is t
 Known couplings (follow-up; `tests/test_java_packages.py` is tightened once they are gone):
 
 - Domain packages still name `nativehost.Native*` classes directly instead of going only through their ports.
-- `nativehost` still builds JSON and calls domain rules (for example `AutomationModule` helpers).
+- `nativehost` still builds JSON and calls domain rules (for example `NativeRoutingAccess`); `NativeAutomationAccess` only reads and writes points.
 - `core.HostOperation` implements `rpc.RpcServer.Expiring`.
 - `core.Results` takes `host.ProjectState.Readiness`.
 - `host.DeviceSources` calls `device.NativeChains.nested`.
@@ -79,7 +79,7 @@ Known couplings (follow-up; `tests/test_java_packages.py` is tightened once they
 - `GridModule` separates target/RPC guards from bounded graph serialization and scalar, boolean-panel and topology writers. `GridTopologyQuarantine` serializes native topology lifetimes and keeps one quarantine record per Grid device, released only by `ack` after a graph re-check.
 - `ProjectModule` owns `project.save` (public Save action) and `project.saveAs`; `ProjectSaveAsPlan` mirrors the native folder rules host-free and `NativeProjectSaveAsAccess` calls the dialog-free save pipeline with a completion callback.
 - `RenderModule` owns `export.audio` and `tracks.bounce` (followed with `jobs.get`); `RenderPlan` names the output files and checks their headers host-free, and `NativeRenderAccess` starts the native render jobs and exposes their completion latch (bounce readback reuses `NativeArrangerAccess`).
-- `MixModule` owns `tracks.get/set/select/sends.set` and the `brief` row `context.get` uses; `TrackLifecycleModule` owns `tracks.insert/group/delete` (a named group is created and named inside one native transaction, so one Undo); `MeterModule` owns `meters.get`; `AutomationModule` resolves its parameter ref (a track's volume or pan, or a Grid module parameter) through `ParameterResolver`.
+- `MixModule` owns `tracks.get/set/select/sends.set` and the `brief` row `context.get` uses; `TrackLifecycleModule` owns `tracks.insert/group/delete` (a named group is created and named inside one native transaction, so one Undo); `MeterModule` owns `meters.get`; `AutomationModule` resolves its parameter ref (a track's volume or pan, a device's direct parameter, or a Grid module parameter) through `ParameterResolver`; `AutomationPlan` is the pure planner its port runs inside the native transaction (compat layer §2.2 rule 6).
 - `RoutingModule` owns `tracks.routing.*` and `devices.sidechain.*` (validation, bank/device targets, stopped-transport safety and quarantine); `NativeRoutingAccess` binds the native output/input choosers and sidechain components, enforces audio/note kinds, checks cycles before writing and reads every write back by identity.
 - `ModulatorModule` answers `modulators.list`/`get` from `ModulatorEditor` (typed rows with refs) and `ModulatorSnapshotReader` (bounded, nonloading string-panel rows). They share root target/read-context machinery, not Grid write authority.
 - `ModulatorEditModule` (RPC boundary), `ModulatorEditor` (ref resolution, `expect`, dispatch, readback) and `NativeModulatorEditAccess` (descriptors) own device-modulator edits, including the control writes `parameters.set` routes to them. They reuse the Grid parameter reader for typed values and Grid targets, and the Grid parameter/topology context checks, but not Grid write authority or topology quarantine.
