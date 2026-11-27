@@ -357,7 +357,6 @@ OPERATORS = {
     "pan": 0.5,
     "gain": 0,
     "transpose": -96,
-    "formant": 1,
 }
 
 

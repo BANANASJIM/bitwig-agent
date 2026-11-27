@@ -73,7 +73,7 @@ Occurrence = Literal[
     "fill",
     "not_fill",
 ]
-EXPRESSIONS = ("timbre", "pressure", "pan", "gain", "transpose", "formant")
+EXPRESSIONS = ("timbre", "pressure", "pan", "gain", "transpose")
 FEATURES = (
     "chance",
     "velocitySpread",
@@ -96,7 +96,8 @@ class Repeat(StrictModel):
     turning repeats on needs count."""
 
     count: Annotated[int, Field(ge=-127, le=127)] = omitted(
-        description="Repeats: positive splits the note into that many; negative is Bitwig's rate-based repeat."
+        description="Repeats: positive adds that many after the note (Bitwig shows count + 1); negative is Bitwig's "
+        "rate-based repeat; 0 is off."
     )
     curve: Bipolar = omitted(description="Timing curve of the repeats -1..1.")
     velocityEnd: Bipolar = omitted(description="Velocity change toward the last repeat -1..1.")
@@ -121,7 +122,7 @@ class Recurrence(StrictModel):
 class NoteFeatures(StrictModel):
     """Operators and expressions of a note: present means on, null means off; notes.get lists only those not at default."""
 
-    chance: Unit | None = nullable("Chance 0..1 that the note plays (Bitwig rolls it per loop pass); null: off.")
+    chance: Unit | None = nullable("Chance 0..1 that the note plays (Bitwig rolls it per loop pass); 1 or null: off.")
     velocitySpread: Unit | None = nullable("Random velocity range 0..1 around velocity; null: 0.")
     releaseVelocity: Annotated[int, Field(ge=0, le=127)] | None = nullable("Note-off velocity 0..127; null: 100.")
     repeat: Repeat | None = nullable("Repeats {count, curve, velocityEnd, velocityCurve}; null: off.")
@@ -134,11 +135,10 @@ class NoteFeatures(StrictModel):
     timbre: Bipolar | None = nullable("Expression at the note start -1..1; native only; null: 0.")
     pressure: Unit | None = nullable("Expression at the note start 0..1; native only; null: 0.")
     pan: Bipolar | None = nullable("Expression at the note start -1..1; native only; null: 0.")
-    gain: Unit | None = nullable("Expression at the note start 0..1; native only; null: 0.5.")
+    gain: Unit | None = nullable("Expression at the note start 0..1 (0.5 = 0 dB); native only; null: 0.5.")
     transpose: Annotated[float, Field(ge=-96, le=96)] | None = nullable(
         "Expression at the note start in semitones -96..96; native only; null: 0."
     )
-    formant: Bipolar | None = nullable("Expression at the note start -1..1; native only; null: 0.")
 
 
 class ClipNoteFields(StrictModel):
@@ -554,7 +554,7 @@ CLIPS_GET_DESCRIPTION = (
 NOTE_RULES = (
     "A note is {beat, pitch, velocity 1..127, duration, channel (omitted = 0)}, the record notes.get reads, plus "
     "operators (chance, velocitySpread, releaseVelocity, repeat, recurrence, occurrence, muted) and note expressions "
-    "(timbre, pressure, pan, gain, transpose, formant; native path only), listed only when on or not default. Beats and "
+    "(timbre, pressure, pan, gain, transpose; native path only), listed only when on or not default. Beats and "
     "durations are compared as Bitwig stores them (1/1048576 beat). No two notes on one channel, pitch and beat; no "
     "overlap on one channel and pitch. Every broken rule is refused at once, each with its index and a fix, and "
     "nothing is written. "

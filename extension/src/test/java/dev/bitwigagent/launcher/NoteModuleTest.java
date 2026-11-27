@@ -263,9 +263,7 @@ public final class NoteModuleTest {
         assertEquals(new NoteFeatures.Repeat(3, 0, -0.25, 0), f.at(0, 0, 3, 48).features.repeat);
         assertTrue(LauncherFake.Stored.operatorWrites > 0);
         JsonObject read = f.call("notes.get", target(f, 0));
-        assertEquals(
-                "timbre, pressure, pan, gain, transpose, formant",
-                read.get("unreadFields").getAsString());
+        assertEquals(new com.google.gson.Gson().toJsonTree(NoteFeatures.EXPRESSION_KEYS), read.get("unreadFields"));
         JsonObject p = set(f, 0, range(0, 4));
         p.add("notes", read.getAsJsonArray("notes"));
         JsonObject echo = f.call("notes.set", p);
@@ -296,7 +294,7 @@ public final class NoteModuleTest {
         HostOperation op =
                 f.startAndDrain("notes.set", set(f, 0, null, obj("{\"beat\":1,\"pitch\":64,\"timbre\":0.5}")));
         String message = assertRpcError("native_unavailable", op).getMessage();
-        assertTrue(message.contains("Without the native note binding timbre are not written"), message);
+        assertTrue(message.contains("Without the native note binding these fields are not written: timbre"), message);
         assertFalse(op.dispatched());
         assertEquals(5, f.selected, "nothing was selected");
         HostOperation neutral =

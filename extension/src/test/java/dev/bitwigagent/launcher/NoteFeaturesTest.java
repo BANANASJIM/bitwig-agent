@@ -15,8 +15,7 @@ final class NoteFeaturesTest {
     private static final String ALL = "{\"chance\":0.85,\"velocitySpread\":0.2,\"releaseVelocity\":0,"
             + "\"repeat\":{\"count\":-3,\"curve\":0.3,\"velocityEnd\":-0.4,\"velocityCurve\":1.0},"
             + "\"recurrence\":{\"length\":4,\"mask\":[false,false,false,true]},\"occurrence\":\"not_prev_key\","
-            + "\"muted\":true,\"timbre\":-1.0,\"pressure\":0.6,\"pan\":0.5,\"gain\":0.0,\"transpose\":12.5,"
-            + "\"formant\":0.25}";
+            + "\"muted\":true,\"timbre\":-1.0,\"pressure\":0.6,\"pan\":0.5,\"gain\":0.0,\"transpose\":12.5}";
 
     private static NoteFeatures patch(NoteFeatures base, String json) {
         return NoteFeatures.Patch.of(obj(json)).apply(base);
@@ -114,6 +113,10 @@ final class NoteFeaturesTest {
     void occurrenceUsesTheApiNamesInLowerCase() {
         for (NoteOccurrence o : NoteOccurrence.values()) {
             NoteFeatures f = patch(NoteFeatures.NONE, "{\"occurrence\":\"" + NoteFeatures.wire(o) + "\"}");
+            if (o == NoteOccurrence.ALWAYS) {
+                assertEquals(NoteFeatures.NONE, f, "always is the neutral condition: off");
+                continue;
+            }
             assertEquals(o, f.occurrence);
             assertEquals(NoteFeatures.wire(o), record(f).get("occurrence").getAsString());
         }
@@ -128,19 +131,37 @@ final class NoteFeaturesTest {
         assertEquals((12 + 96) / 192.0, Expression.TRANSPOSE.toStored(12), 1e-12, "(v + 96) / 192");
         assertEquals(0.6, Expression.PRESSURE.toStored(0.6), 1e-12, "unipolar: as is");
         assertEquals(0.3, Expression.GAIN.toStored(0.3), 1e-12);
-        for (Expression e : Expression.values()) {
-            assertEquals(e.min, e.fromStored(0), 1e-12);
-            assertEquals(e.max, e.fromStored(1), 1e-12);
+        // A curve point reads in natural units (6.1.7): the record's units, gain as twice the stored value.
+        assertEquals(-0.5, Expression.PAN.fromPoint(-0.5), 1e-12, "pan -0.5 reads -0.5, not -2");
+        assertEquals(12, Expression.TRANSPOSE.fromPoint(12), 1e-12, "transpose 12 reads 12, not 2208");
+        assertEquals(0.75, Expression.GAIN.fromPoint(1.5), 1e-12, "gain stored 0.75 reads 1.5 (+10.6 dB)");
+        assertEquals(0.5f, Expression.GAIN.neutral, "stored 0.5 reads 1.0 = 0 dB");
+        for (Expression e : Expression.values())
             for (double v = e.min; v <= e.max; v += (e.max - e.min) / 7) {
                 NoteFeatures written =
                         new NoteFeatures.Builder().expression(e, v).build();
+                double point = e == Expression.GAIN ? 2 * e.toStored(written.expression(e)) : written.expression(e);
                 NoteFeatures read = new NoteFeatures.Builder()
-                        .expression(e, e.fromStored(e.toStored(written.expression(e))))
+                        .expression(e, e.fromPoint(point))
                         .build();
-                assertEquals(written, read, e.wire + " " + v + " round-trips through the stored value");
+                assertEquals(written, read, e.wire + " " + v + " round-trips through Bitwig's setter and point");
             }
-        }
-        assertEquals(0.5f, Expression.GAIN.neutral);
+    }
+
+    @Test
+    void anOperatorAtItsNeutralValueIsOffWhateverItsSwitchSays() {
+        NoteFeatures.Builder fresh = new NoteFeatures.Builder();
+        fresh.chance = 1.0;
+        fresh.repeat = new Repeat(0, 0.3, 0, 0);
+        fresh.recurrence = Recurrence.ALWAYS;
+        fresh.occurrence = NoteOccurrence.ALWAYS;
+        assertEquals(NoteFeatures.NONE, fresh.build(), "Bitwig's new note: switches on, neutral values");
+        assertEquals(new JsonObject(), record(fresh.build()));
+        assertEquals(NoteFeatures.NONE, patch(NoteFeatures.NONE, "{\"chance\":1,\"repeat\":{\"count\":0}}"));
+        assertNotEquals(
+                NoteFeatures.NONE, patch(NoteFeatures.NONE, "{\"recurrence\":{\"length\":1,\"mask\":[false]}}"));
+        assertNotEquals(
+                NoteFeatures.NONE, patch(NoteFeatures.NONE, "{\"recurrence\":{\"length\":2,\"mask\":[true,true]}}"));
     }
 
     @Test

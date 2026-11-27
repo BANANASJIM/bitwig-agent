@@ -184,7 +184,7 @@ final class NativeNoteFeatures {
         }
     }
 
-    /** Timbre, pressure, pan, gain, transpose and formant: the start value of each curve. */
+    /** Timbre, pressure, pan, gain and transpose: the start value of each curve. */
     private static final class Expressions {
         private final NativeHost.Access a;
         private final Class<?> curve, point, clipContent;
@@ -230,7 +230,7 @@ final class NativeNoteFeatures {
                 if (!point.isInstance(first))
                     throw Errors.notApplied(
                             Reason.UNSUPPORTED_SCOPE, "A note's " + e.wire + " point is not a value point.");
-                b.expression(e, e.fromStored(number(a, value, first)));
+                b.expression(e, e.fromPoint(number(a, value, first)));
             }
         }
 

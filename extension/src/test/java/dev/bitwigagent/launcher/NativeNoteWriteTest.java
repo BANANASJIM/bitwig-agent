@@ -82,6 +82,7 @@ public final class NativeNoteWriteTest {
         assertNull(f.at(0, 0, 1, 64), "the unlisted note in the range is removed");
         assertNotNull(f.at(0, 0, .375, 67), "pitch 67 lies outside range.pitches");
         assertEquals(0, f.writes, "no public setter");
+        assertFalse(f.services.holds.held(LauncherStructureLock.MUTATION), "a write read back as planned is released");
     }
 
     @Test
@@ -116,6 +117,8 @@ public final class NativeNoteWriteTest {
         assertTrue(op.dispatched());
         assertEquals("unknown", op.result.join().get("outcome").getAsString());
         assertEquals(1, f.nativeNotes.transactions);
+        assertTrue(f.services.holds.held(LauncherStructureLock.MUTATION), "a possibly partial write holds the slot");
+        assertRpcError("unresolved", f.startAndDrain("notes.set", set(f, 0, null, note(3.5, 50, 90, .25))));
     }
 
     @Test
@@ -128,6 +131,8 @@ public final class NativeNoteWriteTest {
         assertFalse(out.has("verification"));
         assertEquals(array(note(3, 50, 90, .5)), out.getAsJsonObject("mismatch").get("missing"));
         assertEquals(new JsonArray(), out.getAsJsonObject("mismatch").get("unexpected"));
+        assertTrue(out.has("next"), "inspect, then ack the hold");
+        assertTrue(f.services.holds.held(LauncherStructureLock.MUTATION));
     }
 
     @Test
@@ -313,12 +318,10 @@ public final class NativeNoteWriteTest {
         f.nativeNotes.unread = NoteFeatures.EXPRESSION_KEYS;
         JsonObject read = f.call("notes.get", target(f, 0));
         assertTrue(read.get("exact").getAsBoolean());
-        assertEquals(
-                "timbre, pressure, pan, gain, transpose, formant",
-                read.get("unreadFields").getAsString());
+        assertEquals(new com.google.gson.Gson().toJsonTree(NoteFeatures.EXPRESSION_KEYS), read.get("unreadFields"));
         HostOperation op = f.startAndDrain("notes.set", set(f, 0, null, obj("{\"beat\":1,\"pitch\":64,\"pan\":null}")));
         String message = assertRpcError("native_unavailable", op).getMessage();
-        assertTrue(message.contains("cannot read or write pan"), message);
+        assertTrue(message.contains("cannot read or write these fields: pan"), message);
         assertEquals(0, f.nativeNotes.transactions);
         JsonObject chance = f.call("notes.set", set(f, 0, null, obj("{\"beat\":1,\"pitch\":64,\"chance\":0.5}")));
         assertEquals("one_step", chance.get("undo").getAsString(), "operators bind on their own");

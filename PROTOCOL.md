@@ -311,18 +311,19 @@ A note record also carries Bitwig's operators and note expressions. `notes.get` 
 
 | Field | Values | Off / default |
 |---|---|---|
-| `chance` | 0–1, the chance the note plays (rolled per loop pass) | absent: Chance off |
+| `chance` | 0–1, the chance the note plays (rolled per loop pass) | absent: Chance off (or 1) |
 | `velocitySpread` | 0–1, random velocity range around `velocity` | 0 |
 | `releaseVelocity` | MIDI 0–127 | 100 (Bitwig's value for a new note) |
-| `repeat` | `{count, curve, velocityEnd, velocityCurve}`: `count` −127–127 (positive splits the note into that many repeats, negative is Bitwig's rate-based repeat), the others −1–1 | absent: Repeats off. Without `range`, omitted members keep an enabled repeat's values; with `range` they are 0. Turning repeats on needs `count` (the others then start at 0) |
-| `recurrence` | `{length, mask}`: a cycle of `length` (1–8) loop passes, `mask` one boolean per pass (true: the note plays on that pass) | absent: Recurrence off |
-| `occurrence` | `always`, `first`, `not_first`, `prev`, `not_prev`, `prev_channel`, `not_prev_channel`, `prev_key`, `not_prev_key`, `fill`, `not_fill` (Bitwig's 11 conditions) | absent: Occurrence off |
+| `repeat` | `{count, curve, velocityEnd, velocityCurve}`: `count` −127–127 (positive adds that many repeats after the note, so Bitwig's Inspector shows `count + 1` and draws the note in `count + 1` parts; negative is Bitwig's rate-based repeat), the others −1–1 | absent: Repeats off (or `count` 0). Without `range`, omitted members keep an enabled repeat's values; with `range` they are 0. Turning repeats on needs `count` (the others then start at 0) |
+| `recurrence` | `{length, mask}`: a cycle of `length` (1–8) loop passes, `mask` one boolean per pass (true: the note plays on that pass) | absent: Recurrence off (or `{length:1, mask:[true]}`) |
+| `occurrence` | `always`, `first`, `not_first`, `prev`, `not_prev`, `prev_channel`, `not_prev_channel`, `prev_key`, `not_prev_key`, `fill`, `not_fill` (Bitwig's 11 conditions) | absent: Occurrence off (or `always`) |
 | `muted` | `true` | false |
 | `timbre`, `pan` | −1–1 | 0 |
-| `formant` | −1–1, native only; range and conversion unverified until a native check (assumed like `timbre`) | 0 |
 | `pressure` | 0–1 | 0 |
-| `gain` | 0–1 | 0.5 (assumed neutral, unverified until a native check) |
+| `gain` | 0–1 (0.5 is 0 dB, 1 is +18 dB) | 0.5 |
 | `transpose` | semitones −96–96 | 0 |
+
+An operator at its neutral value counts as off whatever its switch shows: Bitwig's new notes have Chance, Repeats, Recurrence and Occurrence switched on at chance 1, count 0, `{length:1, mask:[true]}` and `always`, which play like off, so `notes.get` omits them and they compare equal to an operator that is off; `null` writes that neutral value. Formant is not part of the record: Bitwig's own setter fails on it (6.1.7), so it is neither read nor written.
 
 The randomness stays in Bitwig: the record holds the rule (`chance: 0.85`, `recurrence:{length:4, mask:[false,false,false,true]}`), Bitwig rolls it while playing, and what you read back is the rule, not a played result.
 
@@ -373,7 +374,7 @@ Shared by `notes.set` and `clips.insert` (launcher and arranger). Any onset and 
 
 #### One Undo step
 
-With the native note binding (the supported Bitwig 6.1.4 and 6.1.7 JARs) every note of a `notes.set` call (and of a launcher `clips.insert`) is written as one Undo step, `undo:"one_step"`. Bitwig's public setters post one document event per note, each its own outermost transaction and so its own Undo step; instead one native document task resolves the slot's clip (track UUID, clip name and slot identity checked natively), reads every note row of the clip, runs the range rule against them (the same pure planner the public path and the CI fakes use) and, when the change is not empty, deletes the removed and replaced notes and adds the written ones inside one transaction labelled "Edit Notes" (inner transactions merge into it), sets each written note's operators and expressions there too (the native setters the public note step calls end in), then reads every row back, operators and expressions included. The write passes no editor selection, so it neither clears nor selects notes, and nothing is selected afterwards. A refusal is an error and nothing is written; a failure after the transaction opened is `unknown`. When nothing differs no transaction opens (`undo:"none"`). Without the exact binding (another host version or JAR) the module falls back to the public note grid: `undo:"per_note"`, one Undo step per note.
+With the native note binding (the supported Bitwig 6.1.4 and 6.1.7 JARs) every note of a `notes.set` call (and of a launcher `clips.insert`) is written as one Undo step, `undo:"one_step"`. Bitwig's public setters post one document event per note, each its own outermost transaction and so its own Undo step; instead one native document task resolves the slot's clip (track UUID, clip name and slot identity checked natively), reads every note row of the clip, runs the range rule against them (the same pure planner the public path and the CI fakes use) and, when the change is not empty, deletes the removed and replaced notes and adds the written ones inside one transaction labelled "Edit Notes" (inner transactions merge into it), sets each written note's operators and expressions there too (the native setters the public note step calls end in), then reads every row back, operators and expressions included. The write passes no editor selection, so it neither clears nor selects notes, and nothing is selected afterwards. A refusal is an error and nothing is written; a failure after the transaction opened is `unknown`, because what ran before it stays committed as that one step, and so is a readback that differs from the plan (`readback_mismatch`): both hold the slot (`next`) until you `notes.get` it and `ack` the hold. When nothing differs no transaction opens (`undo:"none"`). Without the exact binding (another host version or JAR) the module falls back to the public note grid: `undo:"per_note"`, one Undo step per note.
 
 ### Track tree and grouping
 

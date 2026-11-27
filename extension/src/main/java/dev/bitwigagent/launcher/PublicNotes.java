@@ -348,23 +348,33 @@ final class PublicNotes {
         return b.build();
     }
 
-    /** Sets a note step's operators to {@code f}; the step's setters skip a value it already shows. */
+    /**
+     * Sets a note step's operators to {@code f}; the step's setters skip a value it already shows. An operator that is
+     * off gets its neutral value when its switch is on (Bitwig's new-note state), and is left alone when it is off.
+     */
     static void write(NoteStep s, NoteFeatures f) {
-        s.setIsChanceEnabled(f.chance != null);
-        if (f.chance != null) s.setChance(f.chance);
+        if (f.chance != null) {
+            s.setIsChanceEnabled(true);
+            s.setChance(f.chance);
+        } else if (s.isChanceEnabled()) s.setChance(1);
         s.setVelocitySpread(f.velocitySpread);
         s.setReleaseVelocity(f.releaseVelocity / 127.0);
-        s.setIsRepeatEnabled(f.repeat != null);
         if (f.repeat != null) {
+            s.setIsRepeatEnabled(true);
             s.setRepeatCount(f.repeat.count);
             s.setRepeatCurve(f.repeat.curve);
             s.setRepeatVelocityEnd(f.repeat.velocityEnd);
             s.setRepeatVelocityCurve(f.repeat.velocityCurve);
-        }
-        s.setIsRecurrenceEnabled(f.recurrence != null);
-        if (f.recurrence != null) s.setRecurrence(f.recurrence.length, f.recurrence.mask);
-        s.setIsOccurrenceEnabled(f.occurrence != null);
-        if (f.occurrence != null) s.setOccurrence(f.occurrence);
+        } else if (s.isRepeatEnabled()) s.setRepeatCount(0);
+        if (f.recurrence != null) {
+            s.setIsRecurrenceEnabled(true);
+            s.setRecurrence(f.recurrence.length, f.recurrence.mask);
+        } else if (s.isRecurrenceEnabled())
+            s.setRecurrence(NoteFeatures.Recurrence.ALWAYS.length, NoteFeatures.Recurrence.ALWAYS.mask);
+        if (f.occurrence != null) {
+            s.setIsOccurrenceEnabled(true);
+            s.setOccurrence(f.occurrence);
+        } else if (s.isOccurrenceEnabled()) s.setOccurrence(com.bitwig.extension.controller.api.NoteOccurrence.ALWAYS);
         s.setIsMuted(f.muted);
     }
 

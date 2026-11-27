@@ -111,8 +111,9 @@ public final class NoteModule implements HostModule {
         throw Errors.notApplied(
                 Reason.NATIVE_UNAVAILABLE,
                 (nativePath
-                                ? "This Bitwig's native note binding cannot read or write " + fields
-                                : "Without the native note binding " + fields + " are not written: " + PUBLIC_UNREAD)
+                                ? "This Bitwig's native note binding cannot read or write these fields: " + fields
+                                : "Without the native note binding these fields are not written: " + fields + " ("
+                                        + PUBLIC_UNREAD + ")")
                         + ". Nothing was written.");
     }
 
@@ -152,6 +153,7 @@ public final class NoteModule implements HostModule {
         String id = target.id(), expected = target.slot.api.name().get();
         Runnable check = state.nativeCheck(op, target);
         List<Note> before = new ArrayList<>();
+        Object[] hold = new Object[1];
         access.execute(() -> {
             try {
                 NativeNotes.Observed after = access.edit(
@@ -166,8 +168,10 @@ public final class NoteModule implements HostModule {
                         () -> {
                             check.run();
                             op.markDispatched();
+                            hold[0] = state.hold(target, "notes.set");
                         });
-                scheduler.schedule(op, () -> op.result.complete(nativeWritten(target, range, plan, before, after)), 0);
+                scheduler.schedule(
+                        op, () -> op.result.complete(nativeWritten(target, range, plan, before, after, hold[0])), 0);
             } catch (RuntimeException | Error failure) {
                 op.fail(failure);
             }
@@ -179,17 +183,20 @@ public final class NoteModule implements HostModule {
             NoteRange range,
             NotePlan plan,
             List<Note> before,
-            NativeNotes.Observed after) {
+            NativeNotes.Observed after,
+            Object hold) {
         RangeEdit.Change<Note> change = plan.change;
         JsonObject out;
         if (change.isEmpty()) out = Results.outcome(Outcome.ALREADY_MATCHED, Verification.NATIVE_READBACK);
         else {
             List<Note> expected = new ArrayList<>(RangeEdit.apply(before, change));
             JsonObject mismatch = mismatch(expected, after.notes);
-            if (mismatch == null) out = Results.outcome(Outcome.APPLIED, Verification.NATIVE_READBACK);
-            else {
-                out = Results.unknown();
-                out.addProperty("reason", Reason.READBACK_MISMATCH.wire());
+            if (mismatch == null) {
+                out = Results.outcome(Outcome.APPLIED, Verification.NATIVE_READBACK);
+                state.release(hold);
+            } else {
+                out = state.unresolved(
+                        new JsonObject(), Reason.READBACK_MISMATCH, "The notes did not read back as planned.");
                 out.add("mismatch", mismatch);
             }
         }
@@ -345,7 +352,10 @@ public final class NoteModule implements HostModule {
 
     /** Record keys this read could not see; absent when it saw every field. */
     private static void unreadFields(JsonObject out, List<String> unread) {
-        if (!unread.isEmpty()) out.addProperty("unreadFields", String.join(", ", unread));
+        if (unread.isEmpty()) return;
+        JsonArray keys = new JsonArray();
+        for (String key : unread) keys.add(key);
+        out.add("unreadFields", keys);
     }
 
     private static JsonObject loop(double start, double length) {

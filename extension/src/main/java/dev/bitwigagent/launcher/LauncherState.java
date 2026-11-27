@@ -193,6 +193,17 @@ public final class LauncherState implements RenderModule.LauncherContent {
         holds.place(LauncherStructureLock.MUTATION, mutation, mutation::description);
     }
 
+    /** Holds the slot for a write dispatched outside the cursor flow; {@link #release} once it read back as planned. */
+    Object hold(Target target, String method) {
+        Mutation mutation = new Mutation(target, method);
+        holds.place(LauncherStructureLock.MUTATION, mutation, mutation::description);
+        return mutation;
+    }
+
+    void release(Object hold) {
+        holds.release(LauncherStructureLock.MUTATION, hold);
+    }
+
     long contentBefore() {
         return cursorMutation.contentBefore;
     }

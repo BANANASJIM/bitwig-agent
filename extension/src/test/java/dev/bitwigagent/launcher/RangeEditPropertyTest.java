@@ -80,7 +80,7 @@ final class RangeEditPropertyTest {
                     b.recurrence = rec;
                     b.occurrence = occurrence;
                     b.muted = release % 2 == 0;
-                    return b.expression(expression, expression.fromStored(stored))
+                    return b.expression(expression, expression.min + stored * (expression.max - expression.min))
                             .build();
                 });
         return Arbitraries.frequencyOf(
@@ -322,7 +322,7 @@ final class RangeEditPropertyTest {
                 new NotePlan(NotePlan.listed(patches), null, true).plan(observed, Long.MAX_VALUE);
         assertTrue(change.remove.isEmpty() && change.insert.isEmpty());
         for (RangeEdit.Update<Note> u : change.update) {
-            assertEquals(NoteFeatures.f32(chance), u.after.features.chance);
+            assertEquals(NoteFeatures.f32(chance) == 1f ? null : NoteFeatures.f32(chance), u.after.features.chance);
             assertNull(u.after.features.repeat, "null turns repeats off");
             assertEquals(u.before.velocity, u.after.velocity);
             assertEquals(u.before.duration, u.after.duration);

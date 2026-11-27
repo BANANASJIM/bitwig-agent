@@ -40,38 +40,40 @@ public final class NoteFeatures {
     }
 
     /**
-     * A note expression: the value at the note's start, in the units of the public API setters. Bitwig stores each as
-     * a curve of 0..1 points; the stored value is {@code (value - min) / (max - min)} (the API's conversion for timbre,
-     * pan and transpose, the identity for pressure and gain). Formant has no API setter: its range and conversion are
-     * assumed like timbre's until a native check confirms them.
+     * A note expression: the value at the note's start, in the units of the public API setters. The setter takes the
+     * stored 0..1 value {@code (value - min) / (max - min)} (the API's conversion for timbre, pan and transpose, the
+     * identity for pressure and gain); a curve point reads back in natural units, which are the record's units except
+     * for gain, whose point reads twice the stored value (gain 0..2, 60 * log10 dB; stored 0.5 = 0 dB is neutral;
+     * native E2E on 6.1.7). Formant is not in the record: Bitwig's setter fails on it.
      */
     public enum Expression {
-        TIMBRE("timbre", -1, 1, 0),
-        PRESSURE("pressure", 0, 1, 0),
-        PAN("pan", -1, 1, 0),
-        GAIN("gain", 0, 1, 0.5),
-        TRANSPOSE("transpose", -96, 96, 0),
-        FORMANT("formant", -1, 1, 0);
+        TIMBRE("timbre", -1, 1, 0, 1),
+        PRESSURE("pressure", 0, 1, 0, 1),
+        PAN("pan", -1, 1, 0, 1),
+        GAIN("gain", 0, 1, 0.5, 2),
+        TRANSPOSE("transpose", -96, 96, 0, 1);
 
         public final String wire;
-        final double min, max;
+        final double min, max, point;
         /** The value of a note without a curve for this expression. */
         public final float neutral;
 
-        Expression(String wire, double min, double max, double neutral) {
+        Expression(String wire, double min, double max, double neutral, double point) {
             this.wire = wire;
             this.min = min;
             this.max = max;
             this.neutral = (float) neutral;
+            this.point = point;
         }
 
-        /** The 0..1 point value Bitwig stores for {@code value}. */
+        /** The 0..1 value Bitwig's setter takes for {@code value}. */
         public double toStored(double value) {
             return (value - min) / (max - min);
         }
 
-        public double fromStored(double stored) {
-            return min + stored * (max - min);
+        /** The record's value for a curve point's value. */
+        public double fromPoint(double pointValue) {
+            return pointValue / point;
         }
     }
 
@@ -125,6 +127,9 @@ public final class NoteFeatures {
             this.length = length;
             this.mask = mask & ((1 << length) - 1);
         }
+
+        /** One pass that plays: every pass plays, Bitwig's value for a new note. */
+        public static final Recurrence ALWAYS = new Recurrence(1, 1);
 
         public static Recurrence unpack(int packed) {
             return new Recurrence((packed & 7) + 1, (packed >> 3) & 0xff);
@@ -204,13 +209,18 @@ public final class NoteFeatures {
     public final boolean muted;
     private final float[] expression;
 
+    /**
+     * An operator at its neutral value is off whatever its switch says: Bitwig's new notes (API and GUI alike) have
+     * chance, repeats, recurrence and occurrence switched on at chance 1, count 0, a one-pass cycle that plays and
+     * always (native E2E on 6.1.7), and they play like notes with them off.
+     */
     private NoteFeatures(Builder b) {
-        chance = b.chance == null ? null : f32(b.chance);
+        chance = b.chance == null || f32(b.chance) == 1f ? null : f32(b.chance);
         velocitySpread = f32(b.velocitySpread);
         releaseVelocity = b.releaseVelocity;
-        repeat = b.repeat;
-        recurrence = b.recurrence;
-        occurrence = b.occurrence;
+        repeat = b.repeat == null || b.repeat.count == 0 ? null : b.repeat;
+        recurrence = b.recurrence == null || b.recurrence.equals(Recurrence.ALWAYS) ? null : b.recurrence;
+        occurrence = b.occurrence == NoteOccurrence.ALWAYS ? null : b.occurrence;
         muted = b.muted;
         expression = new float[b.expression.length];
         for (int i = 0; i < expression.length; i++) expression[i] = f32(b.expression[i]);

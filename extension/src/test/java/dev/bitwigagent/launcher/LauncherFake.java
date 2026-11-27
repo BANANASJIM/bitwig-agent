@@ -1012,6 +1012,16 @@ public final class LauncherFake {
         return step(on != null ? "NoteOn" : "NoteSustain", on != null ? on.getValue() : earlier.getValue());
     }
 
+    private static final NoteFeatures.Repeat NEUTRAL_REPEAT = new NoteFeatures.Repeat(0, 0, 0, 0);
+
+    private static NoteFeatures.Repeat repeat(Stored found) {
+        return found.features.repeat == null ? NEUTRAL_REPEAT : found.features.repeat;
+    }
+
+    private static NoteFeatures.Recurrence recurrence(Stored found) {
+        return found.features.recurrence == null ? NoteFeatures.Recurrence.ALWAYS : found.features.recurrence;
+    }
+
     private static NoteStep step(String state, Stored found) {
         Object actual = stateConstant(state);
         FakeHost n = FakeHost.of(NoteStep.class, "n");
@@ -1023,41 +1033,30 @@ public final class LauncherFake {
     }
 
     /**
-     * The note step's operator getters and setters over the stored note, like Bitwig's: a value set while its switch is
-     * off is not kept, so the switch goes on first. {@code operatorWrites} counts the setters that changed a value.
+     * The note step's operator getters and setters over the stored note, like Bitwig's new notes: every operator switch
+     * is on and an operator that is off shows its neutral value (chance 1, count 0, a one-pass cycle, always; native
+     * E2E on 6.1.7). Switching one off sets it back to neutral. {@code operatorWrites} counts the setters that changed
+     * a value.
      */
     private static void operators(FakeHost n, Stored found) {
-        n.on("isChanceEnabled", a -> found.features.chance != null);
+        for (String operator : List.of("Chance", "Repeat", "Recurrence", "Occurrence"))
+            n.on("is" + operator + "Enabled", a -> true);
         n.on("chance", a -> found.features.chance == null ? 1.0 : (double) found.features.chance);
         n.on("velocitySpread", a -> (double) found.features.velocitySpread);
         n.on("releaseVelocity", a -> found.features.releaseVelocity / 127.0);
-        n.on("isRepeatEnabled", a -> found.features.repeat != null);
-        n.on("repeatCount", a -> found.features.repeat == null ? 0 : found.features.repeat.count);
-        n.on("repeatCurve", a -> found.features.repeat == null ? 0.0 : (double) found.features.repeat.curve);
-        n.on(
-                "repeatVelocityEnd",
-                a -> found.features.repeat == null ? 0.0 : (double) found.features.repeat.velocityEnd);
-        n.on(
-                "repeatVelocityCurve",
-                a -> found.features.repeat == null ? 0.0 : (double) found.features.repeat.velocityCurve);
-        n.on("isRecurrenceEnabled", a -> found.features.recurrence != null);
-        n.on("recurrenceLength", a -> found.features.recurrence == null ? 1 : found.features.recurrence.length);
-        n.on("recurrenceMask", a -> found.features.recurrence == null ? 0 : found.features.recurrence.mask);
-        n.on("isOccurrenceEnabled", a -> found.features.occurrence != null);
+        n.on("repeatCount", a -> repeat(found).count);
+        n.on("repeatCurve", a -> (double) repeat(found).curve);
+        n.on("repeatVelocityEnd", a -> (double) repeat(found).velocityEnd);
+        n.on("repeatVelocityCurve", a -> (double) repeat(found).velocityCurve);
+        n.on("recurrenceLength", a -> recurrence(found).length);
+        n.on("recurrenceMask", a -> recurrence(found).mask);
         n.on("occurrence", a -> found.features.occurrence == null ? NoteOccurrence.ALWAYS : found.features.occurrence);
         n.on("isMuted", a -> found.features.muted);
-        n.on(
-                "setIsChanceEnabled",
-                a -> found.set(b -> b.chance =
-                        (Boolean) a[0] ? found.features.chance == null ? 1.0 : found.features.chance : null));
-        n.on("setChance", a -> found.set(b -> b.chance = b.chance == null ? null : (Double) a[0]));
+        n.on("setIsChanceEnabled", a -> (Boolean) a[0] ? null : found.set(b -> b.chance = null));
+        n.on("setChance", a -> found.set(b -> b.chance = (Double) a[0]));
         n.on("setVelocitySpread", a -> found.set(b -> b.velocitySpread = (Double) a[0]));
         n.on("setReleaseVelocity", a -> found.set(b -> b.releaseVelocity = Note.releaseMidi((Double) a[0])));
-        n.on(
-                "setIsRepeatEnabled",
-                a -> found.set(b -> b.repeat = (Boolean) a[0]
-                        ? found.features.repeat == null ? new NoteFeatures.Repeat(0, 0, 0, 0) : found.features.repeat
-                        : null));
+        n.on("setIsRepeatEnabled", a -> (Boolean) a[0] ? null : found.set(b -> b.repeat = null));
         n.on(
                 "setRepeatCount",
                 a -> found.repeat(
@@ -1072,23 +1071,12 @@ public final class LauncherFake {
         n.on(
                 "setRepeatVelocityCurve",
                 a -> found.repeat(r -> new NoteFeatures.Repeat(r.count, r.curve, r.velocityEnd, (Double) a[0])));
-        n.on(
-                "setIsRecurrenceEnabled",
-                a -> found.set(b -> b.recurrence = (Boolean) a[0]
-                        ? found.features.recurrence == null
-                                ? new NoteFeatures.Recurrence(1, 1)
-                                : found.features.recurrence
-                        : null));
+        n.on("setIsRecurrenceEnabled", a -> (Boolean) a[0] ? null : found.set(b -> b.recurrence = null));
         n.on(
                 "setRecurrence",
-                a -> found.set(b -> b.recurrence =
-                        b.recurrence == null ? null : new NoteFeatures.Recurrence((Integer) a[0], (Integer) a[1])));
-        n.on(
-                "setIsOccurrenceEnabled",
-                a -> found.set(b -> b.occurrence = (Boolean) a[0]
-                        ? found.features.occurrence == null ? NoteOccurrence.ALWAYS : found.features.occurrence
-                        : null));
-        n.on("setOccurrence", a -> found.set(b -> b.occurrence = b.occurrence == null ? null : (NoteOccurrence) a[0]));
+                a -> found.set(b -> b.recurrence = new NoteFeatures.Recurrence((Integer) a[0], (Integer) a[1])));
+        n.on("setIsOccurrenceEnabled", a -> (Boolean) a[0] ? null : found.set(b -> b.occurrence = null));
+        n.on("setOccurrence", a -> found.set(b -> b.occurrence = (NoteOccurrence) a[0]));
         n.on("setIsMuted", a -> found.set(b -> b.muted = (Boolean) a[0]));
     }
 
@@ -1177,7 +1165,7 @@ public final class LauncherFake {
         }
 
         Object repeat(UnaryOperator<NoteFeatures.Repeat> change) {
-            return set(b -> b.repeat = b.repeat == null ? null : change.apply(b.repeat));
+            return set(b -> b.repeat = change.apply(b.repeat == null ? NEUTRAL_REPEAT : b.repeat));
         }
     }
 
