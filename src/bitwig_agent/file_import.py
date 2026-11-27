@@ -13,6 +13,7 @@ from pathlib import PurePath
 from typing import Any
 
 from bitwig_agent.configured_insert import Call, run
+from bitwig_agent.core.serialize import dumps
 from bitwig_agent.errors import NOT_REACHED, bridge_error
 from bitwig_agent.protocol.base import SUCCEEDED, Outcome, shared_verification, worst
 
@@ -50,18 +51,23 @@ async def empty_slot(client: Any, track: dict[str, Any], timeout_ms: int) -> dic
         args = {"target": track, **listed["next"]}
 
 
-def finish(entries: list[dict[str, Any]], imported: dict[str, Any] | None) -> str:
-    """What is left to do after the first entry that did not succeed."""
+def finish(entries: list[dict[str, Any]], clip: dict[str, Any] | None, track: dict[str, Any]) -> str:
+    """What is left to do after the first entry that did not succeed; refs are JSON to pass back as they are."""
     failed = next(e for e in entries if Outcome(e["outcome"]) not in SUCCEEDED)
     if failed["step"] == "import":
         return str(failed.get("next", "Inspect the slot with launcher.list before any further write."))
-    clip = imported["ref"] if imported else None
+    if failed["step"] == "copy" and failed["outcome"] == Outcome.UNKNOWN:
+        return (
+            f"The copy is unknown and the clip may already be on the arranger: inspect arranger.list "
+            f"{{target: {dumps(track)}}} before any further write, then delete the launcher clip {dumps(clip)} with "
+            "clips.delete; never repeat clips.copy or clips.import."
+        )
     if failed["step"] == "copy":
         return (
-            f"The file is in the launcher clip {clip}, not on the arranger: copy it with clips.copy and delete it with "
-            "clips.delete, or delete it; do not repeat clips.import."
+            f"The file is in the launcher clip {dumps(clip)}, not on the arranger: copy it with clips.copy and delete "
+            "it with clips.delete, or delete it; do not repeat clips.import."
         )
-    return f"The arranger clip is in this result; the launcher clip {clip} remains: delete it with clips.delete."
+    return f"The arranger clip is in this result; the launcher clip {dumps(clip)} remains: delete it with clips.delete."
 
 
 async def clips_import(client: Any, args: dict[str, Any], timeout_ms: int) -> dict[str, Any]:
@@ -83,10 +89,12 @@ async def clips_import(client: Any, args: dict[str, Any], timeout_ms: int) -> di
             entries.append({"step": "delete", **NOT_REACHED})
     else:
         entries += [{"step": "copy", **NOT_REACHED}, {"step": "delete", **NOT_REACHED}]
-    return report(entries, imported, file)
+    return report(entries, imported, file, to["track"])
 
 
-def report(entries: list[dict[str, Any]], imported: dict[str, Any], file: dict[str, Any]) -> dict[str, Any]:
+def report(
+    entries: list[dict[str, Any]], imported: dict[str, Any], file: dict[str, Any], track: dict[str, Any]
+) -> dict[str, Any]:
     """Outcome the worst entry, verification by the leaf rule, the arranger clip's ref and the file."""
     outcome = worst(entry["outcome"] for entry in entries)
     result: dict[str, Any] = {"outcome": outcome.value}
@@ -101,5 +109,5 @@ def report(entries: list[dict[str, Any]], imported: dict[str, Any], file: dict[s
     if outcome not in SUCCEEDED:
         failed = [e for e in entries if Outcome(e["outcome"]) not in SUCCEEDED]
         result["reason"] = next((e for e in failed if e["reason"] != "not_reached"), failed[0])["reason"]
-        result["next"] = finish(entries, imported if Outcome(imported["outcome"]) is Outcome.APPLIED else None)
+        result["next"] = finish(entries, imported.get("ref"), track)
     return result | {"file": file, "entries": entries}

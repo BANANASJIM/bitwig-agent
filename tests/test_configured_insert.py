@@ -312,6 +312,17 @@ def test_chains_insert_fills_the_new_pad_chain_with_the_sample():
     assert leaf_rule_holds(result)
 
 
+def test_the_filled_chain_ref_has_the_name_bitwig_gave_it_after_the_file():
+    renamed = {**PAD_CHAIN, "name": "Snare sample"}
+    host = chain_host(
+        {**APPLIED_NATIVE, "ref": {**PAD_CHAIN, "name": "C1"}, "pad": 38},
+        {**APPLIED_NATIVE, "ref": {**SAMPLER, "chain": renamed}},
+    )
+    result = call(host, "chains.insert", {"to": DRUMS, "pad": 38, "insert": SNARE})
+    assert result["ref"] == renamed
+    assert result["entries"][0]["ref"]["name"] == "C1"
+
+
 def test_a_pad_that_already_has_a_chain_is_not_filled():
     host = chain_host({"outcome": "already_matched", "ref": PAD_CHAIN, "pad": 38})
     result = call(host, "chains.insert", {"to": DRUMS, "pad": 38, "insert": SNARE})

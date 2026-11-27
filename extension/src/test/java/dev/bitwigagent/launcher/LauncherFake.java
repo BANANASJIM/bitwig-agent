@@ -745,6 +745,9 @@ public final class LauncherFake {
         final List<double[]> clips = new ArrayList<>();
         final List<String> names = new ArrayList<>();
         int created, copied, edited;
+        /** Runs inside the copy, like a Bitwig model change the copy causes or races with. */
+        Runnable onCopy = () -> {};
+
         List<double[]> notes = List.of();
 
         @Override
@@ -804,6 +807,7 @@ public final class LauncherFake {
                 Runnable beforeWrite) {
             beforeWrite.run();
             copied++;
+            onCopy.run();
             clips.add(new double[] {clipStart, 4});
             names.add(expectedClipName);
             return result(Outcome.APPLIED, clips.size() - 1);

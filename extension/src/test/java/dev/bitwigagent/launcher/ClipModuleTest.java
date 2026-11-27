@@ -1007,6 +1007,17 @@ public final class ClipModuleTest {
     }
 
     @Test
+    void anArrangerCopyRefersToTheTrackByTheNameItHasWhenTheCopyCompletes() {
+        LauncherFake f = new LauncherFake();
+        occupy(f, 2, "beat");
+        f.lane.onCopy = () -> f.trackName = "beat";
+        JsonObject out = f.call("clips.copy", params("from", f.clip(2), "to", params("track", f.track(), "start", 8)));
+        assertEquals(
+                "beat",
+                out.getAsJsonObject("ref").getAsJsonObject("track").get("name").getAsString());
+    }
+
+    @Test
     void aTrackOutsideTheWindowIsUnavailable() {
         LauncherFake f = new LauncherFake();
         f.base.bank.live("itemCount", () -> 100000);

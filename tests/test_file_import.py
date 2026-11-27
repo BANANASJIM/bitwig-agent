@@ -9,6 +9,7 @@ import test_configured_insert
 
 from bitwig_agent import file_import
 from bitwig_agent.core.invoke import Error, invoke
+from bitwig_agent.core.serialize import dumps
 from bitwig_agent.errors import bridge_error, unknown_result
 from bitwig_agent.protocol.base import leaf_rule_holds
 from bitwig_agent.protocol.launcher import ARRANGER_CLIP_REF, CLIP_REF, SLOT_REF, TRACK_REF
@@ -143,8 +144,22 @@ def test_a_refused_copy_leaves_the_launcher_clip_named_in_next():
     ]
     assert result["reason"] == "overlap"
     assert "do not repeat clips.import" in result["next"]
-    assert str(TEMPORARY) in result["next"]
+    assert dumps(TEMPORARY) in result["next"]  # JSON an agent can pass back, not a Python repr
     assert "ref" not in result
+
+
+def test_an_unknown_copy_says_to_inspect_the_arranger_before_anything_else():
+    unknown = unknown_result("not_observed", "The arranger copy was not observed.")
+    host = Host(**{"clips.copy": unknown})
+    result = call(host, {"to": TO, "path": "/samples/beat.wav"})
+    assert steps(result) == [
+        ("import", "applied", None),
+        ("copy", "unknown", "not_observed"),
+        ("delete", "not_applied", "not_reached"),
+    ]
+    assert result["next"].startswith("The copy is unknown")
+    assert f"arranger.list {{target: {dumps(TRACK_REF)}}} before any further write" in result["next"]
+    assert "never repeat clips.copy or clips.import" in result["next"]
 
 
 def test_a_failed_delete_keeps_the_arranger_clip_and_names_the_slot_clip():

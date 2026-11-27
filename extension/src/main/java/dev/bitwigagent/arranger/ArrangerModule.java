@@ -220,7 +220,8 @@ public final class ArrangerModule implements HostModule {
                 true,
                 (bridge, track, id, check, beforeWrite) ->
                         bridge.copyFromLauncher(track, source.slot.api, id, name, clipStart, check, beforeWrite),
-                results -> done.accept(shaped(results.get(0), source.at.trackRef)));
+                // read at completion: Bitwig may have renamed the track after the clip's file since the request
+                results -> done.accept(shaped(results.get(0), trackRefs.ref(index))));
     }
 
     /** An edit of the arranger clip {@code ref} names: move, resize, rename or delete. */
