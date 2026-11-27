@@ -18,7 +18,7 @@ from typing import Any
 import numpy as np
 import soundfile as sf
 from numpy.lib.stride_tricks import sliding_window_view
-from numpy.typing import NDArray
+from numpy.typing import ArrayLike, NDArray
 from scipy.ndimage import median_filter
 from scipy.signal import find_peaks, firwin, get_window, kaiserord, resample_poly
 
@@ -409,7 +409,7 @@ PEAK_MIN_DB = -40.0  # peaks weaker than this relative to the strongest are igno
 FIRST_PEAK_BIN = 2  # bins 0 and 1 hold DC and its leakage
 
 
-def spectral_peaks(power: Signal, rate: int) -> list[dict[str, Any]]:
+def spectral_peaks(power: ArrayLike, rate: int) -> list[dict[str, Any]]:
     """Strongest local maxima of a power spectrum (bins 0..N/2 of an FFT_SIZE frame), parabolic-interpolated in dB,
     with note name and cents. Resolution is rate/FFT_SIZE (about 12 Hz at 48 kHz): low notes are only approximate."""
     power = np.asarray(power, dtype=np.float64)

@@ -64,7 +64,7 @@ def test_outputs_match_the_stdlib_baseline_except_the_documented_changes(tmp_pat
     unexplained = []
     for call, old in BASELINE.items():
         signal = call.split(" ", 1)[0]
-        diffs = []
+        diffs: list[tuple[str, str, object, object]] = []
         _diff(old, current[call], call, diffs)
         unexplained += [d for d in diffs if not _allowed(signal, *d)]
     assert unexplained == []
