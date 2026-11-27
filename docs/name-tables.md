@@ -65,13 +65,15 @@ Use absolute paths for the jars; `NEW/bitwig.jar` is your platform's or version'
        --out src/bitwig_agent/shared/names_<new>.json --report build/remap-<new>.md
    ```
 
-   Any key not mapped `exact` or `confident` fails the run and writes no table. Read the report; raise the remaining keys in the issue instead of guessing them.
+   No environment variable is needed here; `pixi run remap` sets its own. Any key not mapped `exact` or `confident` fails the run and writes no table. Read the report; raise the remaining keys in the issue instead of guessing them.
 4. **Verify the table on its jar** and record the check (offline CI compares the table and jar hashes with the record):
 
    ```sh
    PYTHONPATH=scripts pixi run python -m remap.table verify src/bitwig_agent/shared/names_<new>.json \
        NEW/bitwig.jar --record tests/fixtures/names_verified.json
    ```
+
+   On Windows PowerShell, set the variable first and drop the prefix: `$env:PYTHONPATH="scripts"; pixi run python -m remap.table verify ...`
 
 5. **Bind every native port** on the jar and compare the bound types with each member's descriptor. The jar joins only the test classpath; no host code runs:
 
@@ -80,8 +82,10 @@ Use absolute paths for the jars; `NEW/bitwig.jar` is your platform's or version'
    BITWIG_HOST_JARS=NEW/bitwig.jar pixi run test tests/test_names_tables.py
    ```
 
+   On Windows PowerShell: `$env:BITWIG_HOST_JARS="NEW\bitwig.jar"; pixi run test tests/test_names_tables.py`
+
 6. **Wire the entry.** A new release adds its `host.json` entry and Grid insertion adapter as described in [Mapping a new Bitwig release](../CONTRIBUTING.md#mapping-a-new-bitwig-release). For a new platform, note that `host.json`, the build and the Grid insertion adapter currently hold one jar per Bitwig version. The first contribution for a platform settles with a maintainer how a second jar of the same version is named and wired, so agree that in the issue before writing this part.
-7. **Native smoke on your platform.** Build and install the extension against your jar (`BITWIG_API_JAR=NEW/bitwig.jar pixi run install`), enable it in Bitwig, open a project you can lose, and check `bitwig-agent status --detail=full`: the version-gated bindings should be available. Then exercise a few private features, for example a Grid read and a small `grid.apply` on a new Poly Grid. Use one writer, mute or turn down the audio output, and stop on any `unknown` outcome instead of retrying. `scripts/smoke-native.py` needs Linux `/proc` and `xprop`, so on Windows and macOS record the calls and their results yourself.
+7. **Native smoke on your platform.** Build and install the extension against your jar (`BITWIG_API_JAR=NEW/bitwig.jar pixi run install`; on Windows PowerShell `$env:BITWIG_API_JAR="NEW\bitwig.jar"; pixi run install`), enable it in Bitwig, open a project you can lose, and check `bitwig-agent status --detail=full`: the version-gated bindings should be available. Then exercise a few private features, for example a Grid read and a small `grid.apply` on a new Poly Grid. Use one writer, mute or turn down the audio output, and stop on any `unknown` outcome instead of retrying. `scripts/smoke-native.py` needs Linux `/proc` and `xprop`, so on Windows and macOS record the calls and their results yourself.
 8. **Run `pixi run check`** and open the pull request with [the template](../.github/pull_request_template.md).
 
 ## What to submit

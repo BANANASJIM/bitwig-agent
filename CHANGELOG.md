@@ -12,7 +12,6 @@ The Python package and the Java extension are released as a matched pair: update
 - `automation.points.set` follows the same range rule; its `removed` and `inserted` result fields are replaced by `summary {inserted, updated, removed, unchanged}`. Under `range`, an omitted `interpolation` is `linear` and an omitted `curve` is 0 (#138, #154).
 - `audio.analyze`, and the level report of `audio.capture`, need the optional `audio` extra (`pipx install 'bitwig-agent[audio]'`); without it they answer `unsupported_platform` (#141).
 - CLI `batch` refuses read and `ack` lines at validation (exit 2) instead of running them (#144).
-- Structural inserts (`tracks.insert`, `clips.insert`, `clips.copy`, `devices.insert`, `chains.insert`, `scenes.insert`, `scenes.duplicate`) are refused while recording, and `transport.set playing:true` is `unsafe_state` while recording or automation write is on (#156).
 - The CLI `--slot` shorthand for `clips.import` is removed; use `--to` (#161).
 
 ### Added
@@ -28,12 +27,14 @@ The Python package and the Java extension are released as a matched pair: update
 - `export.audio` writes mp3, ogg and opus, or several types in one pass; `launcher.stop {target:"all"}`; `launcher.returnToArrangement`; send Pre/Post `mode` (#149).
 - `batch` is one core method for the CLI and MCP (#144).
 - Record-list reads take `format` (`json`, `jsonl`, `csv`, `tsv` or a view) and `fields`; `notes get --format=grid` and `arranger list --format=timeline` (#152).
-- `audio.analyze` takes `windowBeats` and a `reference` file for A/B level comparison, and accepts `.flac` (#133, #141).
+- `audio.analyze` takes `windowBeats` and a `.wav` `reference` file for A/B level comparison (#133), and accepts `.flac` (#141).
 - `arranger.list` without `target` covers the whole arrangement with bars, markers, tempo and time signature; `tracks.list` rows carry mix columns (#132).
-- Name tables carry each member's JVM descriptor, and `scripts/remap` (`pixi run remap`) maps a table to a new Bitwig release or platform (#134, #158).
+- Name tables carry each member's JVM descriptor, and `pixi run remap --from-table` maps an existing table to a new Bitwig release or platform (#158). The remap tool itself moved to `scripts/remap` (#134).
 
 ### Changed
 
+- While recording, structural inserts (`tracks.insert`, `clips.insert`, `clips.copy`, `devices.insert`, `chains.insert`, `scenes.insert`, `scenes.duplicate`) are refused; while recording or automation write is on, `transport.set playing:true` is `unsafe_state` (#156).
+- When CLI `batch` stops, it prints a `not_reached` line for each input line it never sent (#133).
 - `arranger.list` rows are sorted by `start` within a track instead of creation order (#132).
 - `markers.insert` moves the playhead to the marker's beat for the add and puts it back (#143).
 - One 16 MiB message cap for requests and responses (`maxMessageBytes`; requests were 1 MiB) (#140).
@@ -48,7 +49,7 @@ The Python package and the Java extension are released as a matched pair: update
 - `markers.insert` works when the playhead sits on an occupied beat (#143).
 - Equal `tracks.set` writes after a group or insert, and equal display-form volume, pan and send writes, are `already_matched` (#143, #146).
 - `tracks.sends.set` with a level plus `enabled:true` is `applied` (#143).
-- Text files and subprocess output are read and written as explicit UTF-8 (#157, #159).
+- A batch stop whose entry has no top-level `next` uses the kept `error.next`, and the MCP batch `timeoutMs` refusal carries `entries`, one per call (#146).
 
 ## [0.5.0] - 2026-11-27
 
@@ -129,13 +130,13 @@ Same host boundary as 0.2.0: Bitwig 6.1.4 (API 25) with the exact loaded-JAR gat
 
 - Installation from PyPI (`uv tool install bitwig-agent`), with persistent and version-pinned one-off usage documented.
 
-### Fixed
-
-- README links use absolute public URLs so they work on PyPI.
-
 ### Changed
 
 - Python package, MCP server, Java extension, portable skill and AUR recipe aligned at 0.1.2. No runtime control or native safety-gate changes.
+
+### Fixed
+
+- README links use absolute public URLs so they work on PyPI.
 
 Earlier releases (0.1.0, 0.1.1) are described on the [GitHub releases page](https://github.com/BANANASJIM/bitwig-agent/releases).
 
