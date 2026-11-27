@@ -15,6 +15,7 @@ protocol.json
 .env
 .env.*
 !.env.example
+native-hosts.local.toml
 *.pem
 *.key
 *.p12

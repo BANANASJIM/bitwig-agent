@@ -1,0 +1,22 @@
+# Native test harness configuration (scripts/native). Copy this file to native-hosts.local.toml
+# (git-ignored) or point BWA_NATIVE_CONFIG at your copy, then edit the paths. Paths may start with ~.
+# Everything under state_root stays outside any repository: isolated homes with licence copies,
+# fixtures and run evidence.
+
+state_root = "~/bitwig-hosts"
+display = ":1"     # a dedicated X display for the test instance (for example a nested Xwayland), never the desktop's
+port = 61174       # BITWIG_AGENT_PORT of the test instance; a desktop Bitwig keeps the default 61172
+# A disposable project directory (<name>/<name>.bwproject); native-init copies it to <state_root>/fixtures/<name>.
+fixture_seed = "~/bitwig-hosts/seed/BWA Test"
+
+# One table per Bitwig version listed in src/bitwig_agent/shared/host.json. root is the install
+# directory; its bin/bitwig.jar must have the sha256 listed there. prefs_seed is a prefs directory
+# from your own installation whose audio system is JACK; native-init copies it into the isolated home,
+# together with the activation and EULA files of your own ~/.BitwigStudio.
+[hosts."6.1.4"]
+root = "/opt/bitwig-studio"
+prefs_seed = "~/bitwig-hosts/seed/prefs-6.1.4"
+
+[hosts."6.1.7"]
+root = "~/bitwig-hosts/6.1.7/root/opt/bitwig-studio"
+prefs_seed = "~/bitwig-hosts/seed/prefs-6.1.7"
