@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from typing import Annotated, Literal, Self
 
-from pydantic import BeforeValidator, Field, model_validator
+from pydantic import Field, model_validator
 
 from bitwig_agent.protocol.annotations import EDIT
 from bitwig_agent.protocol.base import (
     MAX_BEAT,
     TRACK,
+    OnlyTrue,
     StrictModel,
     ToolSpec,
     has_control_character,
@@ -83,18 +84,12 @@ class ExportAudioArgs(RenderRangeArgs):
         return self
 
 
-def only_true(value: object) -> object:
-    if value is not True:
-        raise ValueError("must be true")
-    return value
-
-
 class TracksBounceArgs(RenderRangeArgs):
     targets: Annotated[list[TrackRef], Field(min_length=1, max_length=TRACK_WINDOW)] = Field(
         description="Audio/instrument track refs from tracks.list whose main arranger lane gets the bounced audio."
     )
     tap: Literal["pre_fx", "pre_fader", "post_fader"]
-    inPlace: Annotated[Literal[True], BeforeValidator(only_true)] = Field(
+    inPlace: OnlyTrue = Field(
         default=True, description="Only true: the bounced audio replaces the range in the track's own lane."
     )
 

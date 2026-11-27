@@ -493,14 +493,14 @@ public final class ParameterModule implements HostModule, ParameterResolver.Dire
     private void nestedSolve(HostOperation op, JsonObject ref, String text, JsonObject expect) {
         DisplayScale.Quantity wanted = DisplayScale.quantity(text);
         Runnable safety = transportSafety.writeGuard(op, true);
-        NativePort port = new NativePort(op, ref, safety);
+        JsonObject owner = ref.getAsJsonObject("owner");
+        NativeParameterPort port =
+                new NativeParameterPort(chains, scheduler, op, owner, walk -> bind(walk, ref), safety);
         chains.async(
                 op,
-                ref.getAsJsonObject("owner"),
+                owner,
                 walk -> {
-                    port.parameter = bind(walk, ref);
-                    requireExpected(expect, walk.a.value(port.parameter));
-                    port.read(walk);
+                    requireExpected(expect, walk.a.value(port.bind(walk)));
                     if (wanted == null)
                         throw DisplaySolver.unsupportedUnit(unparsed(text), port.value(), port.display());
                     scheduler.schedule(
@@ -515,90 +515,20 @@ public final class ParameterModule implements HostModule, ParameterResolver.Dire
                                                     ref,
                                                     text,
                                                     wanted,
-                                                    port.observed(),
+                                                    observed(ref, port),
                                                     outcome,
                                                     Verification.NATIVE_READBACK,
-                                                    port.a::provenance))
+                                                    port::provenance))
                                     .start(),
                             0);
                 },
                 op::fail);
     }
 
-    /** A native parameter as the display solver sees it; each write is one document-thread task and its read-back. */
-    private final class NativePort implements DisplaySolver.Port {
-        private final HostOperation op;
-        private final JsonObject ref;
-        private final Runnable safety;
-        volatile Object parameter;
-        private volatile NativeChains.Access a;
-        private volatile Double value;
-        private volatile String display;
-        private volatile long valueSeq, displaySeq;
-        private volatile RuntimeException failure;
-
-        NativePort(HostOperation op, JsonObject ref, Runnable safety) {
-            this.op = op;
-            this.ref = ref;
-            this.safety = safety;
-        }
-
-        void read(NativeChains.Walk walk) {
-            a = walk.a;
-            value = finite(walk.a.value(parameter));
-            display = walk.a.display(parameter);
-            valueSeq++;
-            displaySeq++;
-        }
-
-        ParameterState observed() {
-            ParameterState state = new ParameterState(ref.get("id").getAsString());
-            state.value = value;
-            return state;
-        }
-
-        @Override
-        public long valueSeq() {
-            return valueSeq;
-        }
-
-        @Override
-        public JsonElement value() {
-            return value == null ? JsonNull.INSTANCE : new JsonPrimitive(value);
-        }
-
-        @Override
-        public JsonElement display() {
-            return display == null ? JsonNull.INSTANCE : new JsonPrimitive(display);
-        }
-
-        @Override
-        public long displaySeq() {
-            return displaySeq;
-        }
-
-        @Override
-        public void write(double normalized) {
-            chains.async(
-                    op,
-                    ref.getAsJsonObject("owner"),
-                    walk -> {
-                        if (bind(walk, ref) != parameter)
-                            throw Errors.unknown(
-                                    Reason.TARGET_CHANGED, "The parameter changed while its display was solved.");
-                        walk.a.write(parameter, normalized);
-                        read(walk);
-                    },
-                    error -> failure = error);
-        }
-
-        @Override
-        public void guard() {
-            safety.run();
-            scheduler.check(op);
-            RuntimeException failed = failure;
-            if (failed != null) throw failed;
-        }
+    private static ParameterState observed(JsonObject ref, NativeParameterPort port) {
+        ParameterState state = new ParameterState(ref.get("id").getAsString());
+        state.value = port.observed();
+        return state;
     }
 
     private static Double finite(double value) {

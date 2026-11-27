@@ -25,12 +25,24 @@ final class NativeChainEdits {
         this.chains = chains;
     }
 
-    /** chains.list: every chain of the device with its ref, name, channel index and device count. */
+    /**
+     * chains.list: every chain of the device with its ref, name, channel index, device count and mixer strip. The
+     * strips use keys added after the shipped tables, so a host without them still lists chains and says why the
+     * strips are missing.
+     */
     void list(HostOperation op, JsonObject parent) {
         chains.run(op, parent, walk -> {
             List<NativeChains.Chain> found = walk.chains(parent);
             JsonArray rows = new JsonArray();
             JsonObject parentRef = null;
+            String stripsUnavailable = null;
+            Integer active = null;
+            try {
+                if (!found.isEmpty()) active = walk.a.activeChain(found.get(0).owner);
+            } catch (RpcException error) {
+                if (!error.is(Reason.NATIVE_UNAVAILABLE)) throw error;
+                stripsUnavailable = error.getMessage();
+            }
             for (int i = 0; i < Math.min(found.size(), NativeChains.MAX_ITEMS); i++) {
                 NativeChains.Chain chain = found.get(i);
                 parentRef = chain.ref.getAsJsonObject("device");
@@ -42,9 +54,12 @@ final class NativeChainEdits {
                 row.addProperty("deviceCount", chain.devices.size());
                 row.addProperty("devicesAvailable", true);
                 row.add("window", DeviceListModule.nativeWindow(chain.devices.size()));
+                if (stripsUnavailable == null)
+                    ChainStrip.read(walk.a, chain, active).addTo(row);
                 rows.add(row);
             }
             JsonObject result = new JsonObject();
+            if (stripsUnavailable != null) result.addProperty("stripsUnavailable", stripsUnavailable);
             result.add("target", parentRef != null ? parentRef : current(walk, parent));
             result.addProperty("scope", "one_chain_hop");
             result.add("window", DeviceListModule.nativeWindow(found.size()));
@@ -54,7 +69,7 @@ final class NativeChainEdits {
     }
 
     /** The parent device's ref as read now, for a device without chains to list. */
-    private static JsonObject current(NativeChains.Walk walk, JsonObject device) {
+    static JsonObject current(NativeChains.Walk walk, JsonObject device) {
         return NativeChains.nested(device) ? walk.device(device, false).ref : device;
     }
 
@@ -200,7 +215,7 @@ final class NativeChainEdits {
     }
 
     /** A verification that concludes at once with {@code result}: nothing was dispatched. */
-    private static NativeChains.Verify already(JsonObject result) {
+    static NativeChains.Verify already(JsonObject result) {
         return new NativeChains.Verify() {
             @Override
             public JsonObject done(NativeChains.Walk walk) {
