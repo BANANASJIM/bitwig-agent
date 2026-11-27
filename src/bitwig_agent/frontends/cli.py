@@ -19,6 +19,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from bitwig_agent.core import batch as core_batch
 from bitwig_agent.core import rows, views
 from bitwig_agent.core.invoke import (
     Envelope,
@@ -42,17 +43,21 @@ EXIT_PIPE_CLOSED = 141
 USAGE_CODES = frozenset({"invalid_params", "unknown_method"})
 EXIT_OK, EXIT_ERROR, EXIT_USAGE, EXIT_UNKNOWN = 0, 1, 2, 3
 SUMMARY_WIDTH = 90
+BATCH_USAGE = "batch [-|@file]   (JSON Lines, one write per line: see batch --help)"
 BATCH_HELP = "\n".join(
     [
         "bitwig-agent batch [-|@file]",
         "",
-        "Run JSON Lines from stdin (or @file), one call per line, in order:",
+        "Run JSON Lines from stdin (or @file), one write per line, in order (the core batch method; MCP has it as",
+        "the batch tool with calls=[{method, params}]):",
         '  {"method":"tracks.set","params":{"target":{"kind":"track","id":"...","name":"..."},"mute":true}}',
-        "params is optional; blank lines are skipped. Every line is validated before the first call is sent.",
-        "stdout gets one result line per finished call. It stops at the first error (stderr, prefixed with",
-        "the line number) or the first outcome outside applied|already_matched|sent (that result is printed),",
-        'prints {"outcome":"not_applied","reason":"not_reached"} for each later line, and exits with that',
-        "call's code. Nothing is retried or run in parallel.",
+        "params is optional; blank lines are skipped. Every line is validated before the first call is sent;",
+        "reads, ack and batch are refused (call them on their own). stdout gets one result line per line: it",
+        "continues past applied|already_matched|sent and stops at the first error (stderr, prefixed with the",
+        "line number) or other outcome (that result is printed), then prints",
+        '{"outcome":"not_applied","reason":"not_reached"} for each later line and exits with that call\'s code.',
+        "Nothing is retried or run in parallel. A later line cannot use a ref an earlier one returns: send it",
+        "in a second batch.",
         "Example:",
         "  jq -c '.tracks[] | {method:\"tracks.set\",params:{target:.ref,mute:true}}' t.json | bitwig-agent batch",
     ]
@@ -177,7 +182,11 @@ def method_index() -> list[str]:
     lines: list[str] = []
     for resource, count in resources().items():
         lines.append(f"  {resource} ({count} {'method' if count == 1 else 'methods'})")
-        lines += [f"    {views.usage(name)}" for name in views.names() if name.split(".", 1)[0] == resource]
+        lines += [
+            f"    {BATCH_USAGE if name == 'batch' else views.usage(name)}"
+            for name in views.names()
+            if name.split(".", 1)[0] == resource
+        ]
     return lines
 
 
@@ -207,8 +216,8 @@ def overview() -> str:
             "  Reads that return a record list: --format=jsonl|csv|tsv [--fields=a,b.c] prints only the records,",
             "  one per line (scope, total, window are not output; the default JSON keeps them).",
             '  A partial list adds one {"warning"} line to stderr and still exits 0.',
-            'Batch: bitwig-agent batch [-|@file] runs JSON Lines {"method":"a.b","params":{}} in order and',
-            "  stops at the first error or outcome not in applied|already_matched|sent; each later line prints",
+            'Batch: bitwig-agent batch [-|@file] runs JSON Lines of writes {"method":"a.b","params":{}} in order',
+            "  and stops at the first error or outcome not in applied|already_matched|sent; each later line prints",
             '  {"outcome":"not_applied","reason":"not_reached"}.',
             "",
             "Exit codes:",
@@ -485,51 +494,60 @@ def at_line(number: int, error: Error) -> Error:
     return Error({**error.error, "message": f"line {number}: {error.error['message']}"})
 
 
-def pipe_closed(method: str, number: int, progress: Progress) -> Output:
-    write = not views.read_only(method)
+def pipe_closed(method: str, number: int) -> Output:
     message = (
         f"stdout closed: no further call was sent; line {number} ({method}) ran but its result was not delivered, "
         "so its outcome is unknown: inspect the real state before retrying"
-        if write
-        else f"stdout closed: no further call was sent; line {number} ({method}) is a read whose result was not delivered"
     )
-    envelope = stopped(method if write else None, "not_observed" if write else "cancelled", message)
+    envelope = stopped(method, "not_observed", message)
     payload = envelope.error if isinstance(envelope, Error) else envelope.result
     return Output(stderr=text_line(payload), code=EXIT_PIPE_CLOSED)
 
 
+@dataclass
+class BatchRows:
+    """The core batch as rows while it runs: a result line on stdout, an error on stderr naming its input line."""
+
+    numbers: list[int]
+    progress: Progress
+    stderr: str = ""
+    seen: int = 0
+    ran: int = 0
+    """The last call that ran: every row after a stop is not_reached."""
+    verdict: Envelope | None = None
+    """The stopping call's envelope, else the last one: it sets the exit code."""
+
+    def put(self, envelope: Envelope) -> None:
+        index, self.seen = self.seen, self.seen + 1
+        if self.verdict is None or not self.verdict.failed:
+            self.ran, self.verdict = index, envelope
+        self.progress.completed += 1
+        if isinstance(envelope, Error):
+            self.stderr = failure(at_line(self.numbers[index], envelope)).stderr
+        else:
+            self.progress.put(text_line(envelope.result))
+
+
 async def batch(rest: list[str], inputs: Inputs, progress: Progress) -> Output:
+    """JSON Lines in, the core batch out: one row per line, as the MCP batch tool returns its entries."""
     if len(rest) > 1 or (rest and rest[0] != "-" and not rest[0].startswith("@")):
         raise ValueError("batch takes - (stdin, the default) or @file")
-    calls = parse_batch(inputs.text(rest[0] if rest else "-"))
-    for number, method, params in calls:
-        refused = check(method, params)
-        if refused is not None:
-            return failure(at_line(number, refused))
-    for index, (number, method, params) in enumerate(calls):
-        envelope = await run(method, params, progress)
-        if isinstance(envelope, Error):
-            not_reached(len(calls) - index - 1, progress)
-            return Output(
-                stdout="".join(progress.stdout),
-                stderr=failure(at_line(number, envelope)).stderr,
-                code=exit_code(envelope),
-            )
-        try:
-            progress.put(text_line(envelope.result))
-            if envelope.failed:
-                not_reached(len(calls) - index - 1, progress)
-        except BrokenPipeError:
-            return pipe_closed(method, number, progress)
-        if envelope.failed:
-            break
-    return Output(stdout="".join(progress.stdout), code=exit_code(envelope))
-
-
-def not_reached(count: int, progress: Progress) -> None:
-    """One line per call a stopped batch never sent, as the host batch reports its unreached entries."""
-    for _ in range(count):
-        progress.put(text_line({"outcome": "not_applied", "reason": "not_reached"}))
+    numbered = parse_batch(inputs.text(rest[0] if rest else "-"))
+    calls: list[dict[str, Any]] = [{"method": method, "params": params} for _, method, params in numbered]
+    shape = check("batch", {"calls": calls})
+    if shape is not None:
+        return failure(shape)
+    rows = BatchRows([number for number, _, _ in numbered], progress)
+    progress.inflight = "batch"
+    try:
+        envelope = await core_batch.run(calls, emit=rows.put)
+    except BrokenPipeError:
+        return pipe_closed(calls[rows.ran]["method"], rows.numbers[rows.ran])
+    progress.inflight = None
+    if isinstance(envelope, Error):  # refused before anything ran: the first refused line, as one error
+        index, error = next((i, e) for i, e in enumerate(envelope.error["entries"]) if "code" in e)
+        return failure(at_line(rows.numbers[index], Error(error)))
+    return Output(stdout="".join(progress.stdout), stderr=rows.stderr, code=exit_code(rows.verdict or envelope))
 
 
 def is_resource(path: str) -> bool:

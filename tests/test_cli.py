@@ -841,8 +841,8 @@ async def test_help_layers_are_plain_text_on_stdout_and_exit_zero(monkeypatch):
         len(overview.encode()) < 7000
     )  # 6173 B shipped, 6748 B with the hidden methods this fixture exposes (was 2860): loop text plus a usage line per method
     assert all(f"  {name} " in overview for name in {n.split(".")[0] for n in TOOLS})
-    for name in views.names():  # one generated line per exposed method, from the registry
-        assert f"\n    {views.usage(name)}\n" in overview, name
+    for name in views.names():  # one generated line per exposed method, from the registry; batch reads JSON Lines
+        assert f"\n    {cli.BATCH_USAGE if name == 'batch' else views.usage(name)}\n" in overview, name
     assert "\n    clips launch --target=CLIP\n" in overview
     resource = (await cli.execute(["tracks", "--help"])).stdout
     assert "\n  list " in resource
@@ -944,7 +944,12 @@ async def test_batch_stops_at_the_first_error_and_names_the_line(host, monkeypat
         ('{"method":"status","extra":1}\n', "line 1: expected"),
         ("\n \n", "no calls"),
         ('{"method":"nope"}\n', "line 1: Unknown method"),
-        ('{"method":"status"}\n{"method":"transport.set","params":{"tempo":19}}\n', "line 2: "),
+        (
+            '{"method":"transport.set","params":{"playing":false}}\n{"method":"transport.set","params":{"tempo":19}}\n',
+            "line 2: ",
+        ),
+        ('{"method":"transport.set","params":{"playing":false}}\n\n{"method":"status"}\n', "line 3: status is a read"),
+        ('{"method":"ack","params":{"id":"x"}}\n', "line 1: ack cannot be batched"),
     ],
 )
 async def test_batch_validates_every_line_before_sending_any(host, monkeypatch, stdin, fragment):
@@ -1271,3 +1276,12 @@ async def test_arranger_list_without_target_reads_every_track(host, monkeypatch)
     )
     assert out.stdout.splitlines() == ["name\tbar\tref.track.name", "Intro\t1\tLead"]
     assert host.requests[-1]["params"] == {}
+
+
+async def test_batch_refuses_more_lines_than_one_batch_takes(host, monkeypatch):
+    monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
+    stdin = lines_of(*({"method": "transport.set", "params": {"playing": False}},) * 1025)
+    out = await cli.execute(["batch"], stdin=lambda: stdin)
+    assert (out.code, out.stdout) == (2, "")
+    assert "calls" in json.loads(out.stderr)["message"]
+    assert host.connections == 0

@@ -67,9 +67,12 @@ def worst(outcomes: Iterable[str]) -> Outcome:
 
 
 def shared_verification(entries: Iterable[Mapping[str, Any]]) -> Verification | None:
-    """The leaf rule for a result composed of others: the one verification all its applied entries name, else none."""
+    """The leaf rule for a result composed of others: the one verification all its applied entries name, else none
+    (an applied entry without one, a multi-field result whose fields disagree, agrees with nothing)."""
     seen = {
-        Verification(e["verification"]) for e in entries if e.get("outcome") == Outcome.APPLIED and "verification" in e
+        Verification(e["verification"]) if "verification" in e else None
+        for e in entries
+        if e.get("outcome") == Outcome.APPLIED
     }
     return seen.pop() if len(seen) == 1 else None
 

@@ -37,6 +37,15 @@ def bridge_error(
     return BridgeError(error)
 
 
+NOT_REACHED = {"outcome": Outcome.NOT_APPLIED.value, "reason": "not_reached"}
+"""An entry a stopped batch, or composed call, never ran."""
+
+
+def not_applied(reason: str, message: str, **details: Any) -> dict[str, Any]:
+    """An entry that was not written, and why: a refused step, or the error a step's call returned."""
+    return {"outcome": Outcome.NOT_APPLIED.value, "reason": reason, "message": message, **details}
+
+
 def changed_before(error: BridgeError, **changed: Any) -> HostChanged:
     """A refusal that came after this call already changed host state: not applied, plus what did change."""
     refusal = error.error
