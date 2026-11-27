@@ -19,15 +19,8 @@ public final class ClipEditTest {
         return obj("{\"length\":" + length + "}");
     }
 
-    /** One launcher clip "Riff" in scene 0 with three channel-0 notes. */
     private static LauncherFake riff() {
-        LauncherFake f = new LauncherFake();
-        f.slots[0].content = true;
-        f.slots[0].name = "Riff";
-        f.put(0, 0, 0, 60, 100, 4);
-        f.put(0, 0, 8, 64, 90, 4);
-        f.put(0, 0, 3, 67, 80, 2);
-        return f;
+        return LauncherFake.riff();
     }
 
     private static JsonObject arrangerRef(LauncherFake f, double start, String name) {
