@@ -35,8 +35,9 @@ async def test_real_stdio_preserves_partial_domain_results(mcp_session, host):
         response = await mcp_session.call_tool(method, params)
         assert response.is_error is True, "an unknown outcome is flagged, never hidden"
         got = response.structured_content
-        if method == "status":  # client adds a mismatch note when the host reports no extension version
+        if method == "status":  # client adds a mismatch note and the supported Bitwig versions
             got.pop("extensionMismatch")
+            got.pop("supportedBitwig")
         assert got == result
         assert host.requests[-1]["params"] == params
     assert host.connections == sum(1 for method, spec in TOOLS.items() if spec.expose and method not in CLIENT_SIDE)

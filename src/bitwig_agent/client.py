@@ -23,6 +23,7 @@ from bitwig_agent.protocol.limits import (
     RESPONSE_GRACE_MS,
     mebibytes,
 )
+from bitwig_agent.protocol.shared import shared
 
 RESPONSE_TOO_LARGE = f"Response exceeds {mebibytes(MAX_RESPONSE_BYTES)}"
 METHODS = frozenset(TOOLS) - CLIENT_SIDE
@@ -49,6 +50,11 @@ def _flag_extension_mismatch(result: dict[str, Any]) -> None:
             "clientVersion": local,
             "warning": "Loaded extension differs from this client; reinstall/restart the controller before trusting writes.",
         }
+
+
+def supported_bitwig() -> list[str]:
+    """The Bitwig versions this package supports, from `shared/host.json`."""
+    return [entry["version"] for entry in shared("host")]
 
 
 def _reject_constant(value: str) -> None:
@@ -127,6 +133,7 @@ def _parse_response(raw: bytes, request_id: str, method: str) -> dict[str, Any]:
         raise ValueError("Host result must be an object")
     if method == "status":
         _flag_extension_mismatch(response["result"])
+        response["result"]["supportedBitwig"] = supported_bitwig()
     return response["result"]
 
 
