@@ -523,6 +523,17 @@ public final class TrackLifecycleModuleTest {
         assertEquals("unknown", unknown.get("outcome").getAsString(), "a new track of another type is not the copy");
         assertFalse(unknown.has("nameApplied"), "a duplicate names nothing");
         assertFalse(wrongType.services.holds.list().isEmpty(), "an unattributed copy holds further track creation");
+        HostFixture elsewhere = new HostFixture();
+        elsewhere.addTrack(2, HostFixture.C, "Audio");
+        duplicable(elsewhere, () -> elsewhere.addTrack(3, G, "Audio"));
+        HostOperation far = elsewhere.submit(
+                lifecycle(elsewhere),
+                "tracks.duplicate",
+                HostFixture.targeting(HostFixture.B),
+                elsewhere.tasks.after(400));
+        while (!far.result.isDone()) elsewhere.next();
+        assertEquals(
+                "unknown", far.result.join().get("outcome").getAsString(), "a new track not right after the source");
         HostOperation insert = wrongType.submit(lifecycle(wrongType), "tracks.insert", create("audio", -1));
         wrongType.next();
         assertRpcError("unresolved", insert);
