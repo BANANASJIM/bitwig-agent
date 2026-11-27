@@ -36,6 +36,8 @@ DURATION_RESOLUTION_DIVISOR = 1 << 20
 DURATION_RESOLUTION = 1 / DURATION_RESOLUTION_DIVISOR
 # Bitwig clamps an automation point's curve to this magnitude (inspected 6.1.4/6.1.7 JAR).
 MAX_CURVE = 1.0
+# Automation point beats snap to 1/POINT_BEAT_DIVISOR of a beat, so a point read back and written again is equal.
+POINT_BEAT_DIVISOR = 1 << 20
 
 
 def mebibytes(size: int) -> str:
@@ -59,4 +61,5 @@ def bundle_limits() -> dict[str, int | float]:
         "maxClipLength": MAX_CLIP_BEATS,
         "responseGraceMs": RESPONSE_GRACE_MS,
         "maxCurve": MAX_CURVE,
+        "pointBeatDivisor": POINT_BEAT_DIVISOR,
     }
