@@ -152,6 +152,8 @@ TOOLS: dict[str, ToolSpec] = _collect()
 
 
 CLIENT_SIDE = frozenset(name for name, spec in TOOLS.items() if not spec.host)
+COMPOSED = CLIENT_SIDE | {name for name, spec in TOOLS.items() if spec.wire}
+"""Methods the client runs itself: the client-side tools, and the host writes it composes with configure steps."""
 
 
 MAX_SUGGESTIONS = 3
@@ -179,8 +181,10 @@ def unknown_method_message(method: str) -> str:
     return f"Unknown method: {method}{hint}. Call help to list the available methods."
 
 
-def validate_call(method: str, arguments: dict[str, Any]) -> tuple[dict[str, Any], int]:
+def validate_call(method: str, arguments: dict[str, Any], *, host: bool = False) -> tuple[dict[str, Any], int]:
+    """The arguments as the tool takes them, or with host=True as the extension receives them."""
     if method not in TOOLS:
         raise ValueError(unknown_method_message(method))
-    args: Any = TOOLS[method].model.model_validate(arguments)
+    spec = TOOLS[method]
+    args: Any = (spec.host_model if host else spec.model).model_validate(arguments)
     return args.model_dump(exclude={"timeoutMs"}, exclude_unset=True, by_alias=True), args.timeoutMs

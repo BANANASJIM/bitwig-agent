@@ -468,7 +468,7 @@ def type_vectors(node, defs):
 
 def python_verdict(method, params):
     try:
-        TOOLS[method].model.model_validate(params)
+        TOOLS[method].host_model.model_validate(params)
         return True
     except ValidationError:
         return False
@@ -625,11 +625,11 @@ def owns(example, path, schema):
 def cases(method):
     """Yield (label, params, field, expectation) for one method."""
     spec = TOOLS[method]
-    schema = spec.model.model_json_schema()
+    schema = spec.host_model.model_json_schema()
     defs = schema.get("$defs", {})
     doc = (schema, defs)
-    sent = {key for example in spec.examples for key in example}
-    for example in map(host_paths, spec.examples):
+    sent = {key for example in spec.host_examples for key in example}
+    for example in map(host_paths, spec.host_examples):
         for container, node in containers(schema, defs):
             params, parent, key = edit(example, (*container, UNKNOWN_FIELD), doc)
             parent[key] = 1

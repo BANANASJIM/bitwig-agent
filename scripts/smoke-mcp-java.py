@@ -132,7 +132,7 @@ async def exercise(folder: Path, api: Path) -> None:  # noqa: PLR0915
             )
             calls = 0
             for method in sorted(names - CLIENT_SIDE):
-                examples = TOOLS[method].examples
+                examples = TOOLS[method].host_examples
                 require(bool(examples), f"Missing executable example for {method}")
                 for example in examples:
                     params = host_paths(example)
@@ -142,7 +142,7 @@ async def exercise(folder: Path, api: Path) -> None:  # noqa: PLR0915
                     # validates what the adapter actually sends.
                     expected = (
                         TOOLS[method]
-                        .model.model_validate(params)
+                        .host_model.model_validate(params)
                         .model_dump(exclude={"timeoutMs"}, exclude_unset=True, by_alias=True)
                     )
                     response = await session.call_tool(method, params)

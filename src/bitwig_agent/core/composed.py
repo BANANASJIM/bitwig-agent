@@ -1,11 +1,11 @@
-"""Handlers for protocol.CLIENT_SIDE tools: Python composites over the host methods."""
+"""Handlers for protocol.COMPOSED tools: Python composites over the host methods."""
 
 from __future__ import annotations
 
 import asyncio
 from typing import Any
 
-from bitwig_agent import modulator_docs, presets
+from bitwig_agent import configured_insert, modulator_docs, presets
 from bitwig_agent.audio import pipewire
 from bitwig_agent.diagnostics import diagnostics
 from bitwig_agent.grid import docs as grid_docs
@@ -36,6 +36,8 @@ async def presets_search(client: Any, args: dict[str, Any], timeout_ms: int) -> 
 
 
 HANDLERS = {
+    "devices.insert": configured_insert.devices_insert,
+    "modulators.insert": configured_insert.modulators_insert,
     "modulators.describe": modulators_describe,
     "grid.apply": grid_apply,
     "grid.export": grid_export,
