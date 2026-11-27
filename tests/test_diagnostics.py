@@ -1,7 +1,9 @@
 """diagnostics.get against synthetic Bitwig logs (no real log, no Bitwig)."""
 
 import asyncio
+import os
 import re
+import sys
 from datetime import datetime, timedelta
 
 import pytest
@@ -200,3 +202,10 @@ def test_large_log_reads_from_the_end(log, monkeypatch):
     result = run()
     assert [e["message"] for e in result["events"]] == ["needle"]
     assert result["attribution"]["sectionsSeen"] == 1  # stopped at the newest header, did not read the whole file
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="reads /proc")
+def test_process_start_of_this_process_is_in_the_past():
+    started = diagnostics.process_start(os.getpid())
+    assert started is not None
+    assert started <= datetime.now()

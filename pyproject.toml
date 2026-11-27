@@ -62,6 +62,9 @@ extend-exclude = ["build"]
 [tool.ruff.lint]
 select = ["E", "W", "F", "I", "B", "UP", "SIM", "C4", "RUF", "PL", "C90", "PERF", "PT", "BLE"]
 ignore = ["E501"]
+preview = true
+explicit-preview-rules = true
+extend-select = ["PLW1514"]  # text I/O must name its encoding: Windows defaults to cp1252
 
 [tool.ruff.lint.mccabe]
 max-complexity = 12

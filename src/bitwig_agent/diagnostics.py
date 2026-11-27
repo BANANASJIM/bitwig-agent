@@ -81,9 +81,13 @@ def process_start(pid: Any) -> datetime | None:
     if type(pid) is not int or not sys.platform.startswith("linux"):
         return None
     try:
-        stat = Path(f"/proc/{pid}/stat").read_text()
+        stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
         ticks = int(stat[stat.rindex(")") + 2 :].split()[19])
-        btime = next(int(x.split()[1]) for x in Path("/proc/stat").read_text().splitlines() if x.startswith("btime"))
+        btime = next(
+            int(x.split()[1])
+            for x in Path("/proc/stat").read_text(encoding="utf-8").splitlines()
+            if x.startswith("btime")
+        )
         return datetime.fromtimestamp(btime + ticks / os.sysconf("SC_CLK_TCK"))
     except (OSError, ValueError, StopIteration, IndexError):
         return None

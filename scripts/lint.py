@@ -38,6 +38,7 @@ def tracked(*prefixes: str, suffix: str) -> list[str]:
         check=True,
         capture_output=True,
         text=True,
+        encoding="utf-8",
     ).stdout
     return sorted(name for name in listing.split("\0") if name.endswith(suffix))
 

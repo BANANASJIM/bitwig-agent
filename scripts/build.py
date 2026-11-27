@@ -97,7 +97,9 @@ def classes_digest(classes):
 
 
 def git_output(*args):
-    return subprocess.run(["git", "-C", str(ROOT), *args], check=True, capture_output=True, text=True).stdout.strip()
+    return subprocess.run(
+        ["git", "-C", str(ROOT), *args], check=True, capture_output=True, text=True, encoding="utf-8"
+    ).stdout.strip()
 
 
 def build_properties(classes):
