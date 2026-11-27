@@ -99,6 +99,8 @@ TAXONOMY = (
     Capability("launcher.arranger-copy", "Copy between arranger and launcher both ways, whole scenes too"),
     Capability("launcher.double-content", "Double a launcher clip's content", tier="medium"),
     Capability("launcher.clip-timing", "Set a launcher clip's loop timing and Next Action", tier="medium"),
+    Capability("launcher.duplicate", "Duplicate a launcher clip, also as an alias", tier="medium"),
+    Capability("launcher.clip-commands", "Reverse, legato, normalize, fade or gain a launcher clip", tier="medium"),
     Capability("mix.sends", "Set send levels and turn sends on or off", weight=2),
     Capability("mix.send-mode", "Choose pre-fader, post-fader or auto sends"),
     Capability("mix.track-io-hardware", "Route track inputs and outputs to hardware and host buses", weight=2),
@@ -297,7 +299,11 @@ CAPABILITIES: dict[str, tuple[str, ...]] = {
     "clips.record": ("launcher.record-slot",),
     "clips.transpose": ("notes.transpose",),
     "clips.quantize": ("notes.quantize",),
-    "clips.transform": ("launcher.double-content",),
+    "clips.transform": ("launcher.double-content", "launcher.clip-commands", "notes.quantize-to-key"),
+    "clips.duplicate": ("launcher.duplicate",),
+    "clips.slice": ("notes-audio.slice-to-sampler",),
+    "clips.stretch": ("audio.event-tempo",),
+    "clips.gain": ("launcher.clip-commands",),
     "notes.get": ("notes.read", "notes.expression", "operators.readback"),
     "notes.set": ("notes.draw", "notes.velocity", "notes.chance", "notes.expression", "operators.repeats"),
     "scenes.list": ("launcher.scenes",),
@@ -321,6 +327,9 @@ CAPABILITIES: dict[str, tuple[str, ...]] = {
 """By exposed method, the capabilities it does (a composer like grid.apply carries its inner methods' tags)."""
 
 PARTIAL = {
+    "notes.quantize-to-key": Partial("scope", "Launcher note clips only."),
+    "notes-audio.slice-to-sampler": Partial("scope", "Launcher audio clips only."),
+    "audio.event-tempo": Partial("fields", "Launcher audio clips only: detect the tempo or set it to the project tempo; not the project tempo from the clip."),
     "browser.preset-search": Partial("fields", "Searches preset files by name, folder, creator and category; no tags, collections or favorites."),
     "browser.sample-to-sampler": Partial("fields", "Makes a plain Sampler; the drop modifiers for other Sampler setups are not available."),
     "arranger-clips.list": Partial("scope", "The main clip lane only; automation clips and take or comp lanes are not read."),

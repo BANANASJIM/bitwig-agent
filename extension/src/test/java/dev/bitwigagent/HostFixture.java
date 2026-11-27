@@ -270,6 +270,7 @@ public final class HostFixture {
         sameSlot.data = false;
         FakeHost cursorSlot = clip.child("clipLauncherSlot");
         cursorSlot.child("sceneIndex").data = -1;
+        cursorSlot.child("name").data = "";
         cursorSlot.on("createEqualsValue", args -> sameSlot.proxy());
     }
 

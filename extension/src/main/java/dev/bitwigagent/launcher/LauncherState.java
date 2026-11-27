@@ -144,6 +144,7 @@ public final class LauncherState implements RenderModule.LauncherContent {
         clip.addNoteStepObserver(note -> {});
         ClipLauncherSlot cursorSlot = clip.clipLauncherSlot();
         cursorSlot.sceneIndex().markInterested();
+        cursorSlot.name().markInterested();
         for (int t = 0; t < HostLimits.TRACKS; t++) {
             Track track = window.at(t);
             final int index = t;

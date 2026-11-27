@@ -33,6 +33,7 @@ import dev.bitwigagent.host.SelectionLease;
 import dev.bitwigagent.host.TrackRefs;
 import dev.bitwigagent.host.TrackWindow;
 import dev.bitwigagent.host.TransportSafety;
+import dev.bitwigagent.launcher.ClipCommands;
 import dev.bitwigagent.launcher.ClipModule;
 import dev.bitwigagent.launcher.LauncherModule;
 import dev.bitwigagent.launcher.LauncherSettingsModule;
@@ -206,7 +207,28 @@ public final class TestServices {
 
     public ClipModule clips(
             LauncherSettingsModule.Access settings, ArrangerModule.Access arranger, NativeNotes.Access notes) {
-        return new ClipModule(launcherState(), trackRefs, notes(notes), launcherSettings(settings), arranger(arranger));
+        return clips(settings, arranger, notes, null);
+    }
+
+    /** {@code commands} and {@code notes} null: their bindings are tried on the test host, which fails closed. */
+    public ClipModule clips(
+            LauncherSettingsModule.Access settings,
+            ArrangerModule.Access arranger,
+            NativeNotes.Access notes,
+            ClipCommands.Access commands) {
+        return new ClipModule(
+                launcherState(),
+                trackRefs,
+                notes(notes),
+                launcherSettings(settings),
+                arranger(arranger),
+                new ClipCommands(
+                        launcherState(),
+                        trackRefs,
+                        application,
+                        port(commands, natives.clipCommands()),
+                        port(notes, natives.noteWrites()),
+                        HostFixture.SPECS.clipOps()));
     }
 
     public ContextModule context(MixModule mix, TransportModule transport) {

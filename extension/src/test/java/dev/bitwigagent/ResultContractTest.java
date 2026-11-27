@@ -12,6 +12,7 @@ import dev.bitwigagent.core.Refs;
 import dev.bitwigagent.core.Results;
 import dev.bitwigagent.device.ChainExamples;
 import dev.bitwigagent.device.DeviceChainModuleTest;
+import dev.bitwigagent.launcher.ClipCommands;
 import dev.bitwigagent.launcher.LauncherFake;
 import dev.bitwigagent.mix.TrackReshapeModuleTest;
 import dev.bitwigagent.project.FakeKeySignature;
@@ -210,7 +211,26 @@ final class ResultContractTest {
             "launcher.returnToArrangement", f -> "{\"target\":\"all\"}",
             "clips.transpose", f -> "{\"target\":" + f.clip(0) + ",\"semitones\":2}",
             "clips.quantize", f -> "{\"target\":" + f.clip(0) + ",\"amount\":1}",
-            "clips.transform", f -> "{\"targets\":[" + f.clip(0) + "],\"op\":\"doubleContent\"}");
+            "clips.transform", f -> "{\"targets\":[" + f.clip(0) + "],\"op\":\"doubleContent\"}",
+            "clips.duplicate",
+                    f -> {
+                        f.onAction = id -> {
+                            f.slots[1].name = "Riff";
+                            f.observeContent(1, true);
+                        };
+                        return "{\"target\":" + f.clip(0) + "}";
+                    },
+            "clips.slice",
+                    f -> {
+                        f.commands.kind = ClipCommands.Kind.AUDIO;
+                        f.onAction = id -> f.trackCount = 2;
+                        return "{\"target\":" + f.clip(0) + ",\"to\":\"slicedSampler\"}";
+                    });
+
+    /** Bitwig clip commands with nothing to read back on the launcher fixture's audio clip: each answers sent. */
+    private static final Map<String, Function<LauncherFake, String>> CLIP_SENT = Map.of(
+            "clips.stretch", f -> "{\"target\":" + f.clip(0) + ",\"tempo\":\"detected\"}",
+            "clips.gain", f -> "{\"target\":" + f.clip(0) + ",\"deltaDb\":-2}");
 
     private static JsonObject run(String method, Example example) {
         HostFixture f = new HostFixture();
@@ -245,6 +265,7 @@ final class ResultContractTest {
         listed.addAll(LAUNCHER.keySet());
         listed.addAll(DOMAIN_EXAMPLES.keySet());
         listed.addAll(CLIP_EXAMPLES.keySet());
+        listed.addAll(CLIP_SENT.keySet());
         listed.addAll(MISSING);
         assertEquals(writes, listed);
         assertEquals(
@@ -252,6 +273,7 @@ final class ResultContractTest {
                         + SENT.size()
                         + LAUNCHER.size()
                         + CLIP_EXAMPLES.size()
+                        + CLIP_SENT.size()
                         + DOMAIN_EXAMPLES.size()
                         + MISSING.size(),
                 listed.size(),
@@ -295,6 +317,14 @@ final class ResultContractTest {
                     f.call(example.getKey(), HostFixture.json(example.getValue().apply(f)));
             assertTrue(applies(result), example.getKey() + " example does not apply: " + result);
             assertTrue(Results.leafRuleHolds(result), example.getKey() + ": " + result);
+        }
+        for (Map.Entry<String, Function<LauncherFake, String>> sent : CLIP_SENT.entrySet()) {
+            LauncherFake f = LauncherFake.riff();
+            f.commands.kind = ClipCommands.Kind.AUDIO;
+            JsonObject result =
+                    f.call(sent.getKey(), HostFixture.json(sent.getValue().apply(f)));
+            assertEquals("sent", result.get("outcome").getAsString(), sent.getKey());
+            assertFalse(result.has("verification"), sent.getKey());
         }
     }
 }

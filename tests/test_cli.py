@@ -841,8 +841,8 @@ async def test_help_layers_are_plain_text_on_stdout_and_exit_zero(monkeypatch):
         assert "\x1b" not in out.stdout
     overview = (await cli.execute(["--help"])).stdout
     assert (
-        len(overview.encode()) < 7600
-    )  # grows with the method table (7235 B at #152): loop text plus a usage line per method
+        len(overview.encode()) < 7800
+    )  # grows with the method table (7630 B with the four X6b clip commands): loop text plus a usage line per method
     assert all(f"  {name} " in overview for name in {n.split(".")[0] for n in TOOLS})
     for name in views.names():  # one generated line per exposed method, from the registry; batch reads JSON Lines
         assert f"\n    {cli.BATCH_USAGE if name == 'batch' else views.usage(name)}\n" in overview, name
