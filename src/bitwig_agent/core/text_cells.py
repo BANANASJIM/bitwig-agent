@@ -15,6 +15,11 @@ CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 ELLIPSIS = "…"
 
 
+def one_line(text: str) -> str:
+    """text with every control character (tab, newline, ...) shown as a space."""
+    return CONTROL.sub(" ", text)
+
+
 def number(value: float | Fraction) -> str:
     """A beat or bar exactly as JSON writes it: 4, 0.5, 0.22500038146972656 (the shortest round-trip form)."""
     shown = float(value)
@@ -33,14 +38,14 @@ def on_grid(position: Fraction, step: Fraction) -> bool:
 
 def label(text: str, width: int) -> str:
     """text on one line, cut to width display columns (with an ellipsis) and padded to exactly width (wcwidth)."""
-    text = CONTROL.sub(" ", text)
+    text = one_line(text)
     if wcwidth.width(text) > width:
         text = wcwidth.clip(text, 0, width - 1) + ELLIPSIS
     return wcwidth.ljust(text, width)
 
 
 def width(text: str) -> int:
-    return int(wcwidth.width(CONTROL.sub(" ", text)))
+    return int(wcwidth.width(one_line(text)))
 
 
 def blocks(count: int, size: int) -> Iterator[range]:

@@ -186,8 +186,11 @@ def render(result: dict[str, Any]) -> str:
     inside = [note for note in notes if start <= note.beat < end]
     step, step_name = choose_step(origin, end, [note.beat for note in inside])
     count = columns(origin, end, step)
-    drawn = [note for note in inside if on_grid(note.beat, step) and round((note.beat - origin) / step) < count]
-    off = [note for note in inside if note not in drawn]
+    drawn: list[Note] = []
+    off: list[Note] = []
+    for note in inside:
+        placed = on_grid(note.beat, step) and round((note.beat - origin) / step) < count
+        (drawn if placed else off).append(note)
     outside = [note for note in notes if not start <= note.beat < end]
     span = f"{number(start)}-{number(end)}"
     lines = [header(result.get("ref", {}).get("name"), start, end, step_name), LEGEND]

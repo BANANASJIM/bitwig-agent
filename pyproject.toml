@@ -84,6 +84,7 @@ platforms = ["linux-64", "linux-aarch64", "osx-64", "osx-arm64", "win-64"]
 
 [tool.pixi.pypi-dependencies]
 bitwig-agent = { path = ".", editable = true }
+wcwidth = "==0.9.4"  # lock pin: newest release at least two weeks old, Arch extra's version; the package takes >=0.3,<1
 
 [tool.pixi.feature.py311.dependencies]
 python = "3.11.*"

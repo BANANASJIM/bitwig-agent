@@ -16,7 +16,7 @@ from typing import Any
 
 from bitwig_agent.core import rows
 from bitwig_agent.core.serialize import dumps
-from bitwig_agent.core.text_cells import CONTROL, blocks, join_entries, label, number, on_grid, quoted, ruler, width
+from bitwig_agent.core.text_cells import blocks, join_entries, label, number, on_grid, one_line, quoted, ruler, width
 
 LETTERS = string.ascii_uppercase + string.ascii_lowercase + string.digits
 OVERFLOW = "*"
@@ -51,9 +51,7 @@ def parse(record: dict[str, Any]) -> Clip:
         start = Fraction(record["start"])
         end = Fraction(record["end"]) if record.get("end") is not None else start + Fraction(record["length"])
         name = record.get("name")
-        return Clip(
-            dumps(track.get("id")), str(track.get("name") or ""), name if isinstance(name, str) else "", start, end
-        )
+        return Clip(track["id"], str(track.get("name") or ""), name if isinstance(name, str) else "", start, end)
     except (KeyError, TypeError, ValueError, AttributeError) as exc:
         raise ValueError(f"An arranger row lacks ref.track, start or end: {dumps(record)}") from exc
 
@@ -88,13 +86,9 @@ def cells_of(clips: list[Clip], cell: Fraction, count: int) -> str:
 
 
 def marker_entries(result: dict[str, Any], bar: Fraction) -> str:
-    markers = result.get("markers")
     entries = [
-        f"{number(1 + Fraction(m['beat']) / bar)} {CONTROL.sub(' ', str(m.get('name') or ''))}".rstrip()
-        for m in sorted(
-            (m for m in markers or [] if isinstance(m, dict) and isinstance(m.get("beat"), (int, float))),
-            key=lambda m: (m["beat"], str(m.get("name"))),
-        )
+        f"{number(1 + Fraction(m['beat']) / bar)} {one_line(m['name'])}".rstrip()
+        for m in sorted(result.get("markers", []), key=lambda m: (m["beat"], m["name"]))
     ]
     incomplete = " (incomplete)" if result.get("markersComplete") is False else ""
     return "markers: " + join_entries(entries) + incomplete
@@ -119,13 +113,13 @@ def legend(order: list[str], clips: list[Clip], names: dict[str, str]) -> list[s
             if clip.track == track:
                 spans.setdefault((clip.letter, clip.name), []).append(clip.span())
         entries = [f"{letter} {quoted(name)} {', '.join(found)}" for (letter, name), found in spans.items()]
-        lines.append(f"{CONTROL.sub(' ', names[track])}: {join_entries(entries)}")
+        lines.append(f"{one_line(names[track])}: {join_entries(entries)}")
     return lines
 
 
 def footer(result: dict[str, Any], clips: list[Clip], cell: Fraction) -> list[str]:
     off = [c for c in clips if not (on_grid(c.start, cell) and on_grid(c.end, cell))]
-    entries = [f"{CONTROL.sub(' ', c.track_name)} {c.letter} {quoted(c.name)} {c.span()}" for c in off]
+    entries = [f"{one_line(c.track_name)} {c.letter} {quoted(c.name)} {c.span()}" for c in off]
     lines = ["off-grid: " + join_entries(entries)]
     window = result.get("window")
     if isinstance(window, dict) and window.get("complete") is False:
@@ -141,7 +135,7 @@ def render(result: dict[str, Any]) -> str:
     clips = lettered([parse(record) for record in rows.records_of(result, "clips")])
     bar = bar_beats(result.get("timeSignature"))
     unit = bar if bar is not None else Fraction(4)
-    marker_beats = [Fraction(m["beat"]) for m in result.get("markers") or [] if isinstance(m, dict) and "beat" in m]
+    marker_beats = [Fraction(m["beat"]) for m in result.get("markers", [])]
     end = max([unit, *(c.end for c in clips), *marker_beats])
     cell_bars = 1
     while math.ceil(end / (unit * cell_bars)) > MAX_CELLS:
