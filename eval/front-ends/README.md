@@ -73,3 +73,5 @@ Criterion, for each of B and C against A:
    this comparison (same basis for all conditions).
 
 Per-task numbers are diagnostics only. Bytes and cost are recorded, not judged.
+
+verify stops the transport before its own checks; recorded (`transportPlayingAtEnd`), not judged.
