@@ -46,10 +46,19 @@ def _path(value: str) -> Path:
     return Path(value).expanduser()
 
 
+LOCAL_HOSTS = ("", "localhost", "unix", "127.0.0.1")
+
+
+def local_display(display: str) -> str:
+    """The display number in `:N` form when the display is on this machine (`localhost:0.0` is `:0`)."""
+    host, _, number = display.rpartition(":")
+    return f"{'' if host in LOCAL_HOSTS else host}:{number.partition('.')[0]}"
+
+
 def parse(data: dict[str, Any], caller_display: str) -> Config:
     """The configuration; refuses a test display that is :0 or the caller's own display."""
     display = data["display"]
-    if display.partition(".")[0] in {":0", caller_display.partition(".")[0]}:
+    if local_display(display) in {":0", local_display(caller_display)}:
         raise SystemExit(f"refusing display {display}: the test instance needs its own display, not :0 or yours")
     return Config(
         state_root=_path(data["state_root"]),

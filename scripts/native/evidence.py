@@ -12,7 +12,9 @@ from bitwig_agent.audio import pipewire
 
 from . import sandbox
 
-MONITOR_CLEAN = re.compile(r"monitor stopped .* outside \S+: dump=0 poll=0; pw-dump exited early: no;")
+MONITOR_CLEAN = re.compile(
+    r"monitor stopped .* outside \S+: dump=0 poll=0; pw-dump exited early: no; pw-link poller died: no;"
+)
 SILENT_OUTCOMES = ("applied", "already_matched")
 
 

@@ -60,10 +60,11 @@ def processes() -> list[Process]:
 
 
 def session_alive(session: int) -> bool:
-    """Whether any process of the session still exists."""
+    """Whether any live process of the session exists; a zombie (state Z, e.g. the unreaped bwrap leader) has ended."""
     for stat in PROC.glob("[0-9]*/stat"):
         try:
-            if session_of(stat.read_text(encoding="utf-8")) == session:
+            text = stat.read_text(encoding="utf-8")
+            if text.rpartition(")")[2].split()[0] != "Z" and session_of(text) == session:
                 return True
         except FileNotFoundError:  # the process exited during the scan
             continue

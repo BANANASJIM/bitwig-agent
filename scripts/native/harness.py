@@ -1,5 +1,6 @@
 """The harness commands: init, up, down, reset, status, cli, shot and proof."""
 
+import contextlib
 import json
 import os
 import pwd
@@ -12,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from bitwig_agent.audio import pipewire
+from bitwig_agent.errors import BridgeError, HostChanged
 
 from . import audio, bitwig, doctor, evidence, lock, monitor, sandbox
 from .config import Config, Host
@@ -83,16 +85,23 @@ def refuse_running() -> None:
         raise SystemExit(f"refusing: Bitwig already running ({listed}); quit it first")
 
 
-def stop_sandbox(run: Path, session: int, reason: str) -> None:
-    """Fail closed: cut every Bitwig link outside the sink, then end the whole sandbox (TERM, then KILL)."""
+def stop_sandbox(run: Path, session: int, reason: str) -> bool:
+    """Fail closed: cut every Bitwig link outside the sink, then end the whole sandbox (TERM, then KILL).
+
+    Returns whether the sandbox is confirmed gone; a failed cut is recorded and never skips the kill.
+    """
+    evidence.update_run(run, aborted=reason)
     try:
-        evidence.update_run(run, aborted=reason, strayLinksCut=audio.disconnect_strays())
-    finally:
-        for sig in (signal.SIGTERM, signal.SIGKILL):
-            if bitwig.session_alive(session):
+        evidence.update_run(run, strayLinksCut=audio.disconnect_strays())
+    except (BridgeError, HostChanged) as exc:
+        evidence.update_run(run, cutFailed=str(exc))
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        if bitwig.session_alive(session):
+            with contextlib.suppress(ProcessLookupError):  # the last process exited after the check
                 os.killpg(session, sig)
-            if bitwig.wait_until(lambda: not bitwig.session_alive(session), KILL_SECONDS):
-                break
+        if bitwig.wait_until(lambda: not bitwig.session_alive(session), KILL_SECONDS):
+            return True
+    return False
 
 
 def spawn(argv: list[str], output: Path, **options: Any) -> int:
@@ -193,12 +202,18 @@ def up(config: Config, name: str, extension: str) -> Path:
     (run / "bwrap-argv.txt").write_text(subprocess.list2cmdline(argv) + "\n", encoding="utf-8")
     env = sandbox.environment(os.environ, config.display, config.port)
     session = spawn(argv, run / "bitwig.out", env=env, pass_fds=(fd,))
-    lock.write_owner({"run": str(run), "host": name, "session": session, "monitor": monitor_pid, "port": config.port})
     try:
+        lock.write_owner(
+            {"run": str(run), "host": name, "session": session, "monitor": monitor_pid, "port": config.port}
+        )
         pid = settle(config, run, session)
     except BaseException as exc:  # any failure, Ctrl-C included, must not leave a running sandbox
-        stop_sandbox(run, session, f"{type(exc).__name__}: {exc}")
-        raise SystemExit(f"ABORTED: {exc}; sandbox stopped; run native-down to close the evidence in {run}") from exc
+        stopped = stop_sandbox(run, session, f"{type(exc).__name__}: {exc}")
+        state = "sandbox stopped" if stopped else f"sandbox NOT stopped: session {session} is still running"
+        raise SystemExit(
+            f"ABORTED: {exc}; {state}; close the evidence in {run} with\n"
+            f"export {TOKEN}={run.name}\npixi run native-down"
+        ) from exc
     print(f"up: {name} pid {pid} port {config.port} display {config.display}; evidence {run}")
     print(f"export {TOKEN}={run.name}")
     return run

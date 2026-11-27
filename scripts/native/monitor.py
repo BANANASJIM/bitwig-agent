@@ -2,7 +2,7 @@
 
 Two independent sources: `pw-dump --monitor` (an event stream that sees even short-lived links) and
 a `pw-link -l` poll every 50 ms; both apply audio.outside_sink. It prints "monitor started" only once
-the first pw-dump snapshot is applied, and its summary line says whether pw-dump exited early.
+the first pw-dump snapshot is applied, and its summary line says whether pw-dump exited early or the poller died.
 
   PYTHONPATH=scripts python -m native.monitor LABEL >> monitor.log
 """
@@ -83,6 +83,7 @@ class Monitor:
     polled: list[str] = field(default_factory=list)
     polls: int = 0
     dump_exited: bool = False
+    poller_died: bool = False
     lock: threading.Lock = field(default_factory=threading.Lock)
     stop: threading.Event = field(default_factory=threading.Event)
     ready: threading.Event = field(default_factory=threading.Event)  # the first pw-dump snapshot is applied
@@ -104,13 +105,16 @@ class Monitor:
         self.dump_exited = not self.stop.is_set()
 
     def poll(self) -> None:
-        while not self.stop.is_set():
-            listing = pipewire.run(["pw-link", "-l"])[1]
-            self.polls += 1
-            for out, target in audio.stray_links(listing):
-                self.polled.append(f"{out} |-> {target}")
-                self.report(f"pw-link: {self.polled[-1]}")
-            self.stop.wait(POLL_SECONDS)
+        try:
+            while not self.stop.is_set():
+                listing = pipewire.run(["pw-link", "-l"])[1]
+                self.polls += 1
+                for out, target in audio.stray_links(listing):
+                    self.polled.append(f"{out} |-> {target}")
+                    self.report(f"pw-link: {self.polled[-1]}")
+                self.stop.wait(POLL_SECONDS)
+        finally:
+            self.poller_died = not self.stop.is_set()
 
     def summary(self) -> str:
         with self.lock:
@@ -119,6 +123,7 @@ class Monitor:
                 f"pw-dump events={self.graph.events} pw-link polls={self.polls} bitwig links outside "
                 f"{pipewire.SINK}: dump={len(self.graph.bad)} poll={len(self.polled)}; "
                 f"pw-dump exited early: {'yes' if self.dump_exited else 'no'}; "
+                f"pw-link poller died: {'yes' if self.poller_died else 'no'}; "
                 f"bitwig links seen: {sorted(self.graph.seen) or 'none'}"
             )
 

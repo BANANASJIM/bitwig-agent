@@ -73,7 +73,19 @@ def test_parse_expands_home_and_derives_paths(monkeypatch):
         parsed.host("6.1.9")
 
 
-@pytest.mark.parametrize(("display", "caller"), [(":0", ""), (":0.0", ":1"), (":2", ":2.0"), (":2.0", ":2")])
+@pytest.mark.parametrize(
+    ("display", "caller"),
+    [
+        (":0", ""),
+        (":0.0", ":1"),
+        (":2", ":2.0"),
+        (":2.0", ":2"),
+        ("localhost:0", ""),
+        ("unix:0", ""),
+        ("127.0.0.1:0.0", ""),
+        (":3", "localhost:3"),
+    ],
+)
 def test_parse_refuses_the_desktop_or_the_callers_display(display, caller):
     data = {"state_root": "/s", "display": display, "port": 1, "fixture_seed": "/s/P", "hosts": {}}
     with pytest.raises(SystemExit, match=f"refusing display {re.escape(display)}"):
@@ -263,6 +275,19 @@ def test_monitor_reads_both_sources_and_summarises(monkeypatch, capsys):
     assert evidence.MONITOR_CLEAN.search(monitor.Monitor("clean").summary())
 
 
+def test_a_dead_poller_fails_the_monitor_proof(monkeypatch):
+    watch = monitor.Monitor("r")
+
+    def broken(args, timeout=5.0):
+        raise bridge_error("deadline", "pw-link did not finish")
+
+    monkeypatch.setattr(pipewire, "run", broken)
+    with pytest.raises(BridgeError):
+        watch.poll()
+    assert "pw-link poller died: yes;" in watch.summary()
+    assert not evidence.MONITOR_CLEAN.search(watch.summary())
+
+
 def test_a_pw_dump_exit_fails_the_monitor_proof():
     watch = monitor.Monitor("r")
     watch.read_dump(io.StringIO(""))
@@ -277,13 +302,17 @@ def test_a_pw_dump_exit_fails_the_monitor_proof():
 # processes and RPC
 
 
-def fake_process(proc: Path, pid: int, *, session=None, mounts="", **env):
+def write_stat(path: Path, pid: int, session: int, state: str = "S") -> None:
+    (path / "stat").write_text(f"{pid} (Bitwig (x)) {state} 1 {pid} {session} 0 -1", encoding="utf-8")
+
+
+def fake_process(proc: Path, pid: int, *, session=None, mounts="", comm=bitwig.COMM, **env):
     path = proc / str(pid)
     path.mkdir(parents=True)
-    (path / "comm").write_text(f"{bitwig.COMM}\n", encoding="utf-8")
+    (path / "comm").write_text(f"{comm}\n", encoding="utf-8")
     variables = {"DISPLAY": ":9", "HOME": "/home/u", **env}
     (path / "environ").write_bytes("".join(f"{k}={v}\0" for k, v in variables.items()).encode())
-    (path / "stat").write_text(f"{pid} (Bitwig (x)) S 1 {pid} {session or pid} 0 -1", encoding="utf-8")
+    write_stat(path, pid, session or pid)
     (path / "mountinfo").write_text(mounts, encoding="utf-8")
     return path
 
@@ -316,6 +345,14 @@ def test_session_alive_sees_any_process_of_the_session(tmp_path, monkeypatch):
     (tmp_path / "8/stat").symlink_to(tmp_path / "gone")  # exited between listing and reading
     assert bitwig.session_alive(5)
     assert not bitwig.session_alive(6)
+
+
+def test_a_zombie_leader_does_not_keep_its_session_alive(tmp_path, monkeypatch):
+    monkeypatch.setattr(bitwig, "PROC", tmp_path)
+    leader = fake_process(tmp_path, 5, comm="bwrap")
+    assert bitwig.session_alive(5)
+    write_stat(leader, 5, 5, "Z")  # dead, not reaped by the harness that spawned it
+    assert not bitwig.session_alive(5)
 
 
 def completed(args, rc=0, out=""):
@@ -431,7 +468,8 @@ def finished_run(run: Path, **overrides) -> Path:
     (run / "real.diff").write_text("", encoding="utf-8")
     (run / "monitor.log").write_text(
         "[r] 10:00:00.000 monitor stopped after 9.0s: pw-dump events=4 pw-link polls=9 "
-        "bitwig links outside bwtest: dump=0 poll=0; pw-dump exited early: no; bitwig links seen: none\n",
+        "bitwig links outside bwtest: dump=0 poll=0; pw-dump exited early: no; pw-link poller died: no; "
+        "bitwig links seen: none\n",
         encoding="utf-8",
     )
     (run / "silent-route.json").write_text(SILENT, encoding="utf-8")
@@ -508,10 +546,13 @@ class Desktop:
         self.killed: list[tuple[int, int]] = []
         self.fds: list[int] = []
         self.bitwig_links: set[tuple[str, str]] = set()
-        self.ignores = ()  # signals the sandbox survives
+        self.ignores: tuple = ()  # signals the sandbox survives
         self.monitor_starts = True
+        self.events: list[str] = []
+        self.leader = 0
         monkeypatch.setattr(bitwig, "PROC", self.proc)
-        monkeypatch.setattr(pipewire, "run", self.pw.run)
+        monkeypatch.setattr(pipewire, "run", self.run)
+        monkeypatch.setattr(harness, "KILL_SECONDS", 0)
         monkeypatch.setattr(harness, "account", lambda: SimpleNamespace(pw_dir=str(self.home), pw_name="u"))
         monkeypatch.setattr(harness, "java_tmpdir", lambda user: tmp_path / f"tmp-bitwig-{user}")
         monkeypatch.setattr(harness, "spawn", self.spawn)
@@ -530,6 +571,8 @@ class Desktop:
             options_at = [i for i in range(4, len(argv) - 2) if argv[i].startswith("--")]
             targets = [argv[i + 1] if argv[i] == "--tmpfs" else argv[i + 2] for i in options_at]
             mounts = "".join(f"1 1 0:1 / {t.replace(' ', chr(92) + '040')} rw - x y rw\n" for t in targets)
+            self.leader = pid
+            fake_process(self.proc, pid, comm="bwrap")
             fake_process(self.proc, pid + 1000, session=pid, mounts=mounts, BITWIG_AGENT_PORT=61174)
             self.pw.links |= self.bitwig_links
             output.write_text("started\n", encoding="utf-8")
@@ -539,15 +582,23 @@ class Desktop:
             output.write_text(f"[r] {monitor.STARTED}\n" if self.monitor_starts else "", encoding="utf-8")
         return pid
 
+    def run(self, args, timeout=5.0):
+        if args[:2] == ["pw-link", "-d"]:
+            self.events.append("cut")
+        return self.pw.run(args, timeout)
+
     def killpg(self, session, sig):
         self.killed.append((session, sig))
+        self.events.append(f"kill {sig}")
         if sig not in self.ignores:
             self.end_bitwig()
 
     def end_bitwig(self):
+        """Bitwig exits; bwrap follows and stays a zombie, since the harness never reaps it."""
         for comm in self.proc.glob("*/comm"):
             if comm.read_text(encoding="utf-8").strip() == bitwig.COMM:
                 shutil.rmtree(comm.parent)
+        write_stat(self.proc / str(self.leader), self.leader, self.leader, "Z")
         for fd in self.fds:
             os.close(fd)
         self.fds.clear()
@@ -674,37 +725,94 @@ def test_cli_refuses_audible_routes(tmp_path, desktop, monkeypatch, args):
     assert desktop.calls == []
 
 
-def test_down_keeps_a_run_that_does_not_end(tmp_path, desktop, monkeypatch, capsys):
+def test_down_keeps_a_run_that_does_not_end(tmp_path, desktop, monkeypatch):
     cfg = prepared(tmp_path, desktop, monkeypatch)
     run = owned(desktop, monkeypatch, cfg)
-    monkeypatch.setattr(bitwig, "QUIT_SECONDS", 0)
     monkeypatch.setattr(harness, "LOCK_SECONDS", 0)
-    monkeypatch.setattr(bitwig, "quit_bitwig", lambda process, run: "alive")
+    monkeypatch.setattr(bitwig, "quit_bitwig", lambda process, run: "clean")
+    with pytest.raises(SystemExit, match=re.escape("FAIL: the sandbox is still running (quit: clean, lock held)")):
+        harness.down(cfg)  # a child of the fake sandbox still holds the lock
+
+    def quit_but_stay(process, run):
+        desktop.end_bitwig()  # the lock is released, yet quit reports Bitwig still running
+        return "alive"
+
+    monkeypatch.setattr(bitwig, "quit_bitwig", quit_but_stay)
     with pytest.raises(SystemExit, match=re.escape("FAIL: the sandbox is still running (quit: alive")):
         harness.down(cfg)
+    assert not lock.held()  # refused on the quit result alone
     assert lock.owner() is not None
     assert bitwig.alive(101)  # the monitor keeps recording
     assert not (run / "real-after.tsv.gz").exists()
-    monkeypatch.setattr(bitwig, "quit_bitwig", lambda process, run: "clean")
-    with pytest.raises(SystemExit, match=re.escape("FAIL: the sandbox is still running (quit: clean, lock held)")):
-        harness.down(cfg)  # the lock is still held by the fake sandbox
-    assert lock.owner() is not None
 
 
 def test_up_aborts_on_a_stray_link_by_cutting_it_then_killing_the_sandbox(tmp_path, desktop, monkeypatch):
     cfg = prepared(tmp_path, desktop, monkeypatch)
     desktop.bitwig_links = {("Bitwig Studio:out1", "alsa_output.pci:playback_FL")}
     desktop.ignores = (signal.SIGTERM,)
-    monkeypatch.setattr(harness, "KILL_SECONDS", 0)
-    with pytest.raises(SystemExit, match="ABORTED: Bitwig linked outside bwtest"):
+    with pytest.raises(SystemExit, match="ABORTED: Bitwig linked outside bwtest") as raised:
         harness.up(cfg, "6.1.7", "")
+    run = Path((lock.owner() or {})["run"])
+    assert "; sandbox stopped;" in str(raised.value)
+    assert str(raised.value).endswith(f"export BWA_NATIVE_RUN={run.name}\npixi run native-down")
     assert ("Bitwig Studio:out1", "alsa_output.pci:playback_FL") not in desktop.pw.links
-    assert ["pw-link", "-d", "Bitwig Studio:out1", "alsa_output.pci:playback_FL"] in desktop.pw.calls
-    assert desktop.killed == [(102, signal.SIGTERM), (102, signal.SIGKILL)]
+    assert desktop.events == ["cut", f"kill {signal.SIGTERM}", f"kill {signal.SIGKILL}"]
     assert not bitwig.session_alive(102)
-    data = evidence.read_run(Path((lock.owner() or {})["run"]))
+    assert bitwig.alive(102)  # the leader is a zombie, which counts as ended
+    data = evidence.read_run(run)
     assert data["strayLinksCut"] == [["Bitwig Studio:out1", "alsa_output.pci:playback_FL"]]
     assert data["aborted"].startswith("RuntimeError: Bitwig linked outside bwtest")
+
+
+def test_a_failed_cut_keeps_the_abort_reason_and_still_kills(tmp_path, desktop, monkeypatch):
+    cfg = prepared(tmp_path, desktop, monkeypatch)
+    desktop.bitwig_links = {("Bitwig Studio:out1", "alsa_output.pci:playback_FL")}
+
+    def cut_fails():
+        raise bridge_error("job_failed", "pw-link -d failed: 1")
+
+    monkeypatch.setattr(audio, "disconnect_strays", cut_fails)
+    with pytest.raises(SystemExit, match="ABORTED: Bitwig linked outside bwtest"):
+        harness.up(cfg, "6.1.7", "")
+    data = evidence.read_run(Path((lock.owner() or {})["run"]))
+    assert data["aborted"].startswith("RuntimeError: Bitwig linked outside bwtest")
+    assert data["cutFailed"] == "pw-link -d failed: 1"
+    assert desktop.killed == [(102, signal.SIGTERM)]
+    assert not bitwig.session_alive(102)
+
+
+def test_an_unkillable_sandbox_is_reported_not_stopped(tmp_path, desktop, monkeypatch):
+    cfg = prepared(tmp_path, desktop, monkeypatch)
+    desktop.bitwig_links = {("Bitwig Studio:out1", "alsa_output.pci:playback_FL")}
+    desktop.ignores = (signal.SIGTERM, signal.SIGKILL)
+    with pytest.raises(SystemExit, match="sandbox NOT stopped: session 102 is still running") as raised:
+        harness.up(cfg, "6.1.7", "")
+    assert "sandbox stopped" not in str(raised.value)
+
+
+def test_a_failure_writing_the_owner_still_stops_the_sandbox(tmp_path, desktop, monkeypatch):
+    cfg = prepared(tmp_path, desktop, monkeypatch)
+
+    def full_disk(data):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(lock, "write_owner", full_disk)
+    with pytest.raises(SystemExit, match=r"ABORTED: .*No space left on device"):
+        harness.up(cfg, "6.1.7", "")
+    assert desktop.killed == [(102, signal.SIGTERM)]
+
+
+def test_kill_tolerates_a_session_that_ends_after_the_check(tmp_path, desktop, monkeypatch):
+    cfg = prepared(tmp_path, desktop, monkeypatch)
+    monkeypatch.setattr(audio, "connect", lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+
+    def already_gone(session, sig):
+        desktop.end_bitwig()
+        raise ProcessLookupError
+
+    monkeypatch.setattr(os, "killpg", already_gone)
+    with pytest.raises(SystemExit, match="ABORTED: boom; sandbox stopped"):
+        harness.up(cfg, "6.1.7", "")
 
 
 def fail(*args):
