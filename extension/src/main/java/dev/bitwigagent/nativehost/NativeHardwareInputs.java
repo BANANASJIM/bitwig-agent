@@ -7,7 +7,10 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -116,12 +119,21 @@ final class NativeHardwareInputs {
         return new Listing(out, null);
     }
 
-    /** Every enabled controller's note inputs, each identified by what it writes into a chooser. */
+    /**
+     * The note inputs of every controller in the preferences' controller list, each identified by what it writes into
+     * a chooser. Two inputs with one identity are not told apart by guessing: then none is listed.
+     */
     Listing notes() {
         Object settings = a.invoke(controllerSettings, a.invoke(application, null));
         List<Input> out = new ArrayList<>();
+        Set<String> ids = new HashSet<>();
         for (Object controller : (List<?>) a.invoke(controllerList, a.invoke(controllers, settings)))
-            for (Object input : (List<?>) a.invoke(noteInputs, controller)) out.add(new Input(identity(input), input));
+            for (Object input : (List<?>) a.invoke(noteInputs, controller)) {
+                Input listed = new Input(identity(input), input);
+                if (!ids.add(listed.entry.id.toLowerCase(Locale.ROOT)))
+                    return new Listing(List.of(), "controller_note_inputs_share_an_identity");
+                out.add(listed);
+            }
         return new Listing(out, null);
     }
 

@@ -277,4 +277,26 @@ final class RoutingModelTest {
         assertFalse(master.getAsJsonObject("output").get("writable").getAsBoolean());
         assertTrue(master.get("input").isJsonNull());
     }
+
+    @Test
+    void unresolvedBankTracksAreReportedNotGuessed() {
+        RoutingPort.TrackRef lost = new RoutingPort.TrackRef(C, "Lost", "Audio", null);
+        TrackRouting r = new TrackRouting(
+                "Audio",
+                "AUDIO",
+                "track",
+                new Chooser(RoutingEntry.none(), null, List.of(), List.of()),
+                new Chooser(RoutingEntry.source("all_ins"), "All ins", INSTRUMENT, List.of()),
+                null,
+                List.of(new RoutingPort.Unresolved(lost, dev.bitwigagent.core.Reason.TARGET_NOT_FOUND, "gone")),
+                new Hardware(null, null));
+        JsonObject row = RoutingModel.track(r, false)
+                .getAsJsonArray("unresolvedTracks")
+                .get(0)
+                .getAsJsonObject();
+        assertEquals(HostFixture.track(C).get("id"), row.getAsJsonObject("ref").get("id"));
+        assertEquals("target_not_found", row.get("reason").getAsString());
+        assertEquals("gone", row.get("message").getAsString());
+        assertEquals("{\"kind\":\"all_ins\"}", r.input.current.toString());
+    }
 }

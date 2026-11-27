@@ -176,7 +176,7 @@ SPECS: dict[str, ToolSpec] = {
             {"type": "audio", "name": "Bass", "position": {"after": EXAMPLE_TRACK}},
             {"type": "effect", "name": "Verb", "position": {"before": EXAMPLE_OTHER}},
         ),
-        requires=PROJECT_READY,
+        requires=PROJECT_READY + NOT_RECORDING,
     ),
     "tracks.group": ToolSpec(
         TrackGroupArgs,

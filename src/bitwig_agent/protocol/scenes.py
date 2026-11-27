@@ -74,7 +74,7 @@ SPECS: dict[str, ToolSpec] = {
         SCENES_INSERT_DESCRIPTION,
         False,
         examples=({}, {"count": 40}),
-        requires=PROJECT_READY,
+        requires=PROJECT_READY + NOT_RECORDING,
     ),
     "scenes.set": ToolSpec(
         ScenesSetArgs, SCENES_SET_DESCRIPTION, False, examples=({"target": SCENE_REF, "name": "Intro"},)
@@ -92,7 +92,7 @@ SPECS: dict[str, ToolSpec] = {
         SCENES_DUPLICATE_DESCRIPTION,
         False,
         examples=({"target": SCENE_REF},),
-        requires=PROJECT_READY,
+        requires=PROJECT_READY + NOT_RECORDING,
     ),
     "scenes.delete": ToolSpec(
         SceneTargetArgs,

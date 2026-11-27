@@ -91,7 +91,7 @@ public final class TransportModuleTest {
     }
 
     @Test
-    void recordingAndAutomationBlockSettingsButNotTheModesOrPlayback() {
+    void recordingAndAutomationBlockSettingsAndPlaybackButNotTheModesOrStop() {
         Map<String, String> modes = Map.of(
                 "isArrangerRecordEnabled", "arrangerRecordEnabled",
                 "isArrangerAutomationWriteEnabled", "arrangerAutomationWriteEnabled",
@@ -117,9 +117,24 @@ public final class TransportModuleTest {
                             .get("verification")
                             .getAsString());
             f.transport.child(mode.getKey()).emit(true);
-            JsonObject play = f.call(module, "transport.set", HostFixture.json("{\"playing\":true}"));
-            assertTrue(f.transport.actions == 1, "playback may start while the mode is on: " + play);
+            HostOperation play = f.submit(module, "transport.set", HostFixture.json("{\"playing\":true}"));
+            f.next();
+            assertRpcError("unsafe_state", play);
+            assertTrue(f.transport.actions == 0, "playback does not start while the mode is on, as for launches");
+            f.transport.child("isPlaying").emit(true);
+            JsonObject stop = f.call(module, "transport.set", HostFixture.json("{\"playing\":false}"));
+            assertTrue(f.transport.actions == 1, "stopping is always allowed: " + stop);
         }
+    }
+
+    @Test
+    void playbackIsWrittenBeforeGlobalRecordSoOneCallStartsRecordingExplicitly() {
+        HostFixture f = new HostFixture();
+        TransportModule module = f.services.transportModule();
+        JsonObject result =
+                f.call(module, "transport.set", HostFixture.json("{\"arrangerRecordEnabled\":true,\"playing\":true}"));
+        assertEquals("applied", result.get("outcome").getAsString(), result.toString());
+        assertEquals(1, f.transport.actions, "playback started before Global Record turned on");
     }
 
     @Test

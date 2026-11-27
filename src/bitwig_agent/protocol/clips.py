@@ -589,7 +589,7 @@ SPECS: dict[str, ToolSpec] = {
             },
             {"to": {"track": TRACK_REF, "start": 16}, "length": 16, "name": "Verse"},
         ),
-        requires=PROJECT_READY,
+        requires=PROJECT_READY + NOT_RECORDING,
         summary="Create a named MIDI clip in an empty launcher slot (to: slot ref, loop {length}) or on an instrument track's timeline (to {track, start}, length), with optional notes (beats on the 1/128 grid, any duration). Returns the new ref. A launcher create selects it. Unobserved: unknown, ack the hold, never retry.",
     ),
     "clips.import": ToolSpec(
@@ -628,6 +628,7 @@ SPECS: dict[str, ToolSpec] = {
         False,
         examples=({"from": CLIP_REF, "to": SLOT_REF}, {"from": CLIP_REF, "to": {"track": TRACK_REF, "start": 0}}),
         summary="Copy a launcher clip (from) to an empty slot of the same track or onto its arranger timeline (to). Returns the new clip's ref.",
+        requires=NOT_RECORDING,
     ),
     "clips.move": ToolSpec(
         ClipMoveArgs,

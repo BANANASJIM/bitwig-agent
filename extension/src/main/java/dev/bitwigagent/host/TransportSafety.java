@@ -50,28 +50,11 @@ public final class TransportSafety {
         observed.requireNotRecording();
     }
 
-    /** Insert-type edits need an observed stopped transport on top of the recording/automation guard. */
-    public void requireStopped() {
-        SafetyObservation current = observed;
-        current.requireNotRecording();
-        current.requireNotPlaying();
+    private SafetyObservation seen(HostOperation operation) {
+        return operation.safetyAtEnqueue == null ? observed : operation.safetyAtEnqueue;
     }
 
-    /** Stopped with recording off, as observed at enqueue; later changes are caught by {@link #guardStopped}. */
-    public SafetyObservation stopped(HostOperation operation) {
-        SafetyObservation seen = operation.safetyAtEnqueue == null ? observed : operation.safetyAtEnqueue;
-        seen.requireStopped();
-        guardStopped(seen);
-        return seen;
-    }
-
-    /** Recording and both automation-write modes observed off at enqueue and now; playback may run. */
-    public void recording(HostOperation operation) {
-        (operation.safetyAtEnqueue == null ? observed : operation.safetyAtEnqueue).requireNotRecording();
-        requirePlaybackSafe();
-    }
-
-    public void guardStopped(SafetyObservation before) {
+    private void guardStopped(SafetyObservation before) {
         SafetyObservation current = observed;
         if (current.epoch != before.epoch)
             throw Errors.notApplied(
@@ -80,19 +63,44 @@ public final class TransportSafety {
         current.requireStopped();
     }
 
-    /** Admit a method's declared transport requirement, as observed at enqueue and now. */
-    public void admit(HostOperation operation, MethodSpecs.Transport requirement) {
-        if (requirement == MethodSpecs.Transport.STOPPED) stopped(operation);
-        else if (requirement == MethodSpecs.Transport.NOT_RECORDING) recording(operation);
+    private void admit(HostOperation operation, MethodSpecs.Transport level) {
+        SafetyObservation seen = seen(operation);
+        if (level == MethodSpecs.Transport.STOPPED) {
+            seen.requireStopped();
+            guardStopped(seen);
+        } else if (level == MethodSpecs.Transport.NOT_RECORDING) {
+            seen.requireNotRecording();
+            requirePlaybackSafe();
+        }
     }
 
-    /** The one gate for Grid and modulator writes: value writes may play, structural writes need a stopped transport. */
-    public Runnable writeGuard(HostOperation operation, boolean structural) {
-        if (!structural) {
-            recording(operation);
-            return this::requirePlaybackSafe;
-        }
-        SafetyObservation seen = stopped(operation);
-        return () -> guardStopped(seen);
+    /** Admit the operation's declared requirement (its spec's requires), from the enqueue observation and now. */
+    public void admit(HostOperation operation) {
+        admit(operation, operation.transport);
+    }
+
+    /**
+     * Re-check the declared requirement while the write is queued or running. A module only re-checks what its
+     * method declares, so a call for a method that declares none is a missing declaration.
+     */
+    public void recheck(HostOperation operation) {
+        if (operation.transport == null || operation.transport == MethodSpecs.Transport.ANY)
+            throw new IllegalStateException(
+                    "A module re-checks transport safety for a method whose requires declares none.");
+        if (operation.transport == MethodSpecs.Transport.STOPPED) guardStopped(seen(operation));
+        else requirePlaybackSafe();
+    }
+
+    /**
+     * A requirement that depends on the request (a target kind, a field, a display solve): when the declared one
+     * covers it only the in-flight re-check remains, otherwise it is admitted now. The guard re-checks it in flight.
+     */
+    public Runnable atLeast(HostOperation operation, MethodSpecs.Transport level) {
+        MethodSpecs.Transport declared = operation.transport;
+        if (declared != null && declared != MethodSpecs.Transport.ANY && declared.compareTo(level) >= 0)
+            return () -> recheck(operation);
+        admit(operation, level);
+        SafetyObservation seen = seen(operation);
+        return level == MethodSpecs.Transport.STOPPED ? () -> guardStopped(seen) : this::requirePlaybackSafe;
     }
 }

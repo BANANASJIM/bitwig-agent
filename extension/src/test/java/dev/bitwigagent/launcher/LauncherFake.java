@@ -1031,7 +1031,7 @@ public final class LauncherFake {
         try {
             JsonObject filled = HostBridge.checkSchema(HostFixture.SPECS, method, p);
             module.validate(method, filled);
-            services.enqueue(op, () -> module.dispatch(op, method, filled));
+            services.enqueue(op, module, method, filled);
             tasks.take().run();
         } catch (RuntimeException error) {
             op.fail(error);

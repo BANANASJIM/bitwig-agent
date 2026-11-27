@@ -830,6 +830,14 @@ public final class ClipModuleTest {
     }
 
     @Test
+    void slotRecordNeedsTheRecordingStateObserved() {
+        LauncherFake f = new LauncherFake(false, false, false, false);
+        f.armed = true;
+        assertRpcError("not_ready", f.startAndDrain("clips.record", params("target", f.slot(0))));
+        assertEquals(0, f.records, "an unobserved recording state sends nothing");
+    }
+
+    @Test
     void slotRecordIsAllowedWhileRecording() {
         LauncherFake f = new LauncherFake();
         f.armed = true;

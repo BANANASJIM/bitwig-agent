@@ -366,6 +366,8 @@ public final class HostFixture {
         try {
             JsonObject filled = HostBridge.checkSchema(SPECS, method, params);
             module.validate(method, filled);
+            op.transport = SPECS.get(method).transport;
+            services.transportSafety.admit(op);
             module.dispatch(op, method, filled);
         } catch (RuntimeException error) {
             op.fail(error);
@@ -386,7 +388,7 @@ public final class HostFixture {
         try {
             JsonObject filled = HostBridge.checkSchema(SPECS, method, params);
             module.validate(method, filled);
-            services.enqueue(op, () -> module.dispatch(op, method, filled));
+            services.enqueue(op, module, method, filled);
         } catch (RuntimeException error) {
             op.result.completeExceptionally(error);
         }

@@ -170,7 +170,7 @@ final class DeviceFixture {
         try {
             JsonObject filled = HostBridge.checkSchema(HostFixture.SPECS, method, params);
             module.validate(method, filled);
-            services.enqueue(op, () -> module.dispatch(op, method, filled));
+            services.enqueue(op, module, method, filled);
         } catch (RuntimeException error) {
             op.result.completeExceptionally(error);
         }

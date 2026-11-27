@@ -216,7 +216,7 @@ SPECS: dict[str, ToolSpec] = {
         CHAINS_INSERT_DESCRIPTION,
         False,
         examples=({"to": CHAIN_REF["device"]}, {"to": {**DEVICE_REF, "name": "Drum Machine"}, "pad": 36}),
-        requires=PROJECT_READY,
+        requires=PROJECT_READY + NOT_RECORDING,
     ),
     "devices.set": ToolSpec(
         DeviceSetArgs, DEVICES_SET_DESCRIPTION, False, examples=({"target": DEVICE_REF, "enabled": False},)
@@ -252,7 +252,7 @@ SPECS: dict[str, ToolSpec] = {
                 "params": {"Frequency": {"display": "800 Hz"}, "Resonance": 0.3},
             },
         ),
-        requires=PROJECT_READY,
+        requires=PROJECT_READY + NOT_RECORDING,
         summary="Insert a native device, plug-in or preset into a track's chain or a layer chain: to (track or chain ref), position? start|end|{before|after: deviceRef}, insert {kind, id|path} as presets.search or devices.catalog return it; params? {name: value} sets initial values (if a step fails, finish with parameters.set on the new ref, never re-insert). Identity is unproven: check requestedIdentifierVerified.",
         wire=DeviceInsertArgs,
         wire_description=DEVICES_INSERT_DESCRIPTION,

@@ -12,7 +12,6 @@ import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Refs;
 import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.RpcException;
-import dev.bitwigagent.core.SafetyObservation;
 import dev.bitwigagent.core.Scheduler;
 import dev.bitwigagent.core.Verification;
 import dev.bitwigagent.host.LauncherStructureLock;
@@ -245,7 +244,7 @@ public final class SceneModule implements HostModule {
     }
 
     private void launch(HostOperation op, LauncherTargets.Loc at) {
-        transportSafety.requirePlaybackSafe();
+        transportSafety.recheck(op);
         List<ClipLauncherSlot> clips = occupied(at.position());
         scheduler.check(op);
         op.markDispatched();
@@ -339,7 +338,6 @@ public final class SceneModule implements HostModule {
 
     private void delete(HostOperation op, LauncherTargets.Loc at) {
         lock.requireStructureFree();
-        SafetyObservation safety = transportSafety.stopped(op);
         int index = at.scene, offset = at.offset, count = window.sceneCount();
         if (count <= 1) throw Errors.notApplied(Reason.LIMIT_REACHED, "A project keeps at least one scene.");
         List<ClipLauncherSlot> clips = occupied(at.position());
@@ -351,7 +349,7 @@ public final class SceneModule implements HostModule {
                         Reason.UNSAFE_STATE,
                         "Delete requires the scene's clips to be neither playing, queued nor recording.");
         List<String> before = shown(offset);
-        transportSafety.guardStopped(safety);
+        transportSafety.recheck(op);
         scheduler.check(op);
         op.markDispatched();
         window.scene(at.position()).deleteObject();

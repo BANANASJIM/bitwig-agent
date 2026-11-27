@@ -131,14 +131,14 @@ public final class DeviceChainModule implements HostModule {
                 return;
             case "devices.delete":
                 if (inChain) {
-                    transportSafety.requirePlaybackSafe();
-                    nested.delete(op, p.getAsJsonObject("target"), transportSafety::requirePlaybackSafe);
+                    transportSafety.recheck(op);
+                    nested.delete(op, p.getAsJsonObject("target"), () -> transportSafety.recheck(op));
                 } else delete(op, p.getAsJsonObject("target"));
                 return;
             default:
                 if (inChain) {
-                    transportSafety.requirePlaybackSafe();
-                    nested.move(op, p, transportSafety::requirePlaybackSafe);
+                    transportSafety.recheck(op);
+                    nested.move(op, p, () -> transportSafety.recheck(op));
                 } else move(op, p);
         }
     }
@@ -330,7 +330,7 @@ public final class DeviceChainModule implements HostModule {
         DeviceSources.Source device = sources.device(target, true);
         Parent parent = parentOf(device);
         int index = device.position;
-        transportSafety.requirePlaybackSafe();
+        transportSafety.recheck(op);
         State state = parent.capture("The chain changed before dispatch.");
         if (index >= state.before.count || index >= parent.window())
             throw Errors.notApplied(Reason.TARGET_NOT_FOUND, "The device is beyond the observed device count.");
@@ -351,7 +351,7 @@ public final class DeviceChainModule implements HostModule {
         int from = device.position;
         int insertion = sources.insertionIndex(parent.ref(), p.get("position"));
         int dest = insertion > from ? insertion - 1 : insertion;
-        transportSafety.requirePlaybackSafe();
+        transportSafety.recheck(op);
         State state = parent.capture("The chain changed before dispatch.");
         int n = state.before.count;
         if (n > parent.window())

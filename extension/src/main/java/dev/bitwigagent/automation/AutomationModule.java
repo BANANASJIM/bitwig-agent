@@ -13,7 +13,6 @@ import dev.bitwigagent.core.Outcome;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Refs;
 import dev.bitwigagent.core.Results;
-import dev.bitwigagent.core.SafetyObservation;
 import dev.bitwigagent.core.Scheduler;
 import dev.bitwigagent.core.ValueInput;
 import dev.bitwigagent.core.Verification;
@@ -269,7 +268,6 @@ public final class AutomationModule implements HostModule {
         Track track = window.at(index);
         String id = track.channelId().get();
         RequestSnapshot snapshot = resolved.snapshot();
-        SafetyObservation safety = write ? transportSafety.stopped(op) : null;
         if (access == null) access = NativeAutomationAccess.bind(natives.get(op).access());
         long epoch = epochs.get(index);
         Runnable check = () -> {
@@ -278,7 +276,7 @@ public final class AutomationModule implements HostModule {
                 throw Errors.notApplied(
                         Reason.TARGET_CHANGED, "Track bank changed while the automation operation was queued.");
             snapshot.require(op);
-            if (write) transportSafety.guardStopped(safety);
+            if (write) transportSafety.recheck(op);
         };
         Runnable beforeWrite = () -> {
             check.run();

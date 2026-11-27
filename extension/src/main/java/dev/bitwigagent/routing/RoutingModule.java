@@ -129,9 +129,7 @@ public final class RoutingModule implements HostModule {
                         key + ".track is absent from the current " + HostLimits.TRACKS
                                 + "-track window; nothing changed.");
         }
-        Runnable safety = write
-                ? transportSafety.writeGuard(op, specs.get(method).transport == MethodSpecs.Transport.STOPPED)
-                : null;
+        Runnable safety = () -> transportSafety.recheck(op);
         if (access == null) {
             try {
                 access = new NativeRoutingAccess(natives.get(op).access());

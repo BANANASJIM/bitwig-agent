@@ -24,9 +24,9 @@ import dev.bitwigagent.host.TransportSafety;
 import java.util.*;
 
 /**
- * Absolute transport controls, including the recording and automation-write modes. Those modes and playing stay
- * writable while recording or automation write is on, so recording can always be turned off; every other field is
- * refused then.
+ * Absolute transport controls, including the recording and automation-write modes. Those modes stay writable while
+ * recording or automation write is on, so recording can always be turned off, and playing=false always stops; every
+ * other field, playing=true included, is refused then.
  */
 public final class TransportModule implements HostModule {
     static final Set<String> METHODS = Set.of("transport.get", "transport.set");
@@ -44,23 +44,22 @@ public final class TransportModule implements HostModule {
         "preRoll",
         "defaultLaunchQuantization",
         "recordQuantizationGrid",
+        "playing",
         "arrangerRecordEnabled",
         "arrangerOverdubEnabled",
         "clipLauncherOverdubEnabled",
         "arrangerAutomationWriteEnabled",
         "clipLauncherAutomationWriteEnabled",
-        "automationWriteMode",
-        "playing"
+        "automationWriteMode"
     };
-    /** Fields writable while recording or automation write is on: the modes themselves and playback. */
+    /** Fields writable while recording or automation write is on: the modes themselves. */
     static final Set<String> RECORDING_FIELDS = Set.of(
             "arrangerRecordEnabled",
             "arrangerOverdubEnabled",
             "clipLauncherOverdubEnabled",
             "arrangerAutomationWriteEnabled",
             "clipLauncherAutomationWriteEnabled",
-            "automationWriteMode",
-            "playing");
+            "automationWriteMode");
 
     private static final ValueMatch BEATS_AND_TEMPO = ValueMatch.raw(1e-6);
     private static final Set<String> BEATS_AND_TEMPO_KEYS = Set.of("tempo", "position", "loopStart", "loopLength");
@@ -344,13 +343,15 @@ public final class TransportModule implements HostModule {
     }
 
     /**
-     * Turning playback or a mode off is always allowed; starting playback or turning a mode on needs the recording
-     * state observed (it may be on); every other field needs recording and automation write observed off.
+     * Stopping playback or turning a recording mode off is always allowed; turning a mode on or changing the write mode
+     * needs the recording state observed (it may be on); starting playback and every other field need recording and
+     * automation write observed off, as for launches.
      */
     private void guard(String key, JsonElement value) {
-        if (!RECORDING_FIELDS.contains(key)) transportSafety.requirePlaybackSafe();
-        else if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isBoolean() || value.getAsBoolean())
-            transportSafety.requireObserved();
+        boolean off = value.isJsonPrimitive() && value.getAsJsonPrimitive().isBoolean() && !value.getAsBoolean();
+        if (RECORDING_FIELDS.contains(key)) {
+            if (!off) transportSafety.requireObserved();
+        } else if (!(key.equals("playing") && off)) transportSafety.requirePlaybackSafe();
     }
 
     private void await(Request request) {

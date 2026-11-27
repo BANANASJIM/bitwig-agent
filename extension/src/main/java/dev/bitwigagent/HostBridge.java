@@ -214,7 +214,8 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
         MethodSpecs.Spec spec = specs.get(method);
         if (spec.projectWrite) projectState.requireReady();
         if (spec.engineRequired) projectState.requireEngineActive(method);
-        transportSafety.admit(operation, spec.transport);
+        operation.transport = spec.transport;
+        transportSafety.admit(operation);
     }
 
     /** Forward the host's output-update boundary once per domain, not once per RPC method. */

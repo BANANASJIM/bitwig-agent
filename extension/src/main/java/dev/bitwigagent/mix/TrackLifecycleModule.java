@@ -11,7 +11,6 @@ import dev.bitwigagent.core.Outcome;
 import dev.bitwigagent.core.Positions;
 import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Results;
-import dev.bitwigagent.core.SafetyObservation;
 import dev.bitwigagent.core.Scheduler;
 import dev.bitwigagent.core.Verification;
 import dev.bitwigagent.host.NativeRuntime;
@@ -179,7 +178,6 @@ public final class TrackLifecycleModule implements HostModule {
 
     private void group(HostOperation op, JsonObject p) {
         requireNoPending("grouping");
-        transportSafety.recording(op);
         selection.requireFree();
         Creation before = capture();
         if (!before.complete)
@@ -246,7 +244,7 @@ public final class TrackLifecycleModule implements HostModule {
         inserting = op;
         Runnable check = () -> {
             scheduler.check(op);
-            transportSafety.requirePlaybackSafe();
+            transportSafety.recheck(op);
         };
         access.execute(() -> {
             try {
@@ -380,7 +378,6 @@ public final class TrackLifecycleModule implements HostModule {
 
     /** Delete one audio/instrument/hybrid/effect track by Track.deleteObject (DeleteableObject), verified by bank UUID set and count. */
     private void delete(HostOperation op, MixModule.Target target) {
-        SafetyObservation safety = transportSafety.stopped(op);
         if (!window.observed()) throw Errors.notApplied(Reason.NOT_READY, "Track bank has not reported its size yet.");
         mix.guard(op, target);
         int slot = window.trackSlot(target.id);
@@ -398,7 +395,7 @@ public final class TrackLifecycleModule implements HostModule {
                     "Deletion needs the whole project observed in the " + HostLimits.TRACKS
                             + "-track bank window (offset 0, at most " + HostLimits.TRACKS
                             + " tracks including group children and effect tracks, every UUID/type/position read); this project exceeds it or is not fully observed yet. Nothing changed.");
-        transportSafety.guardStopped(safety);
+        transportSafety.recheck(op);
         mix.guard(op, target);
         op.markDispatched();
         JsonObject deleted = new JsonObject();

@@ -618,7 +618,7 @@ public final class NativeRoutingAccess implements RoutingPort {
         if (write.output) {
             if (write.destination == null) a.invoke(outClear, write.chooser);
             else a.invoke(outSet, write.chooser, write.destination);
-        } else if (write.source.hardware != null) hardware.set(write.chooser, write.source.hardware);
+        } else if (write.source.hardware != null) hardware().set(write.chooser, write.source.hardware);
         else if (write.source.bus == null) a.invoke(inClear, write.chooser);
         else a.invoke(inSet, write.chooser, write.source.bus);
     }
