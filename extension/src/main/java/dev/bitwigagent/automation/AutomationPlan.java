@@ -117,8 +117,10 @@ public final class AutomationPlan implements Function<Observed, AutomationPlan.W
         for (Request request : requests) asked.merge(request.beat, 1, Integer::sum);
         if (range == null) requireEveryPointAtEachBeat(onLane, asked);
         List<Point> listed = new ArrayList<>();
-        for (Request request : requests)
-            listed.add(written(byKey.get(List.of(request.beat, request.ordinal)), request, value(lane, request)));
+        for (Request request : requests) {
+            Point inPlace = range == null ? byKey.get(List.of(request.beat, request.ordinal)) : null;
+            listed.add(written(inPlace, request, value(lane, request)));
+        }
         return new Write(lane.points, listed, range);
     }
 
@@ -141,8 +143,9 @@ public final class AutomationPlan implements Function<Observed, AutomationPlan.W
     }
 
     /**
-     * The point a request writes: it keeps what it omits (interpolation, curve) from the point in its place (beat and
-     * place at that beat); a new point is linear with curve 0.
+     * The point a request writes. {@code observed} is the point in its place (beat and place at that beat) when there
+     * is no range: the request keeps what it omits (interpolation, curve) from it. With a range the listed record is the
+     * whole point ({@code observed} null) and an omitted field is its default, as for a new point: linear, curve 0.
      */
     static Point written(Point observed, Request listed, double value) {
         boolean linear = listed.linear != null ? listed.linear : observed == null || observed.linear;
