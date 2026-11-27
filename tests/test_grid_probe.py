@@ -13,6 +13,7 @@ from bitwig_agent.audio.analysis import FFT_SIZE, spectral_peaks
 from bitwig_agent.errors import BridgeError, HostChanged, unknown_result
 from bitwig_agent.grid import probe as grid_probe
 from bitwig_agent.protocol import CLIENT_SIDE, validate_call
+from bitwig_agent.protocol.base import leaf_rule_holds
 
 SAFE = {
     "playing": True,
@@ -121,6 +122,7 @@ def test_probe_reroutes_records_and_restores_exactly(rig):
     }  # probe on one Audio Out, the other silenced
     assert out["outcome"] == "applied"
     assert out["verification"] == "file_readback"
+    assert leaf_rule_holds(out)
     assert out["restored"] is True
     assert out["audioOut"] == "P: out1"
     assert out["cablesChanged"] == 2

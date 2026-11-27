@@ -30,6 +30,7 @@ from bitwig_agent.audio import pipewire
 from bitwig_agent.core import composed
 from bitwig_agent.errors import BridgeError, HostChanged, bridge_error, unknown_result
 from bitwig_agent.protocol import CLIENT_SIDE, TOOLS, validate_call
+from bitwig_agent.protocol.base import leaf_rule_holds
 
 REAL_RUN = pipewire.run
 
@@ -211,6 +212,7 @@ def test_capture_from_start_orders_transport_and_reports_levels(tmp_path, monkey
     assert "@DEFAULT_MONITOR@" not in spawned[0]
     assert result["source"]["ports"] == ["Bitwig Studio:out1", "Bitwig Studio:out2"]
     assert result["verification"] == "file_readback"
+    assert leaf_rule_holds(result)
     assert bridge.calls == [
         ("status", {}),
         ("context.get", {}),
